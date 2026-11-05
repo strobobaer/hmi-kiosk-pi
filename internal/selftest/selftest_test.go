@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"image"
+	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -256,15 +258,6 @@ func TestTerminalsReportsEachPeer(t *testing.T) {
 	}
 }
 
-func TestProtectionOnInstallScriptSystemIsAWarning(t *testing.T) {
-	f := newFixture(t)
-	f.d.Mounts = func() ([]byte, error) { return []byte("/dev/mmcblk0p2 / ext4 rw,relatime 0 0\n"), nil }
-	r := byName(t, Run(context.Background(), f.d))["schutz"]
-	if r.OK || !r.NeedsHuman || !strings.Contains(r.Detail, "Warnung") || !strings.Contains(r.Detail, "install.sh") {
-		t.Fatalf("%+v", r)
-	}
-}
-
 func TestOverlayAndWatchdogDetection(t *testing.T) {
 	t.Run("Overlay auf /", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -377,5 +370,55 @@ func TestTouchBoard(t *testing.T) {
 	b.Reset()
 	if b.Count() != 0 {
 		t.Fatal("Reset")
+	}
+}
+
+func TestReturnStepToleratesLateServerBookkeeping(t *testing.T) {
+	f := newFixture(t)
+	var mu sync.Mutex
+	var lagUntil time.Time
+	real := f.d.Established
+	f.d.Established = func(ip net.IP, port int) (bool, error) {
+		mu.Lock()
+		lag := time.Now().Before(lagUntil)
+		mu.Unlock()
+		if lag {
+			return true, nil // der Server zählt die Verbindung noch
+		}
+		return real(ip, port)
+	}
+	f.runner.onExit = func() { mu.Lock(); lagUntil = time.Now().Add(300 * time.Millisecond); mu.Unlock() }
+	r := byName(t, Run(context.Background(), f.d))["rueckkehr"]
+	if !r.OK {
+		t.Fatalf("späte Buchführung des Servers ist kein Fehler: %+v", r)
+	}
+}
+
+func TestProtectionDistinguishesInstallScriptFromImage(t *testing.T) {
+	// install.sh: kein Overlay und keine Datenpartition → Hinweis, kein Fehler.
+	f := newFixture(t)
+	f.d.Mounts = func() ([]byte, error) { return []byte("/dev/mmcblk0p2 / ext4 rw,relatime 0 0\n"), nil }
+	r := byName(t, Run(context.Background(), f.d))["schutz"]
+	if !r.OK || !r.NeedsHuman || !strings.Contains(r.Detail, "Warnung") || !strings.Contains(r.Detail, "install.sh") {
+		t.Fatalf("install.sh-System: %+v", r)
+	}
+	if r.Label() != "PRÜFEN" {
+		t.Fatalf("Label %q", r.Label())
+	}
+	// Abbild: Datenpartition vorhanden, aber Overlay fehlt → Fehler.
+	f = newFixture(t)
+	f.d.Mounts = func() ([]byte, error) {
+		return []byte("/dev/mmcblk0p2 / ext4 rw 0 0\n/dev/mmcblk0p1 /boot/firmware vfat ro 0 0\n/dev/mmcblk0p3 /data ext4 rw 0 0\n"), nil
+	}
+	r = byName(t, Run(context.Background(), f.d))["schutz"]
+	if r.OK || !strings.Contains(r.Detail, "Overlay") {
+		t.Fatalf("Abbild ohne Overlay: %+v", r)
+	}
+	// Auch auf install.sh-Systemen bleibt ein abgeschalteter Watchdog ein Fehler.
+	f = newFixture(t)
+	f.d.Mounts = func() ([]byte, error) { return []byte("/dev/mmcblk0p2 / ext4 rw 0 0\n"), nil }
+	f.d.Exec = func(context.Context, string, ...string) (string, error) { return "RuntimeWatchdogUSec=0\n", nil }
+	if r := byName(t, Run(context.Background(), f.d))["schutz"]; r.OK {
+		t.Fatalf("Watchdog aus: %+v", r)
 	}
 }

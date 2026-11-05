@@ -80,7 +80,7 @@ type rig struct {
 	password string
 	n        int
 	procs    []*tracked
-	cleanups []func()
+	owned    map[*tracked]func() // RAM-Ordner-Aufräumer je Client
 }
 
 func newRig(d Deps) (*rig, error) {
@@ -103,7 +103,7 @@ func newRig(d Deps) (*rig, error) {
 		ln.Close()
 		return nil, err
 	}
-	r := &rig{d: d, ln: ln, port: ln.Addr().(*net.TCPAddr).Port, password: pw, srv: rfb.NewTestServer(testW, testH, pw)}
+	r := &rig{d: d, ln: ln, owned: map[*tracked]func(){}, port: ln.Addr().(*net.TCPAddr).Port, password: pw, srv: rfb.NewTestServer(testW, testH, pw)}
 	go func() { _ = r.srv.Serve(ln) }()
 	return r, nil
 }
@@ -137,18 +137,20 @@ func (r *rig) start(password string, viewOnly bool) (*tracked, error) {
 	if err != nil {
 		return nil, fmt.Errorf("RAM-Ordner: %w", err)
 	}
-	r.cleanups = append(r.cleanups, cleanup)
 	cmd, err := r.d.Profile().Prepare(dir, spec)
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("Client-Profil: %w", err)
 	}
 	r.d.show("bar")
 	p, err := r.d.Runner.Start(cmd)
 	if err != nil {
+		cleanup()
 		return nil, fmt.Errorf("Client startet nicht: %w", err)
 	}
 	t := track(p)
 	r.procs = append(r.procs, t)
+	r.owned[t] = cleanup
 	return t, nil
 }
 
@@ -228,9 +230,10 @@ func (r *rig) close() {
 	}
 	r.srv.DropClients()
 	r.ln.Close()
-	for _, c := range r.cleanups {
+	for _, c := range r.owned {
 		c()
 	}
+	r.owned = nil
 	r.d.show("")
 }
 
@@ -367,7 +370,7 @@ func windowAndBar(ctx context.Context, d Deps) StepResult {
 		if err != nil {
 			return StepResult{NeedsHuman: true, Detail: fmt.Sprintf("Fensterlage nicht messbar: xwininfo fehlt oder schlug fehl (%v). %s", err, check)}
 		}
-		found = parseWindows(out, "hmi-kiosk session")
+		found = parseWindows(out, client.RemminaTitlePrefix)
 		if len(found) > 0 || time.Now().After(deadline) {
 			break
 		}
@@ -376,7 +379,7 @@ func windowAndBar(ctx context.Context, d Deps) StepResult {
 		}
 	}
 	if len(found) == 0 {
-		return StepResult{NeedsHuman: true, Detail: "Kein Fenster „hmi-kiosk session“ gefunden, obwohl der Client verbunden ist. " + check}
+		return StepResult{NeedsHuman: true, Detail: "Kein Fenster mit dem Titel „" + client.RemminaTitlePrefix + "“ gefunden, obwohl der Client verbunden ist. " + check}
 	}
 	for _, g := range found {
 		if g == want {
@@ -536,7 +539,7 @@ func (r *rig) returnCase(ctx context.Context, name string, limit time.Duration, 
 	if !p.gone() {
 		return fmt.Sprintf("Prozess nach %s noch da (erlaubt %s)", secs(took), secs(limit)), false
 	}
-	if r.connected() {
+	if !r.waitDisconnected(ctx) {
 		return "Prozess weg, aber die Verbindung zum Server besteht noch", false
 	}
 	return fmt.Sprintf("Prozess %s nach %s", how, secs(took)), true
@@ -746,20 +749,28 @@ func protection(ctx context.Context, d Deps) StepResult {
 		bad("Einhängepunkte nicht lesbar: %v", err)
 	} else {
 		mounts = string(b)
+		install := isInstallScriptSystem(mounts)
+		// Auf install.sh-Systemen gibt es keinen Schreibschutz (Spec Abschnitt 9): nur ein Hinweis.
+		warn := func(format string, a ...any) {
+			if install {
+				human = true
+				lines = append(lines, "Warnung: "+fmt.Sprintf(format, a...)+" – erwartet auf einem System aus install.sh (kein Schreibschutz, keine Datenpartition)")
+				return
+			}
+			bad(format, a...)
+		}
 		if overlayOnRoot(mounts) {
 			lines = append(lines, "Overlay auf /: aktiv")
 		} else {
-			human = true
-			bad("Warnung: Kein Overlay auf / – das System ist nicht schreibgeschützt. Auf Systemen aus install.sh ist das so vorgesehen " +
-				"(Spec Abschnitt 9: dort gibt es keinen Schreibschutz); auf dem SD-Abbild ist es ein Fehler")
+			warn("Kein Overlay auf /, das System ist nicht schreibgeschützt")
 		}
 		switch ro, found := bootReadOnly(mounts); {
 		case !found:
-			bad("Boot-Partition: nicht eingehängt gefunden (/boot/firmware, /boot)")
+			warn("Boot-Partition nicht eingehängt gefunden (/boot/firmware, /boot)")
 		case ro:
 			lines = append(lines, "Boot-Partition: schreibgeschützt")
 		default:
-			bad("Boot-Partition: beschreibbar")
+			warn("Boot-Partition beschreibbar")
 		}
 	}
 
@@ -804,4 +815,49 @@ func protection(ctx context.Context, d Deps) StepResult {
 		}
 	}
 	return StepResult{OK: ok, NeedsHuman: human, Detail: strings.Join(lines, "; ")}
+}
+
+// release räumt einen beendeten Client auf: Ordner im RAM weg, nicht mehr gehalten.
+// Ein langer Dauertest sammelt sonst Tausende Ordner und Einträge.
+func (r *rig) release(p *tracked) {
+	if c, ok := r.owned[p]; ok {
+		c()
+		delete(r.owned, p)
+	}
+	for i, q := range r.procs {
+		if q == p {
+			r.procs = append(r.procs[:i], r.procs[i+1:]...)
+			break
+		}
+	}
+}
+
+// waitDisconnected wartet, bis der Server die Verbindung nicht mehr zählt: Er
+// bucht das Ende nebenläufig, kurz nach dem Prozessende steht sie noch.
+func (r *rig) waitDisconnected(ctx context.Context) bool {
+	for i := 0; i < 2000/max(int(r.d.Timing.Poll/time.Millisecond), 1); i++ {
+		if !r.connected() {
+			return true
+		}
+		if !sleepCtx(ctx, r.d.Timing.Poll) {
+			break
+		}
+	}
+	return !r.connected()
+}
+
+// isInstallScriptSystem: Das SD-Abbild hat immer die Datenpartition /data (Spec Abschnitt 9);
+// Systeme aus install.sh haben weder sie noch einen Schreibschutz. Kein Overlay auf /
+// und keine Einhängung auf /data heißt also: install.sh. Mit /data, aber ohne Overlay,
+// ist es ein Abbild mit fehlendem Schreibschutz und damit ein Fehler.
+func isInstallScriptSystem(mounts string) bool {
+	if overlayOnRoot(mounts) {
+		return false
+	}
+	for _, line := range strings.Split(mounts, "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[1] == "/data" {
+			return false
+		}
+	}
+	return true
 }

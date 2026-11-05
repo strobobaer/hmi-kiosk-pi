@@ -45,6 +45,7 @@ type fakeRunner struct {
 	tap        *image.Point
 	// ignoreTerm: Stop beendet erst nach Ablauf der Gnadenfrist (wie SIGKILL).
 	ignoreTerm bool
+	onExit     func()
 }
 
 func (r *fakeRunner) Start(c client.Command) (client.Process, error) {
@@ -94,9 +95,15 @@ type fakeProc struct {
 func (p *fakeProc) Pid() int           { return p.pid }
 func (p *fakeProc) Done() <-chan error { return p.done }
 func (p *fakeProc) finish(err error) {
-	p.once.Do(func() { p.err = err; p.exited.Store(true); p.done <- err; close(p.done) })
+	p.once.Do(func() { p.r.exited(); p.err = err; p.exited.Store(true); p.done <- err; close(p.done) })
 }
 func (p *fakeProc) kill() { p.finish(errors.New("signal: killed")); close(p.stop) }
+func (r *fakeRunner) exited() {
+	if r.onExit != nil {
+		r.onExit()
+	}
+}
+
 func (p *fakeProc) Stop(g time.Duration) error {
 	if p.r.ignoreTerm {
 		select {
@@ -104,7 +111,7 @@ func (p *fakeProc) Stop(g time.Duration) error {
 		case <-time.After(g):
 		}
 	}
-	p.once.Do(func() { p.exited.Store(true); p.done <- nil; close(p.done); close(p.stop) })
+	p.once.Do(func() { p.r.exited(); p.exited.Store(true); p.done <- nil; close(p.done); close(p.stop) })
 	return nil
 }
 

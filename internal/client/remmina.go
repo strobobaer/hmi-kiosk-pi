@@ -24,6 +24,11 @@ const (
 	remminaViewMode    = "1"
 )
 
+// RemminaTitlePrefix beginnt den Fensternamen (Profilfeld name). Remmina nimmt ihn als Titel des
+// einen Fensters (gemessen in Task 7: "hmi-kiosk session 1"); WM_CLASS ist dagegen für alle
+// Sitzungen "org.remmina.Remmina" und taugt nicht zur Unterscheidung.
+const RemminaTitlePrefix = "hmi-kiosk session"
+
 type remmina struct {
 	rand io.Reader // nil: crypto/rand
 }
@@ -68,7 +73,7 @@ func (r *remmina) Prepare(dir string, s Spec) (Command, error) {
 	var b strings.Builder
 	b.WriteString("[remmina]\n")
 	for _, kv := range [][2]string{
-		{"name", "hmi-kiosk session " + strconv.Itoa(s.SessionN)},
+		{"name", RemminaTitlePrefix + " " + strconv.Itoa(s.SessionN)},
 		{"protocol", "VNC"},
 		{"server", net.JoinHostPort(s.Host, strconv.Itoa(s.Port))},
 		{"password", pw},

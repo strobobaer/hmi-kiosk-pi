@@ -155,3 +155,45 @@ func TestGroupRSSOfOwnProcess(t *testing.T) {
 		t.Fatal("unbekannter Prozess muss einen Fehler ergeben")
 	}
 }
+
+func TestSoakCyclesReleaseTheirResources(t *testing.T) {
+	f := newFixture(t)
+	live := 0
+	var mu sync.Mutex
+	f.d.RAMDir = func() (string, func(), error) {
+		mu.Lock()
+		live++
+		mu.Unlock()
+		return t.TempDir(), func() { mu.Lock(); live--; mu.Unlock() }, nil
+	}
+	f.d.Timing = f.d.Timing.withDefaults()
+	r, err := newRig(f.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.close()
+	for i := 0; i < 8; i++ {
+		if _, err := r.soakCycle(context.Background(), func(int) (int64, error) { return 1, nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if live != 0 {
+		t.Errorf("%d RAM-Ordner nach 8 Durchgängen noch angelegt", live)
+	}
+	if len(r.procs) != 0 || len(r.owned) != 0 {
+		t.Errorf("rig hält %d Prozesse und %d Aufräumer", len(r.procs), len(r.owned))
+	}
+}
+
+func TestSoakResultKeepsLeakOnceSeen(t *testing.T) {
+	var res SoakResult
+	res.Add(SoakSample{Cycle: 1, Failures: 0})
+	res.Add(SoakSample{Cycle: 2, Leak: true, SlopeBytesPerHour: 5 << 20})
+	res.Add(SoakSample{Cycle: 3, Leak: false, SlopeBytesPerHour: 0, Failures: 1})
+	res.Add(SoakSample{Cycle: 4, Leak: true, SlopeBytesPerHour: 2 << 20, Failures: 1})
+	if !res.Leak || res.SlopeBytesPerHour != 5<<20 || res.Cycles != 4 || res.Failures != 1 {
+		t.Fatalf("%+v", res)
+	}
+}

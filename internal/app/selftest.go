@@ -250,18 +250,11 @@ type SoakOptions struct {
 	Out, Warn func(string)
 }
 
-// SoakResult fasst eine Dauerprüfung zusammen.
-type SoakResult struct {
-	Cycles, Failures  int
-	Leak              bool
-	SlopeBytesPerHour float64
-}
-
 // RunSoak führt die Dauerprüfung aus. Sie fragt den laufenden Dienst, ob eine
 // Sitzung läuft, und misst dessen Speicher mit. Ohne erreichbaren Dienst wird nur
 // der Client gemessen.
-func RunSoak(ctx context.Context, o SoakOptions) (SoakResult, error) {
-	var res SoakResult
+func RunSoak(ctx context.Context, o SoakOptions) (selftest.SoakResult, error) {
+	var res selftest.SoakResult
 	cfg, _, err := config.Open(o.DataDir).Load()
 	if err != nil {
 		return res, fmt.Errorf("Konfiguration nicht lesbar: %w", err)
@@ -327,8 +320,7 @@ func RunSoak(ctx context.Context, o SoakOptions) (SoakResult, error) {
 		if logFile != nil {
 			_, _ = logFile.Write(append(b, '\n'))
 		}
-		res.Cycles, res.Failures = s.Cycle, s.Failures
-		res.Leak, res.SlopeBytesPerHour = s.Leak, s.SlopeBytesPerHour
+		res.Add(s)
 	})
 	return res, err
 }

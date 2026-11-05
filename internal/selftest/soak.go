@@ -149,6 +149,9 @@ func (r *rig) soakCycle(ctx context.Context, groupRSS func(int) (int64, error)) 
 		if _, gone := r.waitExit(context.Background(), p, tm.StopWithin); !gone && err == nil {
 			err = fmt.Errorf("Client nach dem Stopp nicht innerhalb von %s beendet", secs(tm.StopWithin))
 		}
+		if p.gone() {
+			r.release(p)
+		}
 	}()
 	if _, err := r.waitConnected(ctx, p); err != nil {
 		return 0, err
@@ -169,4 +172,18 @@ func (r *rig) soakCycle(ctx context.Context, groupRSS func(int) (int64, error)) 
 		err = errors.New("Client hat keine Prozesskennung, Speicher nicht messbar")
 	}
 	return clientRSS, err
+}
+
+// SoakResult fasst die Proben einer Dauerprüfung zusammen. Ein einmal erkanntes
+// Leck bleibt erhalten, ebenso die größte gemessene Steigung.
+type SoakResult struct {
+	Cycles, Failures  int
+	Leak              bool
+	SlopeBytesPerHour float64
+}
+
+func (r *SoakResult) Add(s SoakSample) {
+	r.Cycles, r.Failures = s.Cycle, s.Failures
+	r.Leak = r.Leak || s.Leak
+	r.SlopeBytesPerHour = max(r.SlopeBytesPerHour, s.SlopeBytesPerHour)
 }
