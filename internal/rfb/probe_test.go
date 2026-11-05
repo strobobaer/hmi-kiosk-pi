@@ -42,11 +42,11 @@ func TestProbeReadsResolutionAndName(t *testing.T) {
 func TestProbeWrongPassword(t *testing.T) {
 	_, host, port := startServer(t, 800, 480, "richtig")
 	r := Probe(context.Background(), host, port, "falsch")
-	if !r.Reachable || r.AuthOK || r.Err == "" {
+	if !r.Reachable || r.AuthOK || !r.AuthRejected || r.Err == "" {
 		t.Fatalf("%+v", r)
 	}
 	r = Probe(context.Background(), host, port, "")
-	if !r.Reachable || r.AuthOK || r.Err == "" {
+	if !r.Reachable || r.AuthOK || !r.AuthRejected || r.Err == "" {
 		t.Fatalf("ohne Passwort: %+v", r)
 	}
 }

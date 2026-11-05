@@ -1,0 +1,345 @@
+package session
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"slices"
+	"strconv"
+	"time"
+
+	"hmikiosk/internal/client"
+	"hmikiosk/internal/config"
+	"hmikiosk/internal/coord"
+	"hmikiosk/internal/rfb"
+)
+
+// Ablauf: begin → onRequest → (Rückfrage) → precheck → onProbe → (Übernahme,
+// Vorwarnung) → startClient → Überwachung → stopClient → onExit → end.
+// Blockierende Schritte laufen in eigenen Goroutinen und melden sich per post.
+
+func (m *Manager) begin(h config.HMI, cfg config.Config, auto bool) {
+	a := &attempt{hmi: h, auto: auto, permanent: cfg.Kiosk.PermanentHMI == h.ID}
+	a.ctx, a.cancel = context.WithCancel(m.runCtx)
+	if a.permanent {
+		m.perm.halted = false
+	}
+	m.cur = a
+	m.state = StateRequesting
+	m.hint = nil
+	if !auto {
+		m.notice = ""
+	}
+	go func() {
+		res := m.d.Coord.Request(a.ctx, h.ID)
+		m.post(func() { m.onRequest(a, res) })
+	}()
+}
+
+func (m *Manager) onRequest(a *attempt, res coord.Result) {
+	if m.cur != a {
+		// Die überholte Anfrage kann noch offen stehen. Gilt der neue Versuch
+		// demselben HMI, hat er sie ersetzt und darf nicht mitgelöscht werden.
+		if m.cur == nil || m.cur.hmi.ID != a.hmi.ID {
+			m.d.Coord.Release(a.hmi.ID)
+		}
+		return
+	}
+	m.addHint(res.Unreachable...)
+	m.addHint(res.BadKey...)
+	a.decision = res.Decision
+	d := res.Decision
+	switch {
+	case res.Rejected || d.Outcome == coord.Reject:
+		m.end(a, busyNotice(d.Holder), false)
+	case d.Outcome == coord.AskConfirm && a.auto:
+		// Eine Daueranzeige ohne Bediener darf weder übernehmen noch ewig warten.
+		m.end(a, busyNotice(d.Holder), false)
+	case d.Outcome == coord.AskConfirm:
+		m.state = StateConfirming
+	default:
+		a.watch = d.Outcome == coord.AllowWatch
+		m.precheck(a)
+	}
+}
+
+func busyNotice(h *coord.Holder) string {
+	return "Belegt durch " + holderName(h)
+}
+
+func holderName(h *coord.Holder) string {
+	if h == nil || h.Name == "" {
+		return "ein anderes Terminal"
+	}
+	return h.Name
+}
+
+func (m *Manager) addHint(names ...string) {
+	for _, n := range names {
+		if !slices.Contains(m.hint, n) {
+			m.hint = append(m.hint, n)
+		}
+	}
+}
+
+// precheck läuft vor einer Übernahme: Ein falsches Passwort oder ein totes HMI
+// soll niemanden vom HMI verdrängen.
+func (m *Manager) precheck(a *attempt) {
+	pw, err := m.d.Password(a.hmi)
+	if err != nil {
+		log.Printf("Sitzung: Passwort von HMI %q nicht lesbar: %v", a.hmi.ID, err)
+		m.end(a, fmt.Sprintf("Passwort von „%s“ lässt sich nicht entschlüsseln", a.hmi.Name), false)
+		return
+	}
+	a.password = pw
+	h := a.hmi
+	go func() {
+		ctx, cancel := context.WithTimeout(a.ctx, probeTimeout)
+		defer cancel()
+		res := m.d.Probe(ctx, h, pw)
+		m.post(func() { m.onProbe(a, res) })
+	}()
+}
+
+func (m *Manager) onProbe(a *attempt, r rfb.ProbeResult) {
+	if m.cur != a {
+		return
+	}
+	switch {
+	case !r.Reachable:
+		m.end(a, fmt.Sprintf("„%s“ nicht erreichbar", a.hmi.Name), false)
+	case r.AuthRejected:
+		m.end(a, "VNC-Passwort falsch", false)
+	case !r.AuthOK:
+		notice := r.Err
+		if notice == "" {
+			notice = fmt.Sprintf("VNC-Prüfung von „%s“ fehlgeschlagen", a.hmi.Name)
+		}
+		m.end(a, notice, false)
+	case a.decision.Outcome == coord.TakeOver || a.decision.Outcome == coord.AskConfirm:
+		d := a.decision
+		go func() {
+			err := m.d.Coord.Takeover(a.ctx, a.hmi.ID, d)
+			m.post(func() { m.onTakeoverSent(a, err) })
+		}()
+	default:
+		m.startClient(a)
+	}
+}
+
+func (m *Manager) onTakeoverSent(a *attempt, err error) {
+	if m.cur != a {
+		return
+	}
+	d := a.decision
+	// Wer die Aufforderung nicht bekam, wird auch nicht gewarnt: Warten nützt
+	// dann nichts, und die Verbindung ist laut Spec trotzdem erlaubt.
+	if err != nil {
+		log.Printf("Sitzung: Übernahme von HMI %q: %v", a.hmi.ID, err)
+		m.addHint(holderName(d.Holder))
+		m.startClient(a)
+		return
+	}
+	if d.Warn <= 0 {
+		m.startClient(a)
+		return
+	}
+	m.notice = fmt.Sprintf("Übernahme von %s läuft", holderName(d.Holder))
+	m.setDeadline(m.d.Clock.Now().Add(d.Warn), func() { m.startClient(a) })
+}
+
+func (m *Manager) buildSpec(a *attempt, cfg config.Config) client.Spec {
+	w, h := m.d.Screen()
+	s := client.Spec{
+		Host:       a.hmi.Host,
+		Port:       a.hmi.Port,
+		Password:   a.password,
+		ViewOnly:   a.hmi.ViewOnly || a.watch,
+		Quality:    cfg.Client.Quality,
+		ColorDepth: cfg.Client.ColorDepth,
+		Scale:      cfg.Client.Scale,
+		W:          w,
+		H:          h,
+		SessionN:   m.sessionN,
+	}
+	if !cfg.Kiosk.HideBar {
+		s.Y = barHeight
+		s.H = h - barHeight
+	}
+	return s
+}
+
+const barHeight = 48
+
+func (m *Manager) startClient(a *attempt) {
+	dir, cleanup, err := m.d.RAMDir()
+	if err != nil {
+		m.end(a, fmt.Sprintf("Sitzungsdaten nicht anlegbar: %v", err), false)
+		return
+	}
+	a.cleanup = cleanup
+	m.sessionN++
+	cmd, err := m.d.Profile().Prepare(dir, m.buildSpec(a, m.d.Config()))
+	if err != nil {
+		m.end(a, fmt.Sprintf("Client nicht vorbereitet: %v", err), false)
+		return
+	}
+	// Mitschauen belegt nicht.
+	if !a.watch {
+		m.d.Coord.Hold(a.hmi.ID, strconv.Itoa(m.sessionN))
+	}
+	proc, err := m.d.Runner.Start(cmd)
+	if err != nil {
+		m.end(a, fmt.Sprintf("Client nicht gestartet: %v", err), false)
+		return
+	}
+	now := m.d.Clock.Now()
+	a.proc, a.exited = proc, make(chan struct{})
+	a.startedAt, a.lastActivity = now, now
+	m.state = StateStarting
+	log.Printf("Sitzung %d: Client für HMI %q gestartet", m.sessionN, a.hmi.ID)
+	go func() {
+		err := <-proc.Done()
+		close(a.exited)
+		m.post(func() { m.onExit(a, err) })
+	}()
+}
+
+// stopClient wartet nicht: Stop läuft nebenher, onExit schließt den Ablauf ab.
+func (m *Manager) stopClient(a *attempt, notice string) {
+	a.endNotice = notice
+	m.notice = notice
+	if m.state == StateStopping {
+		return
+	}
+	m.state = StateStopping
+	m.clearDeadline()
+	proc := a.proc
+	go func() { _ = proc.Stop(StopGrace) }()
+}
+
+// endOrStop beendet einen Versuch, ob sein Client schon läuft oder nicht.
+func (m *Manager) endOrStop(a *attempt, notice string) {
+	if a.proc != nil {
+		m.stopClient(a, notice)
+		return
+	}
+	m.end(a, notice, false)
+}
+
+func (m *Manager) onExit(a *attempt, err error) {
+	if m.cur != a {
+		return
+	}
+	switch {
+	case m.state == StateStopping:
+		m.end(a, a.endNotice, a.operator)
+	case a.takenNotice != "":
+		m.end(a, a.takenNotice, false)
+	case err != nil:
+		log.Printf("Sitzung: Client von HMI %q beendet: %v", a.hmi.ID, err)
+		m.end(a, fmt.Sprintf("Client für „%s“ unerwartet beendet", a.hmi.Name), false)
+	default:
+		m.end(a, fmt.Sprintf("Verbindung zu „%s“ beendet", a.hmi.Name), false)
+	}
+}
+
+func (m *Manager) cleanupRAM(a *attempt) {
+	if a.cleanup != nil {
+		a.cleanup()
+		a.cleanup = nil
+	}
+}
+
+// end schließt einen Versuch ab. Ein Client läuft dann nicht mehr. Gemeinsamer
+// Ausgang aller Wege: Aufräumen, Freigeben, Kacheln oder Neuverbinden.
+func (m *Manager) end(a *attempt, notice string, operator bool) {
+	now := m.d.Clock.Now()
+	a.cancel()
+	m.cleanupRAM(a)
+	m.d.Coord.Release(a.hmi.ID)
+	m.cur = nil
+	m.clearDeadline()
+	if a.proc != nil {
+		m.hint = nil
+	}
+	if m.afterPermanentEnd(a, notice, operator, now) {
+		return
+	}
+	m.state = StateTiles
+	m.notice = notice
+}
+
+func (m *Manager) onBack() {
+	switch m.state {
+	case StateRequesting, StateConfirming:
+		m.end(m.cur, "", true)
+	case StateStarting, StateConnected, StateWarned, StateStopping:
+		a := m.cur
+		a.operator = true
+		m.stopClient(a, a.takenNotice)
+	case StateReconnecting:
+		m.perm.halted = true
+		m.perm.backoff = 0
+		m.clearDeadline()
+		m.state = StateTiles
+		m.notice = ""
+	}
+}
+
+// onTakeoverEvent: Für ein HMI, um das es gerade nicht geht, ist das Ereignis
+// überholt. Beim Mitschauen belegen wir nichts, also gibt es nichts zu räumen.
+func (m *Manager) onTakeoverEvent(ev coord.Event) {
+	a := m.cur
+	if a == nil || a.hmi.ID != ev.HMI || a.watch || m.state == StateStopping {
+		return
+	}
+	by := holderName(&ev.By)
+	taken := "Übernommen von " + by
+	switch {
+	case a.proc == nil:
+		// Noch kein Client: Eine gleichzeitige Anfrage wurde verloren.
+		m.end(a, taken, false)
+	case ev.After <= 0:
+		a.takenNotice = taken
+		m.stopClient(a, taken)
+	default:
+		at := m.d.Clock.Now().Add(ev.After)
+		if m.state == StateWarned && !at.Before(m.timers.deadline) {
+			return
+		}
+		a.takenNotice = taken
+		m.state = StateWarned
+		m.notice = fmt.Sprintf("%s übernimmt, Trennung in %d s", by, int(ev.After.Round(time.Second)/time.Second))
+		m.setDeadline(at, func() { m.stopClient(a, taken) })
+	}
+}
+
+// checkConfig beendet den Versuch, wenn sein Ziel weg ist oder anders erreicht
+// würde. Alle anderen Änderungen lassen die Sitzung in Ruhe.
+func (m *Manager) checkConfig(cfg config.Config) {
+	a := m.cur
+	if a == nil || m.state == StateStopping {
+		return
+	}
+	a.permanent = cfg.Kiosk.PermanentHMI == a.hmi.ID
+	h, ok := findHMI(cfg, a.hmi.ID)
+	if !ok {
+		m.endOrStop(a, fmt.Sprintf("„%s“ wurde gelöscht", a.hmi.Name))
+		return
+	}
+	if h.Host != a.hmi.Host || h.Port != a.hmi.Port || m.passwordChanged(a, h) {
+		m.endOrStop(a, fmt.Sprintf("Einstellungen von „%s“ wurden geändert", a.hmi.Name))
+	}
+}
+
+// passwordChanged entschlüsselt nur bei geändertem Geheimtext. Dieser allein
+// beweist nichts: Dasselbe Passwort kann neu verschlüsselt gespeichert sein.
+func (m *Manager) passwordChanged(a *attempt, h config.HMI) bool {
+	if h.PasswordEnc == a.hmi.PasswordEnc {
+		return false
+	}
+	a.hmi.PasswordEnc = h.PasswordEnc
+	pw, err := m.d.Password(h)
+	return err != nil || pw != a.password
+}

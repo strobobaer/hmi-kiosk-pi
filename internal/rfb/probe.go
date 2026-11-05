@@ -25,6 +25,7 @@ const (
 // ProbeResult beschreibt das Ergebnis von Probe. Err ist für die Anzeige bestimmt.
 type ProbeResult struct {
 	Reachable, AuthOK bool
+	AuthRejected      bool // der Server hat die Anmeldung abgelehnt
 	Width, Height     int
 	Name, Err         string
 }
@@ -69,6 +70,7 @@ func Probe(ctx context.Context, host string, port int, password string) ProbeRes
 
 	res := ProbeResult{Reachable: true}
 	if err := probeHandshake(conn, password, &res); err != nil {
+		res.AuthRejected = errors.Is(err, errAuthRejected)
 		if ctx.Err() != nil || isTimeout(err) {
 			res.Err = "Zeitüberschreitung beim VNC-Handshake"
 		} else {
@@ -89,6 +91,8 @@ func isTimeout(err error) bool {
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
 }
+
+var errAuthRejected = errors.New("Anmeldung abgelehnt: Passwort falsch oder Zugriff nicht erlaubt")
 
 var errNotVNC = errors.New("Das Gegenüber ist kein VNC-Server")
 
@@ -220,7 +224,7 @@ func readSecurityResult(r io.Reader) error {
 		return err
 	}
 	if v != 0 {
-		return errors.New("Anmeldung abgelehnt: Passwort falsch oder Zugriff nicht erlaubt")
+		return errAuthRejected
 	}
 	return nil
 }
