@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Führt das Go-Werkzeug im Container aus (kein lokales Go nötig).
+# Beispiel: scripts/dgo test -race ./...
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) root="$(cygpath -m "$root")"; export MSYS_NO_PATHCONV=1 ;;
+esac
+exec docker run --rm -e GOFLAGS -e CGO_ENABLED -e GOOS -e GOARCH \
+  -v "$root:/src" -w /src \
+  -v hmi-kiosk-gomod:/go/pkg/mod -v hmi-kiosk-gobuild:/root/.cache/go-build \
+  golang:1.24-bookworm go "$@"
