@@ -322,19 +322,65 @@ Solange nur ein Raspi umgestellt ist, greift die Abstimmung noch nicht: Die alte
 
 ## 14. Offene Punkte und bestätigte Ergebnisse
 
-### Offene Punkte
+### Stand der Abschlussprüfung
 
-Diese Punkte sind nicht bestätigt und werden an den genannten Stellen entschieden:
+Stand nach Aufgabe 19. Alle automatischen Prüfungen laufen durch (Ergebnis und Zeile-für-Zeile-Abgleich der Abschnitte 1, 4, 5, 7, 10, 11 und 12 in [`docs/abgleich.md`](../../abgleich.md)). Die verbleibenden Punkte sind nur am Raspi prüfbar. Die geordnete Liste zum Abhaken steht am Ende von [`docs/inbetriebnahme.md`](../../inbetriebnahme.md), Abschnitt 12. Die Nummern H1 bis H25 unten sind dieselben wie dort.
 
-| Punkt | Wird entschieden | Rückfall |
+### Entschiedene Punkte
+
+| Punkt | Entscheidung | Wo |
 |---|---|---|
-| Debian-Version der Raspis | Beim Bau, Annahme Trixie | Abbild ersetzt das System ohnehin |
-| Display-Auflösung und Touch-Eingabe am iiyama | Selbstprüfung | Admin-Einstellung |
-| HMI-Auflösung, Schärfe der Skalierung | Selbstprüfung und Betrieb | Qualität oder TigerVNC |
-| Remmina VNC-Plugin unter Wayland/labwc | Selbstprüfung | X11-Profil |
-| labwc-Regeln für Platzierung und Größe | Selbstprüfung | X11-Profil mit openbox |
-| Geteilter Zugriff bei „Mitschauen“ und bei parallelem Zugriff über PDH | Selbstprüfung am HMI | Option aus lassen |
-| VNC-Server der HMIs, Verhalten bei mehreren Clients | Inbetriebnahme | – |
+| Verhalten bei falschem VNC-Passwort | Vorabprüfung mit `rfb.Probe` und Startfrist 15 s, `closeonfailure` greift nicht | Abschnitte 4 und 10, Abschnitt „Bestätigt“ unten, `internal/session` |
+| Remmina-Version, Flags, Passwortformat, App-IDs, Skalierung, `viewmode` | Mit 1.4.39 in `debian:trixie` (arm64, Emulation) bestätigt | Abschnitt „Bestätigt“ unten, `docs/remmina-check/` |
+| Fensterregel für Remmina | Per `app_id` und `WM_CLASS` `org.remmina.Remmina` statt Titel; die Regel greift beim ersten Anzeigen, wenn der Titel noch fehlt | `packaging/rootfs/etc/xdg/labwc/rc.xml`, Test im Abbild-Container mit openbox |
+| Schreibschutz | `overlayroot=tmpfs:recurse=0`, nur per `cmdline.txt` abschaltbar, Prüfung im Abbild über `verify-image.sh` | `docs/betrieb.md`, Wartung |
+| Datenpartition | Zwei Partitionen im Abbild; `/data` entsteht beim ersten Start, erst nach erfolgreichem Probe-Einhängen kommt der `fstab`-Eintrag, Dienste hängen per `RequiresMountsFor` daran | `packaging/image/`, `docs/inbetriebnahme.md` Abschnitt 4 |
+| Programm-Updates | Paket enthält nur den Dienst, nie den Helfer; Rückfall nach 60 s durch den Guard, übersteht Stromausfall | `internal/update`, `docs/betrieb.md` Abschnitt 2 |
+| Uhrzeit und NTP | `set-time` schaltet zuerst NTP ab, `set-ntp` schreibt die Datei und startet `systemd-timesyncd` neu | `internal/helper`, Abschnitt 11 (präzisiert) |
+| Remmina-Farbtiefe | 8, 16 oder 32 (kein 24), im Admin-Formular erzwungen | `internal/web/admin_settings.go` |
+| Terminal-API-Antworten | Anfragen sind signiert, Antworten nicht; ein Angreifer im Anlagennetz könnte nur „belegt“ vortäuschen | `internal/coord` |
+| Daueranzeige gegen primäres Terminal | Automatische Starts und Neuverbindungen verdrängen nie einen primären Halter; nur Touch tut das | `internal/session` |
+| Selbstprüfung und Daueranzeige | Selbstprüfung und Dauerprüfung werden verweigert, solange eine Daueranzeige eingestellt ist oder eine Sitzung läuft | `docs/inbetriebnahme.md` Abschnitte 7 und 8 |
+| Dauerprüfung ohne Shell | Start, Stopp und Ergebnis in der Admin-Seite; die Messwerte bleiben in `soak.jsonl` | `internal/web/admin_soak.go` |
+| Import auf einem anderen Terminal | Name, Kennung, Rolle und Netzwerk (NTP, WLAN) des Geräts bleiben erhalten | `docs/betrieb.md` Abschnitt 4 |
+| Integrationstest | Dienste laufen im Testprozess auf amd64, nicht in Containern auf arm64 per QEMU | `test/integration/` |
+
+### Offene Punkte (nur Hardware)
+
+Diese Punkte sind nicht bestätigt. Jeder hat eine Nummer, die in der Liste in `docs/inbetriebnahme.md` wiederkehrt.
+
+| Nr. | Punkt | Wird entschieden | Rückfall |
+|---|---|---|---|
+| H1 | Debian-Version der Raspis (Annahme Trixie) | Beim Bau, Erststart | Abbild ersetzt das System ohnehin |
+| H2 | Display-Auflösung und Touch-Eingabe am iiyama | Selbstprüfung `touch`, Anzeige unter System | Auflösung überschreiben |
+| H3 | HMI-Auflösung, Schärfe der Skalierung | Selbstprüfung und Betrieb | Qualität oder TigerVNC |
+| H4 | Remmina-VNC-Plugin unter Wayland/labwc | Selbstprüfung | Grafikprofil X11 |
+| H5 | labwc-Fensterregel (Platzierung, Größe, kein Rahmen) auf der Hardware; bisher nur mit der gleichwertigen openbox-Regel im Container bestätigt | Selbstprüfung `fenster-leiste` | Grafikprofil X11 mit openbox |
+| H6 | Geteilter Zugriff bei „Mitschauen“ und bei parallelem Zugriff über PDH | Prüfung am HMI | Option aus lassen |
+| H7 | VNC-Server der HMIs: Verhalten bei mehreren Clients und bei der zusätzlichen Verbindung der Vorabprüfung | Inbetriebnahme | – |
+
+### Neue offene Punkte (aus der Umsetzung)
+
+| Nr. | Punkt | Wird entschieden | Rückfall |
+|---|---|---|---|
+| H8 | Erster Start unter echtem frühem Boot: Partition anlegen bei laufender Wurzel (bisher nur mit Loop-Gerät), Probe-Einhängen, Neustart mit Overlay; Dauer ungemessen | Erststart, `hmi-kiosk-firstboot.log` | Karte neu beschreiben |
+| H9 | PAM-Sitzung unter `ExecStartPre` und tty1 (logind, Anmeldung der Grafiksitzung) | Erststart | Neustart; Fehlersuche in `docs/betrieb.md` |
+| H10 | Rootloses Xorg und Pi-5-Treiber im Profil X11 | Profil X11 einmal einschalten | Profil labwc |
+| H11 | Namen der Overlays `disable-wifi` und `disable-bt` auf dem Pi 5, Wirkung nach Neustart | Selbstprüfung `schutz` | Funk bleibt an, nur Hinweis |
+| H12 | Chromium-Sandbox ohne Paket `chromium-sandbox` (User-Namespaces) | Erststart, Protokoll | Paket ins Abbild aufnehmen |
+| H13 | Mauszeiger bleibt unter labwc über Chromium und Remmina unsichtbar | Sichtprüfung | Cursor-Thema im Abbild |
+| H14 | `timedatectl` und Uhrzeit setzen um die Sommerzeit-Umstellung (lokale Zeit, mehrdeutige Stunde) | Am Gerät | NTP statt Hand-Uhrzeit |
+| H15 | Dauerprüfung in der Admin-Seite verliert ihren Stand bei Neustart des Dienstes (Messwerte bleiben in `soak.jsonl`) | Bei der 24-Stunden-Prüfung | Prüfung neu starten |
+| H16 | Chromium: Navigation nur zur lokalen Adresse ist nicht per Richtlinie erzwungen (Abgleich 11.8); Tastenkürzel bei angeschlossener Tastatur | Am Gerät mit Tastatur | Richtlinie (`URLBlocklist`) nachrüsten |
+| H17 | Chromium-Absturz während einer Sitzung: Leiste kehrt zurück, VNC läuft weiter (nur aus dem Aufbau abgeleitet) | Am Gerät, Prozess beenden | – |
+| H18 | Echte Stromausfälle, auch während einer Sitzung und während der Ersteinrichtung (Rückfall `.good`, 500 „Konfiguration nicht lesbar“) | Inbetriebnahme | Karte tauschen |
+| H19 | Hardware-Watchdog: Einstellung wird gemeldet, ein echter Aussetzer wird nicht erzeugt | Am Gerät | – |
+| H20 | Programm-Update mit echtem Rückfall nach 60 s (Guard, Neustart) | Am Gerät | Karte tauschen |
+| H21 | SSH-Regel der Anlage (Abbild: aus) und IP-Konfiguration (Abbild: DHCP) | Vor Ort | – |
+| H22 | Zwei Raspis mit gleichem Hostnamen und gleicher PARTUUID im selben Netz | Zweiter Raspi | Hostnamen ändern |
+| H23 | Zeit bis zum Bild nach Touch (1 bis 2 s) und Eindruck gegenüber noVNC | Betrieb | Qualität oder TigerVNC |
+| H24 | Touch-Inaktivität misst nur Eingaben am echten Eingabegerät | Am Gerät, 15 min warten | – |
+| H25 | Abstimmung zwischen zwei Raspis: Übernahme, Sperre, Vorrang, Netztrennung auf echten Geräten | Inbetriebnahme Abschnitt 10 | – |
 
 ### Bestätigt: Remmina in der Trixie-Version
 

@@ -1,6 +1,6 @@
 # Inbetriebnahme
 
-Dieses Handbuch führt vom Bau des Abbilds bis zum zweiten Terminal. Es gilt für die Raspberry Pi 5 mit dem fertigen SD-Abbild. Für andere Linux-Systeme siehe Abschnitt 12.
+Dieses Handbuch führt vom Bau des Abbilds bis zum zweiten Terminal. Es gilt für die Raspberry Pi 5 mit dem fertigen SD-Abbild. Für andere Linux-Systeme siehe Abschnitt 11.
 
 Alle Schritte sind für eine Anlage mit zwei Terminals geschrieben. Es gibt kein Testgerät. Die erste Prüfung auf echter Hardware ist die Inbetriebnahme selbst. Der Rückfall ist immer der Kartentausch.
 
@@ -18,8 +18,8 @@ Der Betrieb danach steht in [betrieb.md](betrieb.md).
 8. Dauerprüfung
 9. Zweiten Raspi umstellen
 10. Prüfung mit zwei Terminals
-11. Offene Punkte nur auf Hardware
-12. Andere Linux-Systeme (install.sh)
+11. Andere Linux-Systeme (install.sh)
+12. Offene Punkte nur auf Hardware
 
 ## 1. Vorbereitung am Entwicklungsrechner
 
@@ -107,8 +107,8 @@ Was man sieht:
 
 Wie lange es dauert:
 
-- Rechnen Sie mit einigen Minuten bis zum Neustart. Die genaue Dauer auf echter Hardware ist noch nicht gemessen (siehe Abschnitt 11).
-- Warten Sie etwa 10 Minuten (ungemessener Schätzwert, siehe Abschnitt 11). Schalten Sie das Gerät in dieser Zeit nicht aus.
+- Rechnen Sie mit einigen Minuten bis zum Neustart. Die genaue Dauer auf echter Hardware ist noch nicht gemessen (siehe Abschnitt 12).
+- Warten Sie etwa 10 Minuten (ungemessener Schätzwert, siehe Abschnitt 12). Schalten Sie das Gerät in dieser Zeit nicht aus.
 
 Wenn nach etwa 10 Minuten nichts erscheint:
 
@@ -172,7 +172,7 @@ Schon in Abschnitt 5 erledigt. Ändern später unter System, „Admin-Passwort �
 8. Erst weitermachen, wenn „Erreichbar: ja“ und „Anmeldung: erfolgreich“ steht.
 9. Bei „abgelehnt“: VNC-Passwort prüfen. Bei „nicht erreichbar“: Adresse, Port, Kabel, Firewall und VNC-Server am HMI prüfen.
 
-Das Passwort beim HMI muss ein VNC-Passwort sein. Die Prüfung am HMI zeigt auch, wie der VNC-Server mehrere Clients behandelt (siehe Abschnitt 11).
+Das Passwort beim HMI muss ein VNC-Passwort sein. Die Prüfung am HMI zeigt auch, wie der VNC-Server mehrere Clients behandelt (siehe Abschnitt 12).
 
 ### 6.4 Terminals und gemeinsamer Schlüssel
 
@@ -321,7 +321,7 @@ Bestanden ist die Dauerprüfung bei 0 Fehlern und ohne Speicherzuwachs über min
 
 ### Alternative: Befehl auf dem Gerät (SSH-Abbild oder install.sh-System)
 
-Nur nötig, wenn man auf dem Gerät arbeitet. Das Standard-Abbild hat keine Eingabeaufforderung: SSH ist aus, alle Konten sind gesperrt. Ein Zugang besteht bei einem Abbild mit SSH (siehe [betrieb.md](betrieb.md), Abschnitt „SSH“) oder auf einem System aus `install.sh` (Abschnitt 12).
+Nur nötig, wenn man auf dem Gerät arbeitet. Das Standard-Abbild hat keine Eingabeaufforderung: SSH ist aus, alle Konten sind gesperrt. Ein Zugang besteht bei einem Abbild mit SSH (siehe [betrieb.md](betrieb.md), Abschnitt „SSH“) oder auf einem System aus `install.sh` (Abschnitt 11).
 
 Als Benutzer `hmikiosk` mit der Umgebung der Grafiksitzung. Beispiel für das Abbild (Datenordner `/data`, Benutzerkennung 1100):
 
@@ -428,38 +428,7 @@ Soweit die Anlage das zulässt, mehrfach wiederholen.
 
 Solange eine Abweichung offen ist, bleibt die alte Karte des Terminals beschriftet und zur Hand.
 
-## 11. Offene Punkte nur auf Hardware
-
-Diese Punkte sind nur am echten Gerät zu klären. Aufgabe 19 ergänzt und schließt die Liste. Pro Punkt ankreuzen und das Ergebnis notieren. Der Rückfall steht rechts.
-
-### Aus der Spezifikation (Abschnitt 14)
-
-- [ ] Debian-Version der Raspis. Beim Bau Trixie angenommen. Rückfall: Das Abbild ersetzt das System ohnehin.
-- [ ] Display-Auflösung und Touch-Eingabe am iiyama. Prüfung: Selbstprüfung `touch`, Anzeige unter System. Rückfall: Auflösung in der Admin-Seite überschreiben.
-- [ ] HMI-Auflösung und Schärfe der Skalierung. Prüfung: Selbstprüfung und Betrieb. Rückfall: Qualität ändern oder TigerVNC.
-- [ ] Remmina-VNC-Plugin unter Wayland/labwc. Prüfung: Selbstprüfung. Rückfall: Grafikprofil X11.
-- [ ] labwc-Regeln für Platzierung und Größe (die Regel greift auf der Hardware, kein Rahmen). Prüfung: Selbstprüfung `fenster-leiste`. Rückfall: Grafikprofil X11 mit openbox.
-- [ ] Geteilter Zugriff bei „Mitschauen“ und bei parallelem Zugriff über das PDH. Prüfung am HMI. Rückfall: Option aus lassen.
-- [ ] VNC-Server der HMIs: Verhalten bei mehreren Clients. Prüfung: Inbetriebnahme. Kein Rückfall.
-
-### Aus dem Bau des Abbilds (Bericht zu Aufgabe 17)
-
-- [ ] Erster Start insgesamt: Partition anlegen, solange die Wurzel läuft (bisher nur mit einem Loop-Gerät getestet), 30-Sekunden-Frist der Geräteerkennung, Neustart, Start mit Overlay. Bei Notfallmodus hilft ein Neustart; das Protokoll liegt in `hmi-kiosk-firstboot.log` auf der Boot-Partition.
-- [ ] Dauer des ersten Starts messen und in Abschnitt 4 und im Betriebshandbuch eintragen. Die Angaben "einige Minuten" und "etwa 10 Minuten Wartezeit" sind ungemessene Schätzwerte.
-- [ ] Anmeldung der Grafiksitzung auf tty1 über logind (labwc), rootloses Xorg im Profil X11 und der Treiber für den Pi 5 im Profil X11.
-- [ ] Chromium-Sandbox (braucht User-Namespaces; das Paket `chromium-sandbox` ist nicht installiert).
-- [ ] Mauszeiger bleibt unter labwc auch über Chromium und Remmina unsichtbar.
-- [ ] SSH: Die Regel der Anlage ist unbekannt. Das Abbild hat SSH aus. Entscheidung treffen (siehe [betrieb.md](betrieb.md)).
-- [ ] IP-Konfiguration: Das Abbild nutzt DHCP. Feste Adressen im DHCP-Server eintragen oder vor Ort klären.
-- [ ] WLAN und Bluetooth: Wirkung der Overlays `disable-wifi` und `disable-bt` auf dem Pi 5 nach dem Neustart bestätigen (Selbstprüfung `schutz`, PRÜFEN).
-- [ ] Beide Raspis mit gleichem Hostnamen und gleicher PARTUUID im selben Netz: keine Auffälligkeiten.
-- [ ] Watchdog: `schutz` meldet „eingestellt“; ein echter Aussetzer wird nicht erzeugt.
-- [ ] Stromausfall mehrfach (Abschnitt 10.5), auch während einer Sitzung.
-- [ ] Update einspielen und den automatischen Rückfall nach 60 Sekunden prüfen (siehe [betrieb.md](betrieb.md)).
-- [ ] Zeitumstellung: `set-time` bei mehrdeutiger Zeit zur Sommerzeitumstellung am Gerät prüfen.
-- [ ] Die Vorabprüfung belegt kurz eine zusätzliche VNC-Verbindung je Start. Am HMI beobachten, dass das den VNC-Server nicht stört.
-
-## 12. Andere Linux-Systeme (install.sh)
+## 11. Andere Linux-Systeme (install.sh)
 
 Für ein System ohne das fertige SD-Abbild gibt es ein Offline-Bundle und `install.sh`. Es gilt für Debian oder Raspberry Pi OS **Trixie** auf arm64 oder amd64. Es gibt keinen Schreibschutz und keine eigene Datenpartition. Das Abbild bleibt der empfohlene Weg.
 
@@ -522,3 +491,52 @@ Optionen:
 - Die Schalter „WLAN“ und „Bluetooth“ im Menü „Netzwerk“ funktionieren ohne `/boot/firmware/config.txt` nicht: Der Helfer liest und ändert diese Datei (Pfad `-boot-config`, Standard `/boot/firmware/config.txt`) und bricht sonst mit „config.txt nicht lesbar“ ab. Die Einstellung wird dann nicht übernommen. Auf einem PC ohne diese Datei die Funkmodule anders abschalten (BIOS, Betriebssystem).
 
 Nicht geprüft: Die Pakete kommen aus Debian Trixie, nicht aus dem Raspberry-Pi-Archiv. Das Abbild nutzt dort ein neueres `labwc`. Wenn die Fensterregeln unter labwc auf einem solchen System nicht greifen, hilft das Grafikprofil „X11 (openbox)“.
+
+## 12. Offene Punkte nur auf Hardware
+
+Diese Liste ist die Abnahme am Gerät. Alles andere ist ohne Hardware geprüft (Abgleich mit der Spezifikation in [abgleich.md](abgleich.md)). Die Reihenfolge entspricht dem Ablauf der Inbetriebnahme. Pro Punkt ankreuzen und das Ergebnis dahinter notieren. „H“ und die Zahl nennen den Punkt in Abschnitt 14 der Spezifikation, dort stehen auch die Rückfälle. Die Handgriffe stehen in den genannten Abschnitten dieses Handbuchs und in [betrieb.md](betrieb.md).
+
+**Erster Raspi, vor der Einrichtung**
+
+1. [ ] Erster Start vollständig: Partition anlegen, Neustart, Start mit Overlay, Kachelseite erscheint (H8, Abschnitt 4). Dauer des ersten Starts messen und in Abschnitt 4 und im Betriebshandbuch statt der Schätzwerte eintragen. Bei Notfallmodus: `hmi-kiosk-firstboot.log` auf der Bootpartition.
+2. [ ] Anmeldung der Grafiksitzung auf tty1 und der Dienst unter `ExecStartPre`: Dienst und Browser laufen ohne Eingriff (H9).
+3. [ ] Debian-Version des Geräts entspricht der Annahme Trixie (H1).
+4. [ ] Chromium startet mit Sandbox; kein Hinweis „no-sandbox“ oder Sandbox-Fehler im Protokoll (H12).
+5. [ ] Mauszeiger bleibt unter labwc auch über Chromium und Remmina unsichtbar (H13).
+6. [ ] Anzeige: Auflösung unter System passt zum iiyama, sonst überschreiben (H2, Abschnitt 6).
+7. [ ] SSH-Regel der Anlage entscheiden, IP-Adresse im DHCP-Server festlegen (H21, Abschnitt 5 und [betrieb.md](betrieb.md), „SSH“).
+
+**Einrichtung und Selbstprüfung (Abschnitte 6 und 7)**
+
+8. [ ] HMI anlegen, Verbindungsprüfung zeigt Auflösung; die zusätzliche Verbindung der Vorabprüfung stört den VNC-Server des HMI nicht (H7, Abschnitt 6.3).
+9. [ ] Remmina-VNC-Plugin unter Wayland/labwc: Bild erscheint, Skalierung scharf genug; sonst Qualität ändern oder TigerVNC (H3, H4, Selbstprüfung `client-bild`).
+10. [ ] Fensterregel unter labwc: Leiste oben, Bild darunter, kein Rahmen. Sichtprüfung, da die Selbstprüfung die Lage unter labwc nicht misst (H5, Selbstprüfung `fenster-leiste`). Greift die Regel nicht: Grafikprofil X11. Das Profil X11 ohnehin einmal einschalten und zurückstellen: rootloses Xorg und der Treiber für den Pi 5 laufen (H10).
+11. [ ] Touch am iiyama: alle Ziele getroffen, Abweichung höchstens 15 Pixel (H2, Selbstprüfung `touch`).
+12. [ ] Zeit von Antippen bis zum Bild etwa 1 bis 2 Sekunden, Eindruck gegenüber noVNC (H23).
+13. [ ] Inaktivität: nach der eingestellten Zeit ohne Berührung zurück zu den Kacheln, Berührung setzt die Uhr zurück (H24).
+14. [ ] Selbstprüfung ohne FEHLER, PRÜFEN-Zeilen einzeln bewertet (Abschnitt 7).
+15. [ ] Chromium während einer Sitzung beenden (zum Beispiel per SSH-Abbild oder nach Abschnitt 8, Alternative): Die Leiste kommt wieder, die VNC-Sitzung bleibt (H17).
+16. [ ] Mitschauen und paralleler Zugriff über das PDH am echten HMI, sonst Option aus lassen (H6, Abschnitt 6.3).
+17. [ ] Optional, falls ein Gerät mit Tastatur zur Verfügung steht: Chromium-Tastenkürzel und Adresseingabe im Kiosk. Ergebnis entscheidet über eine URL-Sperre per Richtlinie (H16).
+
+**Netzwerk und Zeit (Abschnitt 6.6, 6.7)**
+
+18. [ ] WLAN und Bluetooth abschalten, neu starten: Die Funkmodule fehlen (Overlay-Namen auf dem Pi 5), Selbstprüfung `schutz` zeigt es (H11).
+19. [ ] Uhrzeit von Hand setzen und NTP-Server eintragen; um eine Zeitumstellung herum die mehrdeutige Stunde prüfen (H14).
+
+**Dauerprüfung (Abschnitt 8)**
+
+20. [ ] 24 Stunden außerhalb der Betriebszeit, Ergebnis ohne Leck und ohne Fehler. Fällt der Dienst während der Prüfung aus, ist der Stand der Seite leer; Messwerte bleiben in `soak.jsonl` (H15).
+21. [ ] Watchdog: `schutz` meldet „eingestellt“. Ein echter Aussetzer wird nicht erzeugt (H19).
+
+**Betrieb und Ausfall**
+
+22. [ ] Stromausfall mehrfach, auch während einer Sitzung und kurz nach der Ersteinrichtung vor dem Setzen des Admin-Passworts (Abschnitt 10.5, H18; Erholung bei 500 siehe [betrieb.md](betrieb.md)).
+23. [ ] Programm-Update einspielen und den automatischen Rückfall nach 60 Sekunden mit einer absichtlich falschen Version erzwingen ([betrieb.md](betrieb.md), Abschnitt 2, H20).
+
+**Zweiter Raspi (Abschnitte 9 und 10)**
+
+24. [ ] Beide Raspis im selben Netz mit gleichem Hostnamen und gleicher PARTUUID ohne Auffälligkeiten (H22).
+25. [ ] Übernahme, Sperre, Vorrang, Netztrennung und Stromausfall mit beiden Geräten (Abschnitt 10, H25).
+
+Alle Punkte erledigt: Die Abweichungen in Abschnitt 14 der Spezifikation nachtragen, die alte Karte des ersten Terminals erst danach löschen.
