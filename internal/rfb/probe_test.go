@@ -1,8 +1,11 @@
 package rfb
 
 import (
+	"bytes"
 	"context"
+	"crypto/des"
 	"encoding/binary"
+	"encoding/hex"
 	"image"
 	"io"
 	"log"
@@ -251,4 +254,77 @@ func TestServerClosesOnUnsupportedPixelFormat(t *testing.T) {
 func TestMain(m *testing.M) {
 	log.SetOutput(io.Discard)
 	os.Exit(m.Run())
+}
+
+func TestUpdateRequestMergeKeepsFullRequest(t *testing.T) {
+	full := updateRequest{pending: true, x: 0, y: 0, w: 300, h: 200}
+	inc := updateRequest{pending: true, incremental: true, x: 0, y: 0, w: 300, h: 200}
+	if m := full.merge(inc); m.incremental || m.w != 300 || m.h != 200 {
+		t.Fatalf("%+v", m)
+	}
+	if m := inc.merge(full); m.incremental {
+		t.Fatalf("%+v", m)
+	}
+	if m := inc.merge(inc); !m.incremental {
+		t.Fatalf("%+v", m)
+	}
+	a := updateRequest{pending: true, x: 0, y: 0, w: 10, h: 10}
+	b := updateRequest{pending: true, x: 20, y: 30, w: 10, h: 10}
+	if m := a.merge(b); m.x != 0 || m.y != 0 || m.w != 30 || m.h != 40 {
+		t.Fatalf("Vereinigung %+v", m)
+	}
+	if m := (updateRequest{}).merge(b); m != b {
+		t.Fatalf("%+v", m)
+	}
+}
+
+func TestServerFullThenIncrementalStillDeliversImage(t *testing.T) {
+	_, host, port := startServer(t, 120, 80, "")
+	c := rawClient(t, host, port)
+	b := append([]byte(nil), 3, 0, 0, 0, 0, 0, 0, 120, 0, 80)
+	b = append(b, 3, 1, 0, 0, 0, 0, 0, 120, 0, 80)
+	c.Write(b)
+	hdr := make([]byte, 16)
+	if _, err := io.ReadFull(c, hdr); err != nil {
+		t.Fatal(err)
+	}
+	if binary.BigEndian.Uint16(hdr[2:]) != 1 {
+		t.Fatalf("kein Rechteck: %v", hdr)
+	}
+}
+
+func TestServerTreats3889As38(t *testing.T) {
+	_, host, port := startServer(t, 100, 100, "geheim")
+	c, err := net.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	io.ReadFull(c, make([]byte, 12))
+	c.Write([]byte("RFB 003.889\n"))
+	sec := make([]byte, 2) // 3.8: Liste (Anzahl, Typ); 3.3 hätte u32 gesendet
+	if _, err := io.ReadFull(c, sec); err != nil || sec[0] != 1 || sec[1] != secVNC {
+		t.Fatalf("%v %v", sec, err)
+	}
+}
+
+func TestVNCAuthKnownAnswer(t *testing.T) {
+	challenge := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	// "password" = 70 61 73 73 77 6f 72 64, jedes Byte bitweise gespiegelt (von Hand).
+	key := []byte{0x0e, 0x86, 0xce, 0xce, 0xee, 0xf6, 0x4e, 0x26}
+	blk, err := des.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := make([]byte, 16)
+	blk.Encrypt(want[:8], challenge[:8])
+	blk.Encrypt(want[8:], challenge[8:])
+	got, _ := vncAuthResponse("password", challenge)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("%x != %x", got, want)
+	}
+	if hex.EncodeToString(got) != "b866924125c8eebb9debc1db61c538e2" {
+		t.Fatalf("Antwort %x", got)
+	}
 }

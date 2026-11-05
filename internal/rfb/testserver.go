@@ -176,7 +176,7 @@ func (s *TestServer) handshake(c net.Conn) error {
 	}
 	minor := 3
 	switch string(ver[8:11]) {
-	case "008":
+	case "008", "889": // 3.889 (RealVNC-Variante) verhält sich wie 3.8
 		minor = 8
 	case "007":
 		minor = 7
@@ -336,11 +336,11 @@ func (s *TestServer) handle(c net.Conn) error {
 				return err
 			}
 			mu.Lock()
-			req = updateRequest{
+			req = req.merge(updateRequest{
 				pending: true, incremental: b[0] != 0,
 				x: int(binary.BigEndian.Uint16(b[1:])), y: int(binary.BigEndian.Uint16(b[3:])),
 				w: int(binary.BigEndian.Uint16(b[5:])), h: int(binary.BigEndian.Uint16(b[7:])),
-			}
+			})
 			mu.Unlock()
 			select {
 			case notify <- struct{}{}:
@@ -409,4 +409,17 @@ func (s *TestServer) fullUpdate(r updateRequest, p pixelFormat) []byte {
 		}
 	}
 	return msg
+}
+
+// merge fasst eine noch unbeantwortete Anfrage mit einer neuen zusammen: eine
+// nicht inkrementelle Anfrage bleibt erhalten, die Bereiche werden vereinigt.
+func (r updateRequest) merge(n updateRequest) updateRequest {
+	if !r.pending {
+		return n
+	}
+	out := updateRequest{pending: true, incremental: r.incremental && n.incremental}
+	out.x, out.y = min(r.x, n.x), min(r.y, n.y)
+	out.w = max(r.x+r.w, n.x+n.w) - out.x
+	out.h = max(r.y+r.h, n.y+n.h) - out.y
+	return out
 }
