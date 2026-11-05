@@ -108,9 +108,9 @@ Was man sieht:
 Wie lange es dauert:
 
 - Rechnen Sie mit einigen Minuten bis zum Neustart. Die genaue Dauer auf echter Hardware ist noch nicht gemessen (siehe Abschnitt 11).
-- Warten Sie bis zu 10 Minuten. Schalten Sie das Gerät in dieser Zeit nicht aus.
+- Warten Sie etwa 10 Minuten (ungemessener Schätzwert, siehe Abschnitt 11). Schalten Sie das Gerät in dieser Zeit nicht aus.
 
-Wenn nach 10 Minuten nichts erscheint:
+Wenn nach etwa 10 Minuten nichts erscheint:
 
 1. Gerät ausschalten und Karte in einen PC stecken.
 2. Auf der Boot-Partition (die kleine, FAT) die Datei `hmi-kiosk-firstboot.log` öffnen. Sie nennt den letzten erledigten Schritt und einen eventuellen Fehler.
@@ -133,7 +133,7 @@ Die Admin-Seite ist nur im Netzwerk erreichbar. Die Kachelseite am Bildschirm ze
 1. Im Browser öffnen: `https://<IP>:8443`
 2. Der Browser warnt vor dem Zertifikat („Verbindung nicht privat“). Das Gerät erzeugt sein Zertifikat selbst. Die Warnung ist hier erwartet.
 3. „Erweitert“ wählen und „Weiter zu <IP>“ bestätigen.
-4. Beim ersten Aufruf erscheint die Seite „Passwort festlegen“. Das Gerät hat noch kein Admin-Passwort.
+4. Beim ersten Aufruf erscheint die Seite „Ersteinrichtung“ mit dem Feld „Neues Passwort“ und der Schaltfläche „Passwort festlegen“. Das Gerät hat noch kein Admin-Passwort.
 5. Ein Passwort mit mindestens 10 Zeichen eingeben und wiederholen. Es gibt kein Standardpasswort.
 6. Das Passwort sicher aufbewahren. Ohne Passwort hilft nur ein neues Abbild (siehe [betrieb.md](betrieb.md), Fehlersuche).
 
@@ -269,32 +269,33 @@ Die Selbstprüfung gibt es auch als Befehl auf dem Gerät (`hmi-kiosk selftest`)
 
 ## 8. Dauerprüfung
 
-Die Dauerprüfung startet und beendet wiederholt einen Client gegen den eingebauten Test-VNC-Server und misst dabei den Speicher. Sie muss **mindestens 24 Stunden** laufen, **außerhalb der Betriebszeit**.
+Die Dauerprüfung startet und beendet wiederholt einen Client gegen den eingebauten Test-VNC-Server und misst dabei den Speicher von Dienst und Client. Sie berührt kein echtes HMI. Sie muss **mindestens 24 Stunden** laufen, **außerhalb der Betriebszeit**.
 
 ### Voraussetzungen
 
-- Daueranzeige auf „Keine“ und keine laufende Sitzung. Sonst verweigert der Befehl den Start.
-- **Niemand bedient das Terminal während der Prüfung.** Bedienung verfälscht die Werte.
-- Der Befehl braucht eine Eingabeaufforderung auf dem Gerät. Das Standard-Abbild hat keine: SSH ist aus, alle Konten sind gesperrt. Für die Dauerprüfung gibt es zwei Wege:
-  - Ein Abbild mit SSH bauen (Schlüsselanmeldung, siehe [betrieb.md](betrieb.md), „SSH einschalten“) und die Dauerprüfung darauf ausführen. Danach nach Konfigurationsexport entscheiden, ob SSH bleibt oder ein Abbild ohne SSH geschrieben wird.
-  - Ein System aus `install.sh` (Abschnitt 12) verwenden.
+- Keine Sitzung läuft, keine Daueranzeige ist eingestellt (Abschnitt 6.5) und keine Selbstprüfung läuft. Sonst verweigert die Admin-Seite den Start und nennt den Grund.
+- **Niemand bedient das Terminal während der Prüfung.** Die Kacheln sind währenddessen gesperrt.
+- Es wird keine Eingabeaufforderung gebraucht. Alles geht in der Admin-Seite.
 
-### Start
+### Start in der Admin-Seite (Normalfall)
 
-Auf dem Gerät, zum Beispiel per SSH, als Benutzer `hmikiosk` mit der Umgebung der Grafiksitzung:
-
-```
-sudo -u hmikiosk env XDG_RUNTIME_DIR=/run/user/1100 $(cat /run/hmi-kiosk-session/env) \
-  /data/app/current/hmi-kiosk soak -duration 24h
-```
-
-- Ein Durchgang dauert etwa eine halbe Minute plus Start und Ende des Clients. In 24 Stunden sind das einige tausend Durchgänge.
-- Mit `nohup` oder `tmux` starten, damit die Prüfung das Trennen der SSH-Sitzung übersteht.
-- Abbruch mit Strg+C ist erlaubt. Die Auswertung bis dahin bleibt gültig.
+1. Menü „System“, Bereich „Dauerprüfung“.
+2. Bei „Dauer“ eine der Auswahlen nehmen: 1 Stunde, 8 Stunden, **24 Stunden** (voreingestellt) oder 72 Stunden. Für die Inbetriebnahme 24 Stunden oder mehr wählen.
+3. Das Kästchen „Das Terminal ist währenddessen nicht bedienbar“ ankreuzen.
+4. „Dauerprüfung starten“ drücken und bestätigen.
+5. Die Prüfung endet nach der gewählten Dauer von selbst. Mit „Dauerprüfung stoppen“ lässt sie sich vorzeitig beenden.
+6. Die Seite „System“ zeigt den Stand: „läuft seit“ oder „beendet“ mit Zeiten, „Durchgänge“, „Fehler“, „Speicher (Dienst und Client)“, „Leck“ und gegebenenfalls „Letzter Fehler“. Zum Aktualisieren die Seite neu laden.
+7. Ein Durchgang dauert etwa eine halbe Minute plus Start und Ende des Clients. In 24 Stunden sind das einige tausend Durchgänge.
+8. Startet der Dienst während der Prüfung neu (zum Beispiel nach einem Stromausfall), ist die Prüfung beendet und die Anzeige des Stands leer. Die Messwerte bis dahin bleiben in der Datei erhalten. Dann neu starten.
 
 ### Ergebnis lesen
 
-Jeder Durchgang schreibt eine JSON-Zeile auf den Bildschirm und an die Datei `/data/log/soak.jsonl`. Die Datei ist nicht über die Admin-Seite herunterladbar. Felder:
+Unter dem Stand gibt es zwei Schaltflächen:
+
+- „Messwerte herunterladen“ liefert `soak.jsonl`: pro Durchgang eine JSON-Zeile.
+- „Zusammenfassung herunterladen“ liefert `dauerpruefung.txt`: Dauer, Durchgänge, Fehler, Speicher, Leck, letzter Fehler.
+
+Felder in `soak.jsonl`:
 
 | Feld | Bedeutung |
 |---|---|
@@ -307,38 +308,65 @@ Jeder Durchgang schreibt eine JSON-Zeile auf den Bildschirm und an die Datei `/d
 | `leak` | `true`, wenn der Speicher wächst |
 | `slopeBytesPerHour` | Zuwachs in Bytes je Stunde (nur bei `leak`) |
 
-Am Ende steht eine Zeile auf der Fehlerausgabe: „Dauerprüfung beendet: N Durchgänge, M Fehler“, bei Speicherzuwachs mit dem Zuwachs in MB je Stunde.
+Die Datei sammelt alle Läufe nacheinander (angehängt). Zeitpunkte trennen die Läufe; `cycle` beginnt bei jedem Lauf wieder mit 1.
 
 So wertet man aus:
 
-1. Exit-Code 0 bedeutet: keine Fehler und kein Speicherzuwachs. Exit-Code 1: Fehler oder Zuwachs. Exit-Code 2: falscher Aufruf oder Prüfung nicht gestartet.
-2. Letzte Zeile ansehen: `tail -n 1 /data/log/soak.jsonl` und `failures` lesen. Es sollte 0 sein.
-3. Fehler suchen: `grep '"error"' /data/log/soak.jsonl`.
-4. Zuwachs suchen: `grep '"leak":true' /data/log/soak.jsonl`. Ein Zuwachs wird ab 20 Durchgängen gemeldet, wenn er über 1 MB je Stunde liegt.
-5. Bei `leak` den Zuwachs von `serviceRss` und `clientRss` vergleichen. Der größere nennt den Verursacher.
-6. Auch ohne Meldung die Werte `rssBytes` am Anfang und Ende vergleichen. Sie sollten ähnlich sein.
+1. „Fehler“ muss 0 sein. Fehlertexte stehen in `error` und unter „Letzter Fehler“.
+2. „Leck“ muss „nein“ sein. Ein Zuwachs wird ab 20 Durchgängen gemeldet, wenn er über 1 MB je Stunde liegt. Bei „ja“ nennt die Seite den Zuwachs in MB je Stunde.
+3. Bei einem Leck in der Messwertdatei `serviceRss` und `clientRss` vergleichen: Der größere Zuwachs nennt den Verursacher.
+4. Auch ohne Meldung `rssBytes` am Anfang und Ende vergleichen. Sie sollten ähnlich sein.
 
-Bestanden ist die Dauerprüfung bei 0 Fehlern und ohne Speicherzuwachs über mindestens 24 Stunden. Sonst Ergebnis aufheben und melden. Das Terminal bleibt bis zur Klärung nicht im Dauerbetrieb.
+Bestanden ist die Dauerprüfung bei 0 Fehlern und ohne Speicherzuwachs über mindestens 24 Stunden. Sonst beide Dateien aufheben und melden. Das Terminal bleibt bis zur Klärung nicht im Dauerbetrieb.
+
+### Alternative: Befehl auf dem Gerät (SSH-Abbild oder install.sh-System)
+
+Nur nötig, wenn man auf dem Gerät arbeitet. Das Standard-Abbild hat keine Eingabeaufforderung: SSH ist aus, alle Konten sind gesperrt. Ein Zugang besteht bei einem Abbild mit SSH (siehe [betrieb.md](betrieb.md), Abschnitt „SSH“) oder auf einem System aus `install.sh` (Abschnitt 12).
+
+Als Benutzer `hmikiosk` mit der Umgebung der Grafiksitzung. Beispiel für das Abbild (Datenordner `/data`, Benutzerkennung 1100):
+
+```
+sudo -u hmikiosk env XDG_RUNTIME_DIR=/run/user/1100 $(cat /run/hmi-kiosk-session/env) \
+  /data/app/current/hmi-kiosk soak -duration 24h
+```
+
+Beispiel für ein System aus `install.sh` mit Standard-Datenordner. Die Kennung steht in `id -u hmikiosk`:
+
+```
+sudo -u hmikiosk env XDG_RUNTIME_DIR=/run/user/$(id -u hmikiosk) $(cat /run/hmi-kiosk-session/env) \
+  /var/lib/hmi-kiosk/app/current/hmi-kiosk soak -duration 24h -data /var/lib/hmi-kiosk
+```
+
+- Bei einem anderen Datenordner (`--data-dir`) Pfad und `-data` entsprechend ändern.
+- Ausgabe: eine JSON-Zeile je Durchgang auf dem Bildschirm und in `<Datenordner>/log/soak.jsonl` (im Abbild `/data/log/soak.jsonl`).
+- Mit `nohup` oder `tmux` starten, damit die Prüfung das Trennen der SSH-Sitzung übersteht. Abbruch mit Strg+C ist erlaubt.
+- Am Ende steht auf der Fehlerausgabe „Dauerprüfung beendet: N Durchgänge, M Fehler“. Exit-Code 0: keine Fehler und kein Zuwachs. 1: Fehler oder Zuwachs. 2: falscher Aufruf oder nicht gestartet.
+- Auswertung: `tail -n 1 <Datenordner>/log/soak.jsonl` (Feld `failures`), `grep '"error"' ...`, `grep '"leak":true' ...`.
 
 ## 9. Zweiten Raspi umstellen
 
-1. Auf dem ersten Terminal: Menü „System“, „Konfiguration sichern“.
-2. Ein Passwort für die Datei vergeben (mindestens 10 Zeichen) und wiederholen, „Exportieren“.
+Die Reihenfolge ist wichtig: Zuerst bekommt das zweite Terminal seinen Namen, erst danach wird importiert. Ein frisch eingerichtetes Terminal heißt „Terminal“. Bleibt es dabei, steht nach dem Import ein Eintrag mit dem eigenen Namen in der Liste, und das spätere Speichern des Namens scheitert.
+
+1. Auf dem ersten Terminal: Menü „Terminals“, unter „Andere Terminals“ das zweite Terminal eintragen. Der **Name** dort muss genau der Name sein, den das zweite Terminal in Schritt 6 bekommt. Speichern.
+2. Menü „System“, „Konfiguration sichern“. Ein Passwort für die Datei vergeben (mindestens 10 Zeichen) und wiederholen, „Exportieren“.
 3. Die Datei (`.hkx`) speichern. Das Passwort für die Datei gut aufbewahren: Ohne es ist die Datei nicht wiederherstellbar. Die Datei enthält VNC-Passwörter und den gemeinsamen Schlüssel.
-4. Den zweiten Raspi wie ab Abschnitt 3 vorbereiten: alte Karte beschriften und aufbewahren, neue Karte schreiben, starten, Admin-Seite öffnen, Admin-Passwort festlegen.
-5. Auf dem zweiten Terminal: Menü „System“, „Konfiguration wiederherstellen“. Passwort der Datei eingeben, Datei auswählen, „Importieren“.
-6. Was der Import ändert und was nicht:
+4. Den zweiten Raspi wie ab Abschnitt 3 vorbereiten: alte Karte beschriften und aufbewahren, neue Karte schreiben, starten, Admin-Seite öffnen. Dort erscheint die „Ersteinrichtung“: Admin-Passwort festlegen („Passwort festlegen“).
+5. Anmelden.
+6. Auf dem zweiten Terminal **vor dem Import**: Menü „Terminals“, bei „Dieses Terminal“ den Namen setzen (genau wie in Schritt 1 eingetragen) und die Rolle wählen. Speichern.
+7. Menü „System“, „Konfiguration wiederherstellen“. Passwort der Datei eingeben, Datei auswählen, „Importieren“.
+8. Was der Import ändert und was nicht:
    - Übernommen werden HMIs, Client-, Kiosk- und Anzeige-Einstellungen, die Terminal-Liste und der gemeinsame Schlüssel.
    - Name, Kennung und Rolle dieses Terminals, das Admin-Passwort und die Netzwerk-Einstellungen (WLAN, Bluetooth, NTP) bleiben unverändert.
-   - Ein Eintrag mit dem eigenen Namen wird aus der Terminal-Liste entfernt.
-7. Auf dem zweiten Terminal nacharbeiten:
-   - Menü „Terminals“: eigenen Namen und die Rolle setzen.
-   - Das erste Terminal (Name und Adresse) in „Andere Terminals“ eintragen, falls es fehlt. Der Export des ersten Terminals enthält es nicht.
+   - Ein Eintrag in der Terminal-Liste, dessen Name dem eigenen Namen entspricht, wird entfernt.
+9. Auf dem zweiten Terminal nacharbeiten:
+   - Menü „Terminals“: das erste Terminal (Name und Adresse) unter „Andere Terminals“ eintragen. Der Export des ersten Terminals enthält es nicht.
    - Unter „Gemeinsamer Schlüssel“ muss der Status „gesetzt“ sein.
    - Unter „Netzwerk“: WLAN und Bluetooth abschalten, NTP eintragen (diese Werte gelten je Gerät).
    - Eine Daueranzeige nach Bedarf eintragen.
-8. Auf dem ersten Terminal prüfen, dass das zweite in „Andere Terminals“ steht.
-9. Auf dem zweiten Terminal die Selbstprüfung (Abschnitt 7) und die Dauerprüfung (Abschnitt 8) ausführen.
+10. Auf dem ersten Terminal prüfen, dass das zweite in „Andere Terminals“ steht.
+11. Auf dem zweiten Terminal die Selbstprüfung (Abschnitt 7) und die Dauerprüfung (Abschnitt 8) ausführen.
+
+Wenn beim Speichern die Fehlermeldung „Peer „…“ entspricht dem eigenen Terminalnamen“ erscheint: Unter „Terminals“ im Bereich „Andere Terminals“ die Zeile mit dem eigenen Namen leeren (Name und Adresse löschen) und erneut speichern. Das passiert, wenn der Name erst nach dem Import geändert wurde.
 
 Beide Raspis haben denselben Hostnamen. Das stört die Abstimmung nicht, sie läuft über die eingetragenen Adressen.
 
@@ -417,7 +445,7 @@ Diese Punkte sind nur am echten Gerät zu klären. Aufgabe 19 ergänzt und schli
 ### Aus dem Bau des Abbilds (Bericht zu Aufgabe 17)
 
 - [ ] Erster Start insgesamt: Partition anlegen, solange die Wurzel läuft (bisher nur mit einem Loop-Gerät getestet), 30-Sekunden-Frist der Geräteerkennung, Neustart, Start mit Overlay. Bei Notfallmodus hilft ein Neustart; das Protokoll liegt in `hmi-kiosk-firstboot.log` auf der Boot-Partition.
-- [ ] Dauer des ersten Starts messen und in Abschnitt 4 eintragen.
+- [ ] Dauer des ersten Starts messen und in Abschnitt 4 und im Betriebshandbuch eintragen. Die Angaben "einige Minuten" und "etwa 10 Minuten Wartezeit" sind ungemessene Schätzwerte.
 - [ ] Anmeldung der Grafiksitzung auf tty1 über logind (labwc), rootloses Xorg im Profil X11 und der Treiber für den Pi 5 im Profil X11.
 - [ ] Chromium-Sandbox (braucht User-Namespaces; das Paket `chromium-sandbox` ist nicht installiert).
 - [ ] Mauszeiger bleibt unter labwc auch über Chromium und Remmina unsichtbar.
@@ -435,6 +463,8 @@ Diese Punkte sind nur am echten Gerät zu klären. Aufgabe 19 ergänzt und schli
 
 Für ein System ohne das fertige SD-Abbild gibt es ein Offline-Bundle und `install.sh`. Es gilt für Debian oder Raspberry Pi OS **Trixie** auf arm64 oder amd64. Es gibt keinen Schreibschutz und keine eigene Datenpartition. Das Abbild bleibt der empfohlene Weg.
 
+**Voraussetzung:** Das Zielsystem darf keine Desktop-Umgebung und keinen Display-Manager (zum Beispiel gdm, lightdm, sddm) haben. Die Kiosk-Sitzung belegt die Konsole `tty1` und den Bildschirm allein. `install.sh` schreibt außerdem `/etc/xdg/labwc/rc.xml`, `/etc/xdg/labwc/environment` und `/etc/xdg/openbox/rc.xml`; eine vorhandene abweichende Datei bleibt einmal als `.vor-hmi-kiosk` erhalten. Am besten ein frisch installiertes Debian Trixie Lite (ohne Desktop) verwenden.
+
 ### Bundle bauen
 
 Auf dem Entwicklungsrechner, mit Docker und Internet:
@@ -448,11 +478,11 @@ Für ein PC-System `--arch amd64`. Das Programm wird dabei mit `.secrets/release
 ### Installieren
 
 1. Bundle auf das Zielsystem kopieren und Prüfsumme kontrollieren (`sha256sum -c`).
-2. Entpacken: `tar xzf hmi-kiosk-bundle-1.0.0-trixie-arm64.tar.gz`
+2. Unter `/opt` entpacken (der Ordner muss bleiben, siehe unten): `sudo tar xzf hmi-kiosk-bundle-1.0.0-trixie-arm64.tar.gz -C /opt`
 3. Als root ausführen:
 
    ```
-   cd hmi-kiosk-bundle-1.0.0-trixie-arm64
+   cd /opt/hmi-kiosk-bundle-1.0.0-trixie-arm64
    sudo ./install.sh
    ```
 
@@ -460,7 +490,10 @@ Für ein PC-System `--arch amd64`. Das Programm wird dabei mit `.secrets/release
    - `VERSION_CODENAME` in `/etc/os-release` gleich `trixie`
    - die dpkg-Architektur gleich der des Bundles
    - die Prüfsummen des Bundles
+   - der Datenordner: neu, leer oder mit vorhandenen Kiosk-Dateien (`config.json` oder `app/`); ein anderer, nicht leerer Ordner wird nicht angefasst
+   - die Version: ist die laufende Version neuer als die im Bundle, bricht das Skript ab (Rückschritt nur mit `--force-downgrade`)
 5. Bei einer Abweichung bricht es mit einer klaren Meldung ab und verändert nichts.
+6. Das entpackte Bundle unter `/opt` aufheben. Es wird für Wiederholungen und spätere Bundles gebraucht.
 
 Optionen:
 
@@ -469,6 +502,7 @@ Optionen:
 | `--no-start` | Nur einrichten, Dienste weder aktivieren noch starten (für Tests) |
 | `--online` | Pakete aus den Paketquellen des Systems holen statt aus dem Bundle |
 | `--data-dir ORDNER` | Datenordner, Standard `/var/lib/hmi-kiosk` (im Abbild `/data`) |
+| `--force-downgrade` | Erlaubt, eine ältere Version als die laufende zu installieren (sonst Abbruch) |
 
 ### Was das Skript einrichtet
 
@@ -480,6 +514,11 @@ Optionen:
 - Das Skript ist wiederholbar. Eine vorhandene Konfiguration im Datenordner bleibt unberührt.
 - Es schaltet **kein** Overlay und keine schreibgeschützte Boot-Partition ein.
 
-Auf einem solchen System meldet die Selbstprüfung beim Schutz (`schutz`) fehlendes Overlay nur als Hinweis (PRÜFEN), nicht als Fehler.
+**Selbstprüfung auf einem solchen System, Schritt `schutz`:**
+
+- Kein Overlay auf `/` und eine beschreibbare Boot-Partition sind hier erwartet und werden nur als Hinweis (PRÜFEN) gemeldet.
+- Der Watchdog (`RuntimeWatchdogSec`) steht erst nach dem nächsten Neustart. Davor meldet der Schritt **FEHLER** („Watchdog … nicht eingestellt“).
+- Ist `config.txt` nicht lesbar, meldet der Schritt **FEHLER** („WLAN/Bluetooth nicht prüfbar: config.txt …“). Das trifft Systeme ohne `/boot/firmware/config.txt` oder `/boot/config.txt`, also die meisten PCs. Die Selbstprüfung ist dort in diesem Schritt nicht bestehbar; der Rest lässt sich trotzdem bewerten.
+- Die Schalter „WLAN“ und „Bluetooth“ im Menü „Netzwerk“ funktionieren ohne `/boot/firmware/config.txt` nicht: Der Helfer liest und ändert diese Datei (Pfad `-boot-config`, Standard `/boot/firmware/config.txt`) und bricht sonst mit „config.txt nicht lesbar“ ab. Die Einstellung wird dann nicht übernommen. Auf einem PC ohne diese Datei die Funkmodule anders abschalten (BIOS, Betriebssystem).
 
 Nicht geprüft: Die Pakete kommen aus Debian Trixie, nicht aus dem Raspberry-Pi-Archiv. Das Abbild nutzt dort ein neueres `labwc`. Wenn die Fensterregeln unter labwc auf einem solchen System nicht greifen, hilft das Grafikprofil „X11 (openbox)“.

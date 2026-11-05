@@ -118,13 +118,14 @@ Solange der Schreibschutz aus ist, meldet die Admin-Seite unter System eine Warn
 Bei defekter Karte:
 
 1. Das Abbild auf eine neue Karte schreiben (Inbetriebnahme, Abschnitt 3). Dieselbe Version wie auf dem übrigen Terminal wählen.
-2. Starten, Admin-Passwort festlegen.
-3. Die gesicherte Konfiguration importieren (System, „Konfiguration wiederherstellen“).
-4. Name und Rolle des Terminals unter „Terminals“ setzen, das andere Terminal als „Andere Terminals“ eintragen, Schlüssel prüfen (Status „gesetzt“), WLAN und Bluetooth abschalten, NTP eintragen.
-5. Das Abbild enthält nur die Version vom Bau. Wurde später ein Update eingespielt, dasselbe Paket erneut einspielen (Abschnitt 2).
-6. Selbstprüfung ausführen (Inbetriebnahme, Abschnitt 7).
-7. Das andere Terminal braucht keine Änderung, wenn die neue Karte dieselbe Adresse (DHCP-Reservierung) bekommt. Sonst dort die Adresse unter „Andere Terminals“ ändern.
-8. Die neue Karte erzeugt eine neue Kennung des Terminals. Das stört die Abstimmung nicht.
+2. Starten, auf der Seite „Ersteinrichtung“ das Admin-Passwort festlegen („Passwort festlegen“).
+3. **Vor dem Import** unter „Terminals“ Namen und Rolle dieses Terminals setzen, genau wie auf der ausgefallenen Karte. Die Sicherung ersetzt Name, Kennung und Rolle nicht, und ein Eintrag mit dem eigenen Namen in „Andere Terminals“ würde sonst das Speichern des Namens später blockieren (Inbetriebnahme, Abschnitt 9).
+4. Die gesicherte Konfiguration importieren (System, „Konfiguration wiederherstellen“).
+5. Das andere Terminal unter „Andere Terminals“ prüfen und bei Bedarf eintragen, Schlüssel prüfen (Status „gesetzt“), WLAN und Bluetooth abschalten, NTP eintragen.
+6. Das Abbild enthält nur die Version vom Bau. Wurde später ein Update eingespielt, dasselbe Paket erneut einspielen (Abschnitt 2).
+7. Selbstprüfung ausführen (Inbetriebnahme, Abschnitt 7).
+8. Das andere Terminal braucht keine Änderung, wenn die neue Karte dieselbe Adresse (DHCP-Reservierung) bekommt. Sonst dort die Adresse unter „Andere Terminals“ ändern.
+9. Die neue Karte erzeugt eine neue Kennung des Terminals. Das stört die Abstimmung nicht.
 
 ### SSH
 
@@ -171,10 +172,10 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 | Admin-Passwort vergessen | Es gibt keine Rücksetzung in der Admin-Seite. | Neues Abbild schreiben (Ersatzkarte), danach die gesicherte Konfiguration importieren. Das Admin-Passwort ist nicht in der Sicherung. |
 | Admin-Seite meldet **500 „Konfiguration nicht lesbar“** | Siehe unten. | Siehe unten. |
 | Admin-Seite meldet 503 | Der Schlüssel des Geräts (`secrets.key`) ist nicht lesbar. Die Ursache steht im Protokoll. | Terminal neu starten. Hält es an, Ersatzkarte (Abschnitt 3). |
-| Warnung „Schreibschutz nicht aktiv“ (System) | Das Overlay ist aus, zum Beispiel nach Wartung. | `overlayroot=tmpfs:recurse=0` in `cmdline.txt` wieder einfügen (Abschnitt 3). |
+| Warnung „Der Schreibschutz (Overlay auf /) ist nicht aktiv.“ (System) | Das Overlay ist aus, zum Beispiel nach Wartung. | `overlayroot=tmpfs:recurse=0` in `cmdline.txt` wieder einfügen (Abschnitt 3). |
 | Warnung „Kein Monitor erkannt“ (System) | Bildschirm nicht erkannt, es gilt 1920×1080. | Kabel und Bildschirm prüfen oder unter System die Auflösung fest eintragen. |
 | Warnung zur Konfiguration | Die letzte Konfigurationsdatei war defekt, das Gerät läuft mit der letzten guten Fassung. | Einstellungen prüfen, bei Bedarf aus der Sicherung wiederherstellen. |
-| Terminal bleibt nach Einschalten auf einer leeren Seite | Erster Start läuft noch oder bricht ab. | Bis zu 10 Minuten warten. Dann `hmi-kiosk-firstboot.log` auf der Boot-Partition am PC lesen (Inbetriebnahme, Abschnitt 4). |
+| Terminal bleibt nach Einschalten auf einer leeren Seite | Erster Start läuft noch oder bricht ab. | Etwa 10 Minuten warten (ungemessener Schätzwert). Dann `hmi-kiosk-firstboot.log` auf der Boot-Partition am PC lesen (Inbetriebnahme, Abschnitt 4). |
 | Terminal startet in den Notfallmodus | Datenpartition nicht eingehängt. | Neustart. Hilft es nicht, die Karte tauschen (Rückfall). |
 | Update angenommen, aber die alte Version läuft | Automatischer Rückfall nach 60 Sekunden. | Abschnitt 2. |
 

@@ -2,7 +2,7 @@
 # Installiert den HMI-Kiosk auf einem Debian- oder Raspberry-Pi-OS-System (Trixie, arm64 oder amd64).
 # Gedacht für Systeme ohne das fertige SD-Abbild: ohne Schreibschutz, ohne Datenpartition.
 #
-#   sudo ./install.sh [--no-start] [--online] [--data-dir ORDNER]
+#   sudo ./install.sh [--no-start] [--online] [--data-dir ORDNER] [--force-downgrade]
 #
 # Das Skript liegt in einem Bundle (erzeugt von packaging/bundle.sh) und installiert daraus ohne Netz:
 # Pakete aus bundle/repo, Programme aus bundle/bin, Dienstdateien aus bundle/rootfs.
@@ -11,6 +11,7 @@
 #   --no-start        Dienste einrichten, aber weder aktivieren noch starten (für Tests)
 #   --online          Pakete aus den Paketquellen des Systems holen statt aus dem Bundle
 #   --data-dir ORDNER Datenordner (Standard /var/lib/hmi-kiosk; im SD-Abbild ist es /data)
+#   --force-downgrade Erlaubt, eine ältere Version als die laufende zu installieren
 #
 # Umgebung (nur für Tests): HMI_OS_RELEASE (Standard /etc/os-release).
 # shellcheck disable=SC1111  # deutsche Anführungszeichen in den Meldungen
@@ -22,6 +23,7 @@ OS_RELEASE="${HMI_OS_RELEASE:-/etc/os-release}"
 DATA_DIR=/var/lib/hmi-kiosk
 NO_START=0
 ONLINE=0
+FORCE_DOWNGRADE=0
 
 KIOSK_USER=hmikiosk
 KIOSK_UID_WISH=1100
@@ -42,6 +44,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--no-start) NO_START=1 ;;
 	--online) ONLINE=1 ;;
+	--force-downgrade) FORCE_DOWNGRADE=1 ;;
 	--data-dir)
 		[ $# -ge 2 ] || die "--data-dir braucht einen Ordner."
 		DATA_DIR="$2"
@@ -102,6 +105,25 @@ fi
 
 if [ -f "$HERE/SHA256SUMS" ]; then
 	(cd "$HERE" && sha256sum --quiet -c SHA256SUMS) || die "Das Bundle ist beschädigt oder unvollständig (Prüfsummen stimmen nicht). Bitte neu kopieren."
+fi
+
+# --- Datenordner und Version prüfen (vor jeder Änderung) ---
+
+# Erlaubt sind ein neuer oder leerer Ordner und ein Ordner, in dem schon ein Kiosk liegt
+# (config.json oder app/). Alles andere ist ein fremder Ordner und wird nicht angefasst.
+if [ -e "$DATA_DIR" ] || [ -L "$DATA_DIR" ]; then
+	[ -d "$DATA_DIR" ] && [ ! -L "$DATA_DIR" ] || die "Der Datenordner $DATA_DIR ist kein Ordner (oder ein Verweis). Es wurde nichts verändert."
+	if [ -n "$(ls -A "$DATA_DIR")" ] && [ ! -e "$DATA_DIR/config.json" ] && [ ! -d "$DATA_DIR/app" ]; then
+		die "Der Datenordner $DATA_DIR ist nicht leer und enthält keine Kiosk-Dateien (weder config.json noch app/). Bitte einen neuen oder leeren Ordner mit --data-dir wählen. Es wurde nichts verändert."
+	fi
+fi
+
+if [ -L "$DATA_DIR/app/current" ]; then
+	RUNNING="$(readlink "$DATA_DIR/app/current")"
+	if [[ "$RUNNING" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$RUNNING" != "$B_VERSION" ] &&
+		[ "$(printf '%s\n%s\n' "$RUNNING" "$B_VERSION" | sort -V | head -n 1)" = "$B_VERSION" ] && [ "$FORCE_DOWNGRADE" = 0 ]; then
+		die "Auf diesem System läuft Version $RUNNING, das Bundle enthält die ältere Version $B_VERSION. Ein Rückschritt wird nicht ohne Zustimmung ausgeführt. Mit --force-downgrade erzwingen. Es wurde nichts verändert."
+	fi
 fi
 
 # --- Pakete ---
@@ -269,7 +291,7 @@ install_data_and_app() {
 	chown "$KIOSK_USER:$KIOSK_USER" "$DATA_DIR"
 	chmod 750 "$DATA_DIR"
 	# Vorhandene Dateien (config.json, Schlüssel, Protokoll) bleiben, nur der Besitzer wird angeglichen.
-	find "$DATA_DIR" -mindepth 1 -maxdepth 1 ! -name system ! -name app -exec chown -R "$KIOSK_USER:$KIOSK_USER" {} +
+	find "$DATA_DIR" -mindepth 1 -maxdepth 1 ! -name system ! -name app -exec chown -hR "$KIOSK_USER:$KIOSK_USER" {} +
 	# Hier schreibt nur der Helfer (NTP-Stand); der Dienst darf es nicht ändern.
 	install -d -o root -g root -m 755 "$DATA_DIR/system"
 	install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 "$app"

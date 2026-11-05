@@ -123,12 +123,34 @@ check "current -> 0.0.2" test "$(readlink $DATA/app/current)" = "0.0.2"
 check "previous -> 0.0.1" test "$(readlink $DATA/app/previous)" = "0.0.1"
 check "Konfiguration nach Aktualisierung unverändert" test "$(sha256sum $DATA/config.json | cut -d' ' -f1)" = "$sum_before"
 
+# 7b. Rückschritt: ohne Zustimmung abgelehnt, mit --force-downgrade erlaubt.
+out=$(/bundle/install.sh --no-start 2>&1)
+rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'ältere Version 0.0.1'; then ok "Rückschritt: Abbruch mit Meldung"; else bad "Rückschritt nicht abgelehnt (Exit $rc)"; fi
+check "Rückschritt: current bleibt 0.0.2" test "$(readlink $DATA/app/current)" = "0.0.2"
+out=$(/bundle/install.sh --no-start --force-downgrade 2>&1)
+rc=$?
+if [ $rc -eq 0 ]; then ok "--force-downgrade: Exit 0"; else bad "--force-downgrade: Exit $rc"; echo "$out" | tail -n 5; fi
+check "--force-downgrade: current -> 0.0.1, previous -> 0.0.2" bash -c "[ \"\$(readlink $DATA/app/current)\" = 0.0.1 ] && [ \"\$(readlink $DATA/app/previous)\" = 0.0.2 ]"
+
 # 8. Anderer Datenordner per Option.
 out=$(/bundle/install.sh --no-start --data-dir /srv/hk 2>&1)
 rc=$?
 if [ $rc -eq 0 ]; then ok "--data-dir: Exit 0"; else bad "--data-dir: Exit $rc"; echo "$out" | tail -n 5; fi
 check "--data-dir: Dienst unter /srv/hk" test -x /srv/hk/app/current/hmi-kiosk
 check "--data-dir: Drop-in nennt /srv/hk" grep -q -- '-data /srv/hk ' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf
+
+# 9. Fremder Datenordner wird nicht angefasst, ein leerer ist erlaubt.
+mkdir -p /srv/fremd && echo x >/srv/fremd/datei
+out=$(/bundle/install.sh --no-start --data-dir /srv/fremd 2>&1)
+rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'enthält keine Kiosk-Dateien'; then ok "Fremder Ordner: Abbruch mit Meldung"; else bad "Fremder Ordner nicht abgelehnt (Exit $rc)"; fi
+check "Fremder Ordner: unverändert (root, kein app/, kein system/)" bash -c '[ "$(stat -c %U /srv/fremd/datei)" = root ] && [ ! -e /srv/fremd/app ] && [ ! -e /srv/fremd/system ] && [ "$(stat -c %U /srv/fremd)" = root ]'
+mkdir -p /srv/leer
+out=$(/bundle/install.sh --no-start --data-dir /srv/leer 2>&1)
+rc=$?
+if [ $rc -eq 0 ]; then ok "Leerer Ordner: Exit 0"; else bad "Leerer Ordner: Exit $rc"; echo "$out" | tail -n 5; fi
+
 
 echo
 if [ $fails -eq 0 ]; then echo "Alle Prüfungen bestanden."; else echo "$fails Prüfung(en) fehlgeschlagen."; exit 1; fi
