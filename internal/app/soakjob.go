@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"hmikiosk/internal/selftest"
@@ -24,6 +25,9 @@ const (
 type soakJob struct {
 	s *service
 
+	// pending sperrt Sitzungen schon während der Prüfung in Start, ohne den Stand zu ändern.
+	pending atomic.Bool
+
 	mu      sync.Mutex
 	st      web.SoakStatus
 	res     selftest.SoakResult
@@ -37,7 +41,7 @@ func newSoakJob(s *service) *soakJob { return &soakJob{s: s} }
 func (j *soakJob) running() bool {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return j.st.Running
+	return j.st.Running || j.pending.Load()
 }
 
 // Start startet die Dauerprüfung in einer eigenen Goroutine. Das Flag steht vor der
@@ -48,16 +52,22 @@ func (j *soakJob) Start(d time.Duration) error {
 		return errors.New("Eine Selbstprüfung oder Dauerprüfung läuft bereits.")
 	}
 	ctx := s.rootCtx()
-	if ctx == nil {
+	switch {
+	case ctx == nil:
 		s.selftestMu.Unlock()
 		return errors.New("Der Dienst startet noch.")
+	case ctx.Err() != nil:
+		s.selftestMu.Unlock()
+		return errors.New("Der Dienst wird gerade beendet.")
 	}
-	j.begin(d)
+	j.pending.Store(true)
 	if msg := s.sessionBusyMessage(); msg != "" {
-		j.finish(nil)
+		j.pending.Store(false)
 		s.selftestMu.Unlock()
 		return errors.New(msg)
 	}
+	j.begin(d)
+	j.pending.Store(false)
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	j.mu.Lock()
@@ -74,6 +84,8 @@ func (j *soakJob) Start(d time.Duration) error {
 			err = nil
 		}
 		j.finish(err)
+		// Der Hinweis von abgewiesenen Kachel-Tipps soll nicht stehen bleiben.
+		s.mgr.ClearNotice(soakBlockedNotice)
 	}()
 	return nil
 }

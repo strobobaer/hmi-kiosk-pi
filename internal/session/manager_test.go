@@ -1626,3 +1626,65 @@ func TestOpenIsRefusedWhileBlocked(t *testing.T) {
 	h.open("a")
 	h.waitState(StateStarting)
 }
+
+func TestPermanentDisplayWaitsWhileBlocked(t *testing.T) {
+	msg := "Dauerprüfung läuft"
+	h := newHarness(t, func(h *harness) {
+		h.cfg.Kiosk.PermanentHMI = "a"
+		h.blocked.Store(&msg)
+	})
+	h.advance(10 * PollEvery)
+	if h.runner.count() != 0 || h.m.Snapshot().State != StateTiles {
+		t.Fatalf("Daueranzeige startete trotz Sperre: %d Starts, %s", h.runner.count(), h.m.Snapshot().State)
+	}
+	h.blocked.Store(nil)
+	h.advance(2 * PollEvery)
+	h.waitState(StateStarting)
+	if h.runner.count() != 1 {
+		t.Fatalf("%d Starts", h.runner.count())
+	}
+}
+
+func TestPermanentReconnectWaitsWhileBlockedWithoutGrowingBackoff(t *testing.T) {
+	msg := "Dauerprüfung läuft"
+	h := newHarness(t, permanentOn("a"))
+	h.waitState(StateStarting)
+	h.runner.last().exit(errors.New("abgestürzt"))
+	h.waitState(StateReconnecting)
+	h.blocked.Store(&msg)
+	starts := h.runner.count()
+	h.advance(40 * time.Second) // weit über die Wartezeit hinaus
+	if h.runner.count() != starts {
+		t.Fatalf("Neuverbinden trotz Sperre: %d Starts", h.runner.count()-starts)
+	}
+	if got := h.m.Snapshot().State; got != StateReconnecting {
+		t.Fatalf("Zustand %s", got)
+	}
+	h.blocked.Store(nil)
+	h.advance(2 * PollEvery)
+	h.waitState(StateStarting)
+	// Das Wartezeit-Wachstum ruhte: Der nächste Absturz wartet 4 s, nicht mehr.
+	h.runner.last().exit(errors.New("abgestürzt"))
+	h.waitState(StateReconnecting)
+	starts = h.runner.count()
+	h.advance(4*time.Second + 100*time.Millisecond)
+	if h.runner.count() != starts+1 {
+		t.Fatalf("Wartezeit länger als 4 s: %d Starts", h.runner.count()-starts)
+	}
+}
+
+func TestClearNoticeOnlyRemovesThatNotice(t *testing.T) {
+	h := newHarness(t, nil)
+	msg := "Dauerprüfung läuft"
+	h.blocked.Store(&msg)
+	_ = h.m.Open("a")
+	h.blocked.Store(nil)
+	h.m.ClearNotice("etwas anderes")
+	if h.m.Snapshot().Notice != msg {
+		t.Fatalf("fremder Hinweis entfernte ihn: %q", h.m.Snapshot().Notice)
+	}
+	h.m.ClearNotice(msg)
+	if h.m.Snapshot().Notice != "" {
+		t.Fatalf("Hinweis blieb: %q", h.m.Snapshot().Notice)
+	}
+}

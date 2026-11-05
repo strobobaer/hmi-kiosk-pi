@@ -143,3 +143,76 @@ func TestSoakSamplesArePersistedAndKept(t *testing.T) {
 		t.Fatal("Ende nicht gebucht")
 	}
 }
+
+func TestSoakRefusedStartKeepsPreviousResult(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(func(c *config.Config) { oneHMI(c); c.Kiosk.PermanentHMI = "presse" })
+	f.start()
+	j := f.s.soak
+	j.begin(time.Hour)
+	j.record(selftest.SoakSample{Cycle: 7, RSSBytes: 5 << 20, Failures: 2})
+	j.finish(nil)
+	before := j.Status()
+
+	stop := make(chan struct{})
+	sawRunning := make(chan bool, 1)
+	go func() {
+		seen := false
+		for {
+			select {
+			case <-stop:
+				sawRunning <- seen
+				return
+			default:
+				if j.Status().Running {
+					seen = true
+				}
+			}
+		}
+	}()
+	for i := 0; i < 50; i++ {
+		if err := j.Start(time.Hour); err == nil {
+			t.Fatal("Start müsste an der Daueranzeige scheitern")
+		}
+	}
+	close(stop)
+	if <-sawRunning {
+		t.Error("Running war während einer Weigerung kurz gesetzt")
+	}
+	if after := j.Status(); after != before {
+		t.Fatalf("alter Stand überschrieben:\nvorher %+v\nnachher %+v", before, after)
+	}
+}
+
+func TestSoakStartAfterShutdownIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(oneHMI)
+	f.start()
+	f.stop()
+	err := f.s.soak.Start(time.Hour)
+	if err == nil || !strings.Contains(err.Error(), "beendet") {
+		t.Fatalf("err=%v", err)
+	}
+	if f.s.soak.Status().Running {
+		t.Fatal("läuft")
+	}
+	if !f.s.selftestMu.TryLock() {
+		t.Fatal("Sperre blieb hängen")
+	}
+	f.s.selftestMu.Unlock()
+}
+
+func TestSoakTileNoticeIsClearedWhenItEnds(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(oneHMI)
+	f.start()
+	if err := f.s.soak.Start(time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	f.local("POST", "/api/hmi/presse/open")
+	if got := f.bound.Snapshot().Notice; got != "Dauerprüfung läuft" {
+		t.Fatalf("Hinweis %q", got)
+	}
+	f.s.soak.Stop()
+	eventually(t, "Hinweis weg", func() bool { return f.bound.Snapshot().Notice == "" })
+}

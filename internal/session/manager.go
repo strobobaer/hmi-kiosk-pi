@@ -329,3 +329,13 @@ func findHMI(cfg config.Config, id string) (config.HMI, bool) {
 	}
 	return config.HMI{}, false
 }
+
+// ClearNotice entfernt den Hinweis, wenn er genau msg ist; ein anderer bleibt.
+func (m *Manager) ClearNotice(msg string) {
+	_ = m.do(func() error {
+		if m.notice == msg {
+			m.notice = ""
+		}
+		return nil
+	})
+}

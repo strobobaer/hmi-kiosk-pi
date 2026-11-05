@@ -50,6 +50,9 @@ func (m *Manager) checkPermanent(cfg config.Config) {
 			m.noticeMissing()
 		default:
 			p.missingNoticed = false
+			if m.blocked() {
+				return
+			}
 			m.begin(h, cfg, true)
 		}
 	}
@@ -126,5 +129,15 @@ func (m *Manager) retryPermanent(id string) {
 		m.noticeMissing()
 		return
 	}
+	// Gesperrt (Dauerprüfung): weiter warten, ohne die Wartezeit wachsen zu lassen.
+	if m.blocked() {
+		m.setDeadline(m.d.Clock.Now().Add(PollEvery), func() { m.retryPermanent(id) })
+		return
+	}
 	m.begin(h, cfg, true)
+}
+
+// blocked meldet, ob gerade kein Sitzungsstart erlaubt ist (Deps.Blocked).
+func (m *Manager) blocked() bool {
+	return m.d.Blocked != nil && m.d.Blocked() != ""
 }
