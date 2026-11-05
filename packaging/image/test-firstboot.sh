@@ -5,7 +5,8 @@
 #   docker run --rm --privileged --platform linux/arm64 -v "$PWD:/src" -w /src debian:trixie \
 #     sh packaging/image/test-firstboot.sh <raspi-config-Datei>
 #
-# Prüft: Datenpartition im freien Rest bei eingehängter Wurzel, Wiederholbarkeit, keine
+# Prüft: Datenpartition im freien Rest bei eingehängter Wurzel, fstab-Eintrag einmalig und
+# Einhängen über data.mount, Wiederholbarkeit, keine
 # Formatierung fremder Dateisysteme, Kopie der ersten Version, current, Rechte, Overlay mit
 # recurse=0, Boot schreibgeschützt in fstab, Erledigt-Marke und Neustart.
 set -eu
@@ -47,6 +48,16 @@ mkdir -p "$work/root"
 mount "${loop}p2" "$work/root" # belegt die Karte wie die laufende Wurzel
 
 export HMI_FIRSTBOOT_ROOT="${loop}p2" HMI_FIRSTBOOT_LOG="$work/firstboot.log"
+# fstab wie im Abbild: ohne /data. systemctl wird nur protokolliert.
+cat >/etc/fstab <<'EOF'
+proc            /proc           proc    defaults          0       0
+PARTUUID=abcd-01  /boot/firmware  vfat    defaults          0       2
+PARTUUID=abcd-02  /               ext4    defaults,noatime  0       1
+EOF
+mkdir -p "$work/bin"
+printf '#!/bin/sh\necho "systemctl $*" >>%s/systemctl.log\n' "$work" >"$work/bin/systemctl"
+chmod 755 "$work/bin/systemctl"
+export PATH="$work/bin:$PATH"
 
 echo "== prepare-data"
 sh "$FB" prepare-data
@@ -65,11 +76,28 @@ if [ "$p3start" -ge "$p2end" ] && [ $((p3start + p3size)) -le "$total" ] && [ $(
 else
 	bad "Partition 3 an falscher Stelle: $p3, Ende p2 $p2end, gesamt $total"
 fi
+data_lines() { grep -c '^LABEL=HMIDATA  /data .*ext4 .*x-systemd.device-timeout=30s' /etc/fstab || true; }
+if [ "$(data_lines)" = 1 ] && ! grep -q nofail /etc/fstab; then
+	ok "fstab-Eintrag /data ergänzt, ohne nofail"
+else
+	bad "fstab: $(grep data /etc/fstab)"
+fi
+if [ "$(cat "$work/systemctl.log")" = "$(printf 'systemctl daemon-reload\nsystemctl start data.mount')" ]; then
+	ok "daemon-reload, dann data.mount gestartet"
+else
+	bad "systemctl: $(cat "$work/systemctl.log")"
+fi
+: >"$work/systemctl.log"
 
 echo "== prepare-data erneut"
 out=$(sh "$FB" prepare-data)
 if printf '%s' "$out" | grep -q 'Datenpartition vorhanden' && [ "$(sfdisk --dump "$img" | grep -c "^${img}[0-9]")" = 3 ]; then
 	ok "zweiter Lauf ändert nichts"
+	if [ "$(data_lines)" = 1 ] && [ ! -s "$work/systemctl.log" ]; then
+		ok "fstab-Eintrag bleibt einmalig, kein erneutes Einhängen"
+	else
+		bad "fstab doppelt oder erneut eingehängt: $(grep -c data /etc/fstab)"
+	fi
 else
 	bad "zweiter Lauf: $out"
 fi
@@ -98,19 +126,11 @@ mount "${loop}p1" /boot/firmware
 mount "${loop}p3" /data
 : >/boot/firmware/config.txt # raspi-config erkennt /boot/firmware daran
 echo 'console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootfstype=ext4 fsck.repair=yes rootwait consoleblank=0' >/boot/firmware/cmdline.txt
-cat >/etc/fstab <<'EOF'
-proc            /proc           proc    defaults          0       0
-PARTUUID=abcd-01  /boot/firmware  vfat    defaults          0       2
-PARTUUID=abcd-02  /               ext4    defaults,noatime  0       1
-LABEL=HMIDATA  /data           ext4    defaults,noatime,x-systemd.device-timeout=30s  0       2
-EOF
 printf 'version=%s\n' "$V" >/etc/hmi-kiosk/image-release
 printf '#!/bin/sh\necho kiosk\n' >"/opt/hmi-kiosk/initial/$V/hmi-kiosk"
 chmod 755 "/opt/hmi-kiosk/initial/$V/hmi-kiosk"
-mkdir -p "$work/bin"
-printf '#!/bin/sh\necho "systemctl $*" >>%s/systemctl.log\n' "$work" >"$work/bin/systemctl"
-chmod 755 "$work/bin/systemctl"
-PATH="$work/bin:$PATH" sh "$FB" finish
+: >"$work/systemctl.log"
+sh "$FB" finish
 
 if [ "$(readlink /data/app/current)" = "$V" ]; then
 	ok "current -> $V"
@@ -148,7 +168,7 @@ if grep -q '^PARTUUID=abcd-01  /boot/firmware  vfat    defaults,ro ' /etc/fstab;
 else
 	bad "fstab: $(grep firmware /etc/fstab)"
 fi
-if grep -q '/data .*x-systemd.device-timeout=30s' /etc/fstab; then
+if [ "$(data_lines)" = 1 ]; then
 	ok "fstab-Eintrag /data unverändert"
 else
 	bad "fstab /data verändert"
@@ -171,13 +191,13 @@ fi
 
 echo "== finish erneut"
 : >"$work/systemctl.log"
-if PATH="$work/bin:$PATH" sh "$FB" finish | grep -q 'schon erledigt' && [ ! -s "$work/systemctl.log" ]; then
+if sh "$FB" finish | grep -q 'schon erledigt' && [ ! -s "$work/systemctl.log" ]; then
 	ok "zweiter Lauf endet ohne Änderung und ohne Neustart"
 else
 	bad "zweiter Lauf nicht ruhig"
 fi
 rm /data/.hmi-kiosk-firstboot-done
-PATH="$work/bin:$PATH" sh "$FB" finish >/dev/null
+sh "$FB" finish >/dev/null
 if [ "$(grep -o 'overlayroot=[^ ]*' /boot/firmware/cmdline.txt | wc -l)" = 1 ] && [ "$(grep -c 'defaults,ro' /etc/fstab)" = 1 ]; then
 	ok "abgebrochener Lauf wiederholt ohne doppelte Einträge"
 else

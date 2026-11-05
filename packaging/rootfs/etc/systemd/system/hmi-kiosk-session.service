@@ -24,8 +24,9 @@ UtmpIdentifier=tty1
 UtmpMode=user
 Environment=XDG_RUNTIME_DIR=/run/user/1100 XDG_SESSION_TYPE=wayland XDG_SESSION_CLASS=user
 # Legt das Grafikprofil fest und schreibt die Umgebungsdatei für hmi-kiosk.service,
-# bevor dieser nach dem Start der Sitzung beginnt (als root).
-ExecStartPre=+/usr/local/bin/hmi-kiosk-session prepare
+# bevor dieser nach dem Start der Sitzung beginnt. Läuft als hmikiosk wie die Sitzung selbst,
+# denn der Ordner gehört hmikiosk (kein Schreiben als root in fremde Ordner).
+ExecStartPre=/usr/local/bin/hmi-kiosk-session prepare
 ExecStart=/usr/local/bin/hmi-kiosk-session
 RuntimeDirectory=hmi-kiosk-session
 RuntimeDirectoryPreserve=yes

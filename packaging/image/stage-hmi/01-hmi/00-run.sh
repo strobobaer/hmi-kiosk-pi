@@ -59,12 +59,9 @@ printf 'version=%s\n' "${HMI_VERSION}" >"${R}/etc/hmi-kiosk/image-release"
 chown root:root "${R}/etc/hmi-kiosk/image-release"
 chmod 644 "${R}/etc/hmi-kiosk/image-release"
 
-# Datenpartition: ohne nofail, damit ein fehlendes /data den Dienst nie starten lässt;
-# angelegt wird sie beim ersten Start (hmi-kiosk-firstboot prepare-data).
+# Einhängepunkt für /data. Partition und fstab-Eintrag (ohne nofail) entstehen beim ersten Start
+# (hmi-kiosk-firstboot prepare-data), damit kein Eintrag auf eine noch fehlende Partition wartet.
 install -d -m 755 -o root -g root "${R}/data"
-if ! grep -q '^LABEL=HMIDATA[[:space:]]' "${R}/etc/fstab"; then
-	printf 'LABEL=HMIDATA  /data           ext4    defaults,noatime,x-systemd.device-timeout=30s  0       2\n' >>"${R}/etc/fstab"
-fi
 
 # Keine Vergrößerung der Systempartition: Token "resize" aus cmdline.txt, rpi-resize maskiert.
 # consoleblank=0: keine Bildschirmabschaltung der Konsole.

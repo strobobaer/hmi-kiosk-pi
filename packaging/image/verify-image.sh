@@ -6,8 +6,8 @@
 #   --version  erwartete Programmversion (sonst die aus /etc/hmi-kiosk/image-release)
 #   --pakete   schreibt die Paketliste (Name, Version, Architektur) in <datei>
 # Umgebung: HMI_ENABLE_SSH=1, wenn das Abbild mit SSH gebaut wurde (sonst muss SSH aus sein).
-# Braucht root und sfdisk, losetup, blkid, mount, dpkg-query, stat (xz für .img.xz);
-# unter Docker: docker run --rm --privileged -v "$PWD:/src" -w /src pi-gen packaging/image/verify-image.sh <abbild>
+# Braucht root und sfdisk, losetup, blkid, mount, dpkg-query, stat, lsinitramfs (xz für .img.xz);
+# unter Docker mit dem Prüfabbild aus packaging/image/verify.Dockerfile (siehe build-image.sh).
 # Exit: 0 alle Prüfungen bestanden, 1 mindestens eine gescheitert, 2 Aufruf oder Umgebung fehlerhaft.
 set -eu
 
@@ -54,7 +54,7 @@ if [ "$(id -u)" != 0 ]; then
 	echo "verify-image.sh braucht root für die Loop-Geräte (z. B. im privilegierten Container)." >&2
 	exit 2
 fi
-for tool in sfdisk losetup blkid mount umount dpkg-query stat od; do
+for tool in sfdisk losetup blkid mount umount dpkg-query stat od lsinitramfs; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
 		echo "Werkzeug fehlt: $tool" >&2
 		exit 2
@@ -100,8 +100,11 @@ field() { printf '%s\n' "$parts" | sed -n "${1}p" | sed -n "s/.*$2= *\([0-9a-fA-
 attach() { # attach <nr> -> Loop-Gerät der Partition, nur lesend
 	start=$(field "$1" start)
 	size=$(field "$1" size)
-	l=$(losetup -r -f --show -o $((start * 512)) --sizelimit $((size * 512)) "$img")
-	loops="$loops $l"
+	l=$(losetup -f 2>/dev/null)
+	l=${l%% *} # "/dev/loopN (lost)", wenn der Knoten fehlt
+	# In Containern fehlt der Geräteknoten neuer Loop-Geräte (kein devtmpfs/udev).
+	[ -e "$l" ] || mknod "$l" b 7 "${l#/dev/loop}"
+	losetup -r -o $((start * 512)) --sizelimit $((size * 512)) "$l" "$img"
 	echo "$l"
 }
 
@@ -110,8 +113,11 @@ if [ "$nparts" != 2 ]; then
 	echo "Abbruch: ohne die erwarteten Partitionen sind keine weiteren Prüfungen möglich."
 	exit 1
 fi
+# attach läuft in einer Unterschale; die Geräte für das Aufräumen hier merken.
 boot_dev=$(attach 1)
+loops="$loops $boot_dev"
 root_dev=$(attach 2)
+loops="$loops $root_dev"
 boot_type=$(blkid -p -o value -s TYPE "$boot_dev" || true)
 root_type=$(blkid -p -o value -s TYPE "$root_dev" || true)
 if [ "$boot_type" = vfat ] && [ "$root_type" = ext4 ]; then
@@ -158,20 +164,31 @@ grep -qx 'ConditionPathExists=!/data/.hmi-kiosk-firstboot-done' "$S/hmi-kiosk-fi
 	msg="$msg; Erledigt-Marke auf /data fehlt in der Unit"
 if [ -z "$msg" ]; then ok erster-start "Skript und Units vorhanden und aktiviert"; else bad erster-start "${msg#; }"; fi
 
-# fstab: /data ohne nofail, mit Geräte-Frist
-line=$(grep -E '^[^#]*[[:space:]]/data[[:space:]]' "$R/etc/fstab" || true)
-if [ -z "$line" ]; then
-	bad fstab "kein Eintrag für /data"
-elif ! printf '%s\n' "$line" | grep -Eq '^LABEL=HMIDATA[[:space:]]+/data[[:space:]]+ext4[[:space:]]'; then
-	bad fstab "Eintrag passt nicht: $line"
-elif printf '%s\n' "$line" | grep -q 'nofail'; then
-	bad fstab "/data mit nofail: ein fehlendes /data darf nicht übergangen werden"
-elif ! printf '%s\n' "$line" | grep -q 'x-systemd.device-timeout=30s'; then
-	bad fstab "x-systemd.device-timeout=30s fehlt: $line"
-elif [ ! -d "$R/data" ]; then
-	bad fstab "Einhängepunkt /data fehlt"
+# fstab: /data steht nicht im Abbild; firstboot trägt es ohne nofail und mit Geräte-Frist ein.
+fb=$R/usr/local/sbin/hmi-kiosk-firstboot
+d=$S/hmi-kiosk-firstboot-data.service
+msg=""
+if grep -Eq '^[^#]*[[:space:]]/data[[:space:]]' "$R/etc/fstab"; then
+	msg="$msg; fstab enthält /data schon im Abbild (wartet beim ersten Start auf eine fehlende Partition)"
+fi
+grep '^FSTAB_LINE=' "$fb" 2>/dev/null | grep -q '/data .*ext4 .*x-systemd.device-timeout=30s' ||
+	msg="$msg; firstboot trägt /data nicht mit x-systemd.device-timeout=30s ein"
+if grep '^FSTAB_LINE=' "$fb" 2>/dev/null | grep -q nofail; then msg="$msg; firstboot trägt /data mit nofail ein"; fi
+grep -q 'nodiscard,lazy_itable_init=1,lazy_journal_init=1' "$fb" 2>/dev/null || msg="$msg; mkfs ohne nodiscard/lazy_init"
+for l in TimeoutStartSec=15min Conflicts=shutdown.target "Before=local-fs.target shutdown.target" DefaultDependencies=no \
+	"ExecStart=/usr/local/sbin/hmi-kiosk-firstboot prepare-data"; do
+	unit_has hmi-kiosk-firstboot-data.service "$l" || msg="$msg; $(basename "$d") ohne $l"
+done
+[ -d "$R/data" ] || msg="$msg; Einhängepunkt /data fehlt"
+if [ -z "$msg" ]; then ok fstab "kein /data-Eintrag im Abbild, firstboot ergänzt ihn ohne nofail"; else bad fstab "${msg#; }"; fi
+
+# initramfs des Pi-5-Kernels enthält overlayroot (sonst bliebe das Overlay wirkungslos)
+if [ ! -f "$B/initramfs_2712" ]; then
+	bad initramfs "initramfs_2712 fehlt auf der Boot-Partition"
+elif lsinitramfs "$B/initramfs_2712" 2>/dev/null | grep -q 'scripts/init-bottom/overlayroot$'; then
+	ok initramfs "initramfs_2712 enthält scripts/init-bottom/overlayroot"
 else
-	ok fstab "$line"
+	bad initramfs "initramfs_2712 ohne overlayroot"
 fi
 
 # Pakete

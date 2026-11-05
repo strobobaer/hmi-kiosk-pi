@@ -175,11 +175,9 @@ func (s *Server) setNTP(ctx context.Context, arg string) error {
 	if !config.ValidNTPServer(arg) {
 		return errors.New("NTP-Server ungültig")
 	}
-	// Zuerst der dauerhafte Wert: scheitert er, bleibt /etc unberührt.
-	if err := os.MkdirAll(filepath.Dir(s.NTPStatePath), 0o755); err != nil {
-		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
-	}
-	if err := writeAtomic(s.NTPStatePath, []byte(arg+"\n"), 0o644); err != nil {
+	// Zuerst der dauerhafte Wert: scheitert er, bleibt /etc unberührt. Der Ordner liegt
+	// auf /data, das dem Dienstbenutzer gehört; writeStateFile prüft ihn.
+	if err := writeStateFile(s.NTPStatePath, []byte(arg+"\n")); err != nil {
 		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
 	}
 	return s.applyNTP(ctx, arg)
@@ -206,7 +204,7 @@ func (s *Server) applyNTP(ctx context.Context, server string) error {
 func (s *Server) ReapplyNTP(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	raw, err := readSmallFile(s.NTPStatePath, maxNTPStateBytes)
+	raw, err := readStateFile(s.NTPStatePath, maxNTPStateBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

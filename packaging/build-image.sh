@@ -106,7 +106,8 @@ trap 'rm -f "$cfg"' EXIT
 	echo "ENABLE_SSH=$ssh"
 	if [ "$ssh" = 1 ]; then
 		echo "PUBKEY_ONLY_SSH=1"
-		echo "PUBKEY_SSH_FIRST_USER='${HMI_SSH_PUBKEY}'"
+		# %q: die Konfiguration wird von bash eingelesen, der Schlüssel darf sie nicht aufbrechen.
+		printf 'PUBKEY_SSH_FIRST_USER=%q\n' "$HMI_SSH_PUBKEY"
 	fi
 } >"$cfg"
 
@@ -145,13 +146,14 @@ img="$pg/deploy/hmi-kiosk-$VERSION.img"
 mv -f "$img" "dist/hmi-kiosk-$VERSION.img"
 
 echo "== Prüfung des Abbilds"
+docker build -q -t hmi-kiosk-verify -f "$(host_path "$root/packaging/image/verify.Dockerfile")" "$(host_path "$root/packaging/image")" >/dev/null
 # Kopie im Container: Loop-Geräte auf Dateien eines Windows-Bind-Mounts sind nicht verlässlich.
-docker run --rm --privileged -e HMI_ENABLE_SSH="$ssh" -v "$(host_path "$root"):/src" -w /src pi-gen \
+docker run --rm --privileged -e HMI_ENABLE_SSH="$ssh" -v "$(host_path "$root"):/src" -w /src hmi-kiosk-verify \
 	sh -c "cp dist/hmi-kiosk-$VERSION.img /tmp/abbild.img && sh packaging/image/verify-image.sh \
 		--version $VERSION --pakete dist/hmi-kiosk-$VERSION-pakete.txt /tmp/abbild.img"
 
 echo "== Komprimieren"
-docker run --rm -v "$(host_path "$root/dist"):/dist" -w /dist pi-gen \
+docker run --rm -v "$(host_path "$root/dist"):/dist" -w /dist hmi-kiosk-verify \
 	sh -c "xz -T0 -6 -f hmi-kiosk-$VERSION.img && sha256sum hmi-kiosk-$VERSION.img.xz >hmi-kiosk-$VERSION.img.xz.sha256"
 
 echo "Fertig: dist/hmi-kiosk-$VERSION.img.xz, dist/hmi-kiosk-$VERSION-pakete.txt"

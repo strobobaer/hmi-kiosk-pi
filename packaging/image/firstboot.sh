@@ -1,12 +1,16 @@
 #!/bin/sh
 # Erster Start des SD-Abbilds, im Abbild als /usr/local/sbin/hmi-kiosk-firstboot.
 #
-#   hmi-kiosk-firstboot prepare-data  legt /data (ext4, Label HMIDATA) im freien Rest der Karte an.
-#                                     Läuft bei jedem Start vor data.mount und endet sofort,
-#                                     wenn die Partition schon da ist.
+#   hmi-kiosk-firstboot prepare-data  legt /data (ext4, Label HMIDATA) im freien Rest der Karte an,
+#                                     trägt es in /etc/fstab ein und hängt es ein. Läuft bei jedem
+#                                     Start vor local-fs.target und endet sofort, wenn alles da ist.
 #   hmi-kiosk-firstboot finish        richtet /data ein, kopiert die erste Programmversion,
 #                                     schaltet Overlay und schreibgeschützte Boot-Partition ein
 #                                     und startet neu. Läuft, bis die Erledigt-Marke auf /data steht.
+#
+# Das Abbild enthält keinen fstab-Eintrag für /data: Ohne nofail müsste die Partition sonst schon
+# innerhalb der Gerätefrist da sein, sonst Notfallmodus. Der Eintrag entsteht erst hier, solange
+# die Wurzel noch beschreibbar ist (vor dem Overlay).
 #
 # Jeder Schritt prüft zuerst den Zustand; ein abgebrochener Lauf wird beim nächsten Start fortgesetzt.
 # Protokoll: Journal (stdout) und /boot/firmware/hmi-kiosk-firstboot.log.
@@ -19,6 +23,7 @@ RELEASE_FILE=/etc/hmi-kiosk/image-release
 INITIAL_DIR=/opt/hmi-kiosk/initial
 CMDLINE=/boot/firmware/cmdline.txt
 FSTAB=/etc/fstab
+FSTAB_LINE="LABEL=HMIDATA  /data           ext4    defaults,noatime,x-systemd.device-timeout=30s  0       2"
 BOOT_LOG=${HMI_FIRSTBOOT_LOG:-/boot/firmware/hmi-kiosk-firstboot.log}
 KIOSK_USER=hmikiosk
 
@@ -40,7 +45,7 @@ part_dev() {
 	esac
 }
 
-prepare_data() {
+create_partition() {
 	if dev=$(blkid -L "$LABEL" 2>/dev/null); then
 		log "Datenpartition vorhanden: $dev"
 		return 0
@@ -86,12 +91,28 @@ prepare_data() {
 		fail "$data enthält schon ein Dateisystem ($fstype, Label $label); wird nicht formatiert"
 	fi
 	log "Formatiere $data als ext4 mit Label $LABEL"
-	mkfs.ext4 -q -F -L "$LABEL" -m 1 "$data" || fail "mkfs.ext4 auf $data gescheitert"
-	if command -v udevadm >/dev/null 2>&1; then
-		udevadm trigger --action=change "$data" || true
-		udevadm settle --timeout=10 || true
-	fi
+	# nodiscard und verzögerte Initialisierung: sonst löscht mkfs die ganze Karte und dauert Minuten.
+	mkfs.ext4 -q -F -L "$LABEL" -m 1 -E nodiscard,lazy_itable_init=1,lazy_journal_init=1 "$data" ||
+		fail "mkfs.ext4 auf $data gescheitert"
 	log "Datenpartition angelegt: $data"
+}
+
+# Trägt /data in die fstab ein (einmal) und hängt es über systemd ein.
+add_fstab_entry() {
+	if grep -Eq "^[^#]*[[:space:]]${DATA}[[:space:]]" "$FSTAB"; then
+		return 0
+	fi
+	printf '%s\n' "$FSTAB_LINE" >>"$FSTAB"
+	sync
+	log "fstab-Eintrag für $DATA ergänzt"
+	systemctl daemon-reload || fail "systemctl daemon-reload gescheitert"
+	systemctl start data.mount || fail "$DATA lässt sich nicht einhängen"
+	log "$DATA eingehängt"
+}
+
+prepare_data() {
+	create_partition
+	add_fstab_entry
 }
 
 image_version() {

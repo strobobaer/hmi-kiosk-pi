@@ -1,6 +1,6 @@
 #!/bin/sh
 # Grafiksitzung des Kiosk-Benutzers, gestartet von hmi-kiosk-session.service.
-#   hmi-kiosk-session prepare     liest GraphicsProfile und schreibt die Umgebungsdatei (als root)
+#   hmi-kiosk-session prepare     liest GraphicsProfile und schreibt die Umgebungsdatei
 #   hmi-kiosk-session             startet labwc (Standard) oder X11 mit openbox
 #   hmi-kiosk-session x11-client  Sitzungsprogramm unter X11 (von startx aufgerufen)
 set -eu
