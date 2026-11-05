@@ -45,6 +45,7 @@ const (
 type Snapshot struct {
 	State        State
 	HMI, HMIName string
+	ViewOnly     bool // nur ansehen: Einstellung des Terminals oder Mitschauen
 	Notice       string
 	Confirm      *coord.Holder
 	Unreachable  []string

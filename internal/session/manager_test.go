@@ -1577,3 +1577,23 @@ func TestPasswordChangeBeforePrecheckDoesNotEndAttempt(t *testing.T) {
 		t.Fatalf("Passwort %q", got)
 	}
 }
+
+func TestSnapshotReportsViewOnly(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.coord.queue(coord.Result{Decision: coord.Decision{Outcome: coord.AllowWatch, Holder: &coord.Holder{Name: "Anzeige"}}})
+	})
+	h.open("a")
+	if s := h.waitState(StateStarting); !s.ViewOnly {
+		t.Fatal("Mitschauen nicht als ViewOnly gemeldet")
+	}
+	h2 := newHarness(t, func(h *harness) { h.cfg.HMIs[0].ViewOnly = true })
+	h2.open("a")
+	if s := h2.waitState(StateStarting); !s.ViewOnly {
+		t.Fatal("ViewOnly der Konfiguration fehlt im Snapshot")
+	}
+	h3 := newHarness(t, nil)
+	h3.open("a")
+	if s := h3.waitState(StateStarting); s.ViewOnly {
+		t.Fatal("ViewOnly ohne Grund gesetzt")
+	}
+}
