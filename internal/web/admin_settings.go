@@ -25,7 +25,7 @@ const (
 	helperSetTime        = "set-time"
 	helperSetNTP         = "set-ntp"
 
-	helperLimit      = 30 * time.Second
+	helperLimit      = 45 * time.Second
 	minSharedKeyLen  = 16
 	maxInactivityMin = 24 * 60
 )
@@ -315,7 +315,7 @@ func (a *admin) helperThenPersist(ctx context.Context, cmd, arg string, change f
 	ctx, cancel := context.WithTimeout(ctx, helperLimit)
 	defer cancel()
 	if err := a.d.Helper.Call(ctx, cmd, arg); err != nil {
-		return fmt.Errorf("Der Befehl ist fehlgeschlagen, es wurde nichts geändert (%v).", err)
+		return fmt.Errorf("Der Befehl ist fehlgeschlagen: %v", err)
 	}
 	err := a.updateLocked(func(c *config.Config) error {
 		change(c)

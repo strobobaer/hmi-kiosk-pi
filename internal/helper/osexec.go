@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 var binaryNames = []string{"mount", "rfkill", "systemctl", "timedatectl"}
@@ -35,6 +36,7 @@ func NewOSExec() (Exec, error) {
 		}
 		cmd := exec.CommandContext(ctx, p, args...)
 		cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
+		cmd.WaitDelay = 2 * time.Second
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			msg := strings.TrimSpace(string(out))

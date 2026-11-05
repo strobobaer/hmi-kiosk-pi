@@ -23,7 +23,7 @@ func isOverlayLine(line, overlay string) bool {
 // idempotent und gibt LF-Zeilenenden zurück.
 //
 // Die Namen disable-wifi und disable-bt gelten laut Dokumentation auch für den
-// Pi 5; die Bestätigung an echter Hardware gehört zur Selbstprüfungsliste.
+// Pi 5; Zeilen vor der ersten Abschnittszeile gelten wie [all]. Die Bestätigung an echter Hardware gehört zur Selbstprüfungsliste.
 func SetOverlay(content, overlay string, enabled bool) string {
 	var lines []string
 	if content != "" {
@@ -42,7 +42,7 @@ func SetOverlay(content, overlay string, enabled bool) string {
 				lastAllStart = len(out)
 			}
 		}
-		if section == "[all]" && isOverlayLine(t, overlay) {
+		if (section == "" || section == "[all]") && isOverlayLine(t, overlay) {
 			if !enabled {
 				continue
 			}

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const defaultTimeout = 35 * time.Second
+const defaultTimeout = 45 * time.Second
 
 type Client struct{ socket string }
 

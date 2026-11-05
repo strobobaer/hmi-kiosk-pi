@@ -33,9 +33,12 @@ const (
 	overlayWifi = "disable-wifi"
 	overlayBT   = "disable-bt"
 
-	bootMount  = "/boot/firmware"
-	roTimeout  = 10 * time.Second
-	timeLayout = "2006-01-02 15:04:05"
+	bootMount = "/boot/firmware"
+	roTimeout = 10 * time.Second
+
+	maxNTPStateBytes = 300
+	maxVersionLen    = 32
+	timeLayout       = "2006-01-02 15:04:05"
 )
 
 // Exec startet ein Programm ohne Shell. name ist der Programmname, nicht ein Pfad.
@@ -131,20 +134,21 @@ func (s *Server) updateBootConfig(ctx context.Context, overlay string, enabled b
 		return fmt.Errorf("config.txt nicht lesbar: %v", err), nil
 	}
 	updated := SetOverlay(string(orig), overlay, enabled)
-	if updated == string(orig) {
-		return nil, nil
+	changed := updated != string(orig)
+	if changed {
+		if err := s.exec(ctx, "mount", "-o", "remount,rw", bootMount); err != nil {
+			return fmt.Errorf("Boot-Partition ließ sich nicht beschreibbar machen: %v", err), nil
+		}
+		if err := writeWithBackup(s.bootCfg, orig, []byte(updated)); err != nil {
+			writeErr = fmt.Errorf("config.txt konnte nicht geschrieben werden: %v", err)
+		}
 	}
-	if err := s.exec(ctx, "mount", "-o", "remount,rw", bootMount); err != nil {
-		return fmt.Errorf("Boot-Partition ließ sich nicht beschreibbar machen: %v", err), nil
-	}
-	if err := writeWithBackup(s.bootCfg, orig, []byte(updated)); err != nil {
-		writeErr = fmt.Errorf("config.txt konnte nicht geschrieben werden: %v", err)
-	}
+	// Auch ohne Änderung: ein früheres, fehlgeschlagenes ro soll nachgeholt werden.
 	roCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), roTimeout)
 	defer cancel()
 	if err := s.exec(roCtx, "mount", "-o", "remount,ro", bootMount); err != nil {
 		what := "Die Einstellung wurde geschrieben, "
-		if writeErr != nil {
+		if writeErr != nil || !changed {
 			what = ""
 		}
 		roErr = fmt.Errorf("%sdie Boot-Partition ließ sich nicht wieder schreibschützen: %v", what, err)
@@ -160,6 +164,10 @@ func (s *Server) setTime(ctx context.Context, arg string) error {
 	if t.Year() < 2020 || t.Year() > 2100 {
 		return errors.New("Jahr außerhalb des gültigen Bereichs")
 	}
+	// set-time scheitert bei aktiver NTP-Synchronisation.
+	if err := s.run(ctx, "timedatectl", "set-ntp", "false"); err != nil {
+		return err
+	}
 	return s.run(ctx, "timedatectl", "set-time", t.Local().Format(timeLayout))
 }
 
@@ -167,37 +175,38 @@ func (s *Server) setNTP(ctx context.Context, arg string) error {
 	if !config.ValidNTPServer(arg) {
 		return errors.New("NTP-Server ungültig")
 	}
-	if err := s.writeNTPFiles(arg, true); err != nil {
-		return err
+	// Zuerst der dauerhafte Wert: scheitert er, bleibt /etc unberührt.
+	if err := os.MkdirAll(filepath.Dir(s.NTPStatePath), 0o755); err != nil {
+		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
 	}
-	return s.run(ctx, "timedatectl", "set-ntp", "true")
+	if err := writeAtomic(s.NTPStatePath, []byte(arg+"\n"), 0o644); err != nil {
+		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
+	}
+	return s.applyNTP(ctx, arg)
 }
 
-// writeNTPFiles schreibt die timesyncd-Datei und, weil das Wurzeldateisystem ein
-// Overlay ist, den Wert zusätzlich auf die Datenpartition.
-func (s *Server) writeNTPFiles(server string, persist bool) error {
+// applyNTP schreibt die timesyncd-Datei (das Wurzeldateisystem ist ein Overlay,
+// der Wert steht zusätzlich auf der Datenpartition) und startet die Zeitsynchronisation neu.
+func (s *Server) applyNTP(ctx context.Context, server string) error {
 	if err := os.MkdirAll(filepath.Dir(s.NTPConfPath), 0o755); err != nil {
 		return fmt.Errorf("NTP-Einstellung nicht schreibbar: %v", err)
 	}
 	if err := writeAtomic(s.NTPConfPath, []byte("[Time]\nNTP="+server+"\n"), 0o644); err != nil {
 		return fmt.Errorf("NTP-Einstellung nicht schreibbar: %v", err)
 	}
-	if !persist {
-		return nil
+	if err := s.run(ctx, "timedatectl", "set-ntp", "true"); err != nil {
+		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.NTPStatePath), 0o755); err != nil {
-		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
-	}
-	if err := writeAtomic(s.NTPStatePath, []byte(server+"\n"), 0o644); err != nil {
-		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
-	}
-	return nil
+	return s.run(ctx, "systemctl", "restart", "systemd-timesyncd")
 }
 
 // ReapplyNTP stellt nach dem Start die gespeicherte NTP-Einstellung wieder her.
-// Ohne gespeicherten Wert tut es nichts.
+// Ohne gespeicherten Wert tut es nichts. Die Datei wird begrenzt und ohne
+// Symlinks gelesen, der Ablauf hat eine Frist.
 func (s *Server) ReapplyNTP(ctx context.Context) error {
-	raw, err := os.ReadFile(s.NTPStatePath)
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
+	raw, err := readSmallFile(s.NTPStatePath, maxNTPStateBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -208,14 +217,11 @@ func (s *Server) ReapplyNTP(ctx context.Context) error {
 	if !config.ValidNTPServer(server) {
 		return errors.New("Gespeicherter NTP-Wert ungültig")
 	}
-	if err := s.writeNTPFiles(server, false); err != nil {
-		return err
-	}
-	return s.run(ctx, "timedatectl", "set-ntp", "true")
+	return s.applyNTP(ctx, server)
 }
 
 func (s *Server) updateActivate(_ context.Context, arg string) error {
-	if !versionRe.MatchString(arg) {
+	if len(arg) > maxVersionLen || !versionRe.MatchString(arg) {
 		return errors.New("Versionsangabe ungültig")
 	}
 	return s.upd.Activate(arg)

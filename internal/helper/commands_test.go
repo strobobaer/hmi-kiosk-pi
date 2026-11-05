@@ -121,7 +121,7 @@ func TestUnchangedConfigSkipsRemount(t *testing.T) {
 	if err := e.srv.Dispatch(context.Background(), CmdWifiOff, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.fx.got(); !reflect.DeepEqual(got, []string{"rfkill block wifi"}) {
+	if got := e.fx.got(); !reflect.DeepEqual(got, []string{"mount -o remount,ro /boot/firmware", "rfkill block wifi"}) {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -227,7 +227,7 @@ func TestSetTimeConvertsToLocal(t *testing.T) {
 		t.Fatal(err)
 	}
 	ts, _ := time.Parse(time.RFC3339, in)
-	want := []string{"timedatectl set-time " + ts.Local().Format("2006-01-02 15:04:05")}
+	want := []string{"timedatectl set-ntp false", "timedatectl set-time " + ts.Local().Format("2006-01-02 15:04:05")}
 	if got := e.fx.got(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
@@ -259,7 +259,7 @@ func TestSetNTPWritesFilesAndEnables(t *testing.T) {
 	if got := e.read(t, e.srv.NTPStatePath); got != "pool.ntp.org\n" {
 		t.Fatalf("state: %q", got)
 	}
-	if got := e.fx.got(); !reflect.DeepEqual(got, []string{"timedatectl set-ntp true"}) {
+	if got := e.fx.got(); !reflect.DeepEqual(got, ntpSeq) {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -303,3 +303,5 @@ func TestUpdateActivateRejectsPathTraversal(t *testing.T) {
 		t.Fatal("Rollback")
 	}
 }
+
+var ntpSeq = []string{"timedatectl set-ntp true", "systemctl restart systemd-timesyncd"}

@@ -39,12 +39,10 @@ func main() {
 	srv := helper.NewServer(*socket, *uid, e, *bootCfg, pendingUpdate{})
 	srv.SocketGID = *gid
 	srv.NTPStatePath = *ntpState
+	srv.ReapplyNTPOnStart = true
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := srv.ReapplyNTP(ctx); err != nil {
-		log.Printf("NTP-Einstellung nicht wiederhergestellt: %v", err)
-	}
 	if err := srv.Serve(ctx); err != nil {
 		log.Fatal(err)
 	}
