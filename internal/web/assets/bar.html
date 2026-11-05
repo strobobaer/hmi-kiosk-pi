@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sitzungsleiste</title>
+<link rel="stylesheet" href="/kiosk.css">
+</head>
+<body class="page-bar" data-page="bar">
+<header class="bar">
+<span id="bar-name" class="bar-name">{{.Name}}</span>
+<span id="bar-mode" class="badge {{if .ViewOnly}}view{{else}}operate{{end}}">{{if .ViewOnly}}Nur ansehen{{else}}Bedienen{{end}}</span>
+<span id="bar-notice" class="bar-notice"{{if not .Warned}} hidden{{end}}>{{if .Warned}}{{.Notice}}{{end}}</span>
+<button type="button" id="bar-back" class="bar-back">Zurück</button>
+</header>
+<script src="/kiosk.js"></script>
+</body>
+</html>
