@@ -98,14 +98,19 @@ func TestConcurrentSetupOnlyOneWins(t *testing.T) {
 	e := newEnvNoPassword(t)
 	var wg sync.WaitGroup
 	var wins atomic.Int32
-	for i := 0; i < 8; i++ {
-		b := e.browser()
-		tok := b.tokenFrom("/admin/setup")
+	// Erst alle Formulare holen: Sobald jemand gewinnt, gibt es die Seite nicht mehr.
+	browsers := make([]*browser, 8)
+	tokens := make([]string, 8)
+	for i := range browsers {
+		browsers[i] = e.browser()
+		tokens[i] = browsers[i].tokenFrom("/admin/setup")
+	}
+	for i, b := range browsers {
 		pw := "passwort-nummer-" + string(rune('a'+i))
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r := b.postRaw("/admin/setup", url.Values{"csrf": {tok}, "password": {pw}, "password2": {pw}})
+			r := b.postRaw("/admin/setup", url.Values{"csrf": {tokens[i]}, "password": {pw}, "password2": {pw}})
 			if r.Code == http.StatusSeeOther {
 				wins.Add(1)
 			}
