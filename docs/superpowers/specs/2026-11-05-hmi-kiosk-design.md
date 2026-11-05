@@ -272,8 +272,8 @@ sind in die Binärdatei eingebettet. Es gibt keine Abrufe aus dem Internet.
 ## 11. Sicherheit
 
 - Der Dienst läuft ohne root. Der Helfer nimmt nur feste Befehle an, über
-  einen Unix-Socket mit Prüfung der aufrufenden Benutzerkennung. Nur `set-time` und `set-ntp` tragen
-  einen streng geprüften Wert, alle anderen Befehle nehmen keinen.
+  einen Unix-Socket mit Prüfung der aufrufenden Benutzerkennung. `set-time`, `set-ntp` und `update-activate` tragen
+  je einen streng geprüften Wert, alle anderen Befehle nehmen keinen; ein nicht leerer Wert dort wird abgelehnt.
 - Terminal-API: Anfragen sind per HMAC-SHA-256 mit dem gemeinsamen Schlüssel signiert. Sendet ein Gerät
   einen ändernden Befehl, holt es zuerst eine einmalige Zufallszahl vom Empfänger; so sind weder Uhren
   noch Wiederholungen ein Problem.

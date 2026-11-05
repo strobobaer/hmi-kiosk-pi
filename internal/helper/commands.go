@@ -1,0 +1,222 @@
+// Package helper ist der kleine root-Helfer: eine feste Befehlsliste hinter einem
+// Unix-Socket. Er nimmt nie Befehlszeilen entgegen, nur Namen aus der Liste und
+// höchstens einen streng geprüften Wert.
+package helper
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+
+	"hmikiosk/internal/config"
+)
+
+const (
+	CmdWifiOff        = "wifi-off"
+	CmdWifiOn         = "wifi-on"
+	CmdBtOff          = "bt-off"
+	CmdBtOn           = "bt-on"
+	CmdReboot         = "reboot"
+	CmdRestartService = "restart-service"
+	CmdSetTime        = "set-time"
+	CmdSetNTP         = "set-ntp"
+	CmdUpdateActivate = "update-activate"
+	CmdUpdateRollback = "update-rollback"
+)
+
+const (
+	overlayWifi = "disable-wifi"
+	overlayBT   = "disable-bt"
+
+	bootMount  = "/boot/firmware"
+	roTimeout  = 10 * time.Second
+	timeLayout = "2006-01-02 15:04:05"
+)
+
+// Exec startet ein Programm ohne Shell. name ist der Programmname, nicht ein Pfad.
+type Exec func(ctx context.Context, name string, args ...string) error
+
+// UpdateOps sind die Aktionen der Aktualisierung (Aufgabe 14).
+type UpdateOps interface {
+	Activate(version string) error
+	Rollback() error
+}
+
+var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+type command struct {
+	takesArg bool
+	run      func(s *Server, ctx context.Context, arg string) error
+}
+
+var commands = map[string]command{
+	CmdWifiOff: {run: func(s *Server, ctx context.Context, _ string) error {
+		return s.setRadio(ctx, overlayWifi, "wifi", true)
+	}},
+	CmdWifiOn: {run: func(s *Server, ctx context.Context, _ string) error {
+		return s.setRadio(ctx, overlayWifi, "wifi", false)
+	}},
+	CmdBtOff: {run: func(s *Server, ctx context.Context, _ string) error {
+		return s.setRadio(ctx, overlayBT, "bluetooth", true)
+	}},
+	CmdBtOn: {run: func(s *Server, ctx context.Context, _ string) error {
+		return s.setRadio(ctx, overlayBT, "bluetooth", false)
+	}},
+	CmdReboot: {run: func(s *Server, ctx context.Context, _ string) error { return s.run(ctx, "systemctl", "reboot") }},
+	CmdRestartService: {run: func(s *Server, ctx context.Context, _ string) error {
+		return s.run(ctx, "systemctl", "restart", "hmi-kiosk.service")
+	}},
+	CmdSetTime:        {takesArg: true, run: (*Server).setTime},
+	CmdSetNTP:         {takesArg: true, run: (*Server).setNTP},
+	CmdUpdateActivate: {takesArg: true, run: (*Server).updateActivate},
+	CmdUpdateRollback: {run: func(s *Server, _ context.Context, _ string) error { return s.upd.Rollback() }},
+}
+
+// Dispatch führt einen Befehl aus. Fehlertexte sind für die Admin-Seite bestimmt.
+func (s *Server) Dispatch(ctx context.Context, cmd, arg string) error {
+	c, ok := commands[cmd]
+	if !ok {
+		return errors.New("Unbekannter Befehl")
+	}
+	if !c.takesArg && arg != "" {
+		return errors.New("Dieser Befehl nimmt keinen Wert an")
+	}
+	if c.takesArg && arg == "" {
+		return errors.New("Der Wert fehlt")
+	}
+	return c.run(s, ctx, arg)
+}
+
+func (s *Server) run(ctx context.Context, name string, args ...string) error {
+	if err := s.exec(ctx, name, args...); err != nil {
+		return fmt.Errorf("%s fehlgeschlagen: %v", name, err)
+	}
+	return nil
+}
+
+// setRadio ändert das Overlay in config.txt (dauerhaft) und sperrt das Funkmodul
+// sofort per rfkill. Eingeschaltet wird nach einem Neustart wirksam.
+func (s *Server) setRadio(ctx context.Context, overlay, radio string, off bool) error {
+	writeErr, roErr := s.updateBootConfig(ctx, overlay, off)
+	if writeErr != nil {
+		if roErr != nil {
+			return fmt.Errorf("%v; %v", writeErr, roErr)
+		}
+		return writeErr
+	}
+	action := "unblock"
+	if off {
+		action = "block"
+	}
+	rfErr := s.run(ctx, "rfkill", action, radio)
+	switch {
+	case roErr != nil && rfErr != nil:
+		return fmt.Errorf("%v; %v", roErr, rfErr)
+	case roErr != nil:
+		return roErr
+	}
+	return rfErr
+}
+
+// updateBootConfig liest config.txt im Normalzustand (schreibgeschützt), schreibt
+// nur bei einer Änderung und stellt den Schreibschutz auch nach einem Fehler her.
+func (s *Server) updateBootConfig(ctx context.Context, overlay string, enabled bool) (writeErr, roErr error) {
+	orig, err := os.ReadFile(s.bootCfg)
+	if err != nil {
+		return fmt.Errorf("config.txt nicht lesbar: %v", err), nil
+	}
+	updated := SetOverlay(string(orig), overlay, enabled)
+	if updated == string(orig) {
+		return nil, nil
+	}
+	if err := s.exec(ctx, "mount", "-o", "remount,rw", bootMount); err != nil {
+		return fmt.Errorf("Boot-Partition ließ sich nicht beschreibbar machen: %v", err), nil
+	}
+	if err := writeWithBackup(s.bootCfg, orig, []byte(updated)); err != nil {
+		writeErr = fmt.Errorf("config.txt konnte nicht geschrieben werden: %v", err)
+	}
+	roCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), roTimeout)
+	defer cancel()
+	if err := s.exec(roCtx, "mount", "-o", "remount,ro", bootMount); err != nil {
+		what := "Die Einstellung wurde geschrieben, "
+		if writeErr != nil {
+			what = ""
+		}
+		roErr = fmt.Errorf("%sdie Boot-Partition ließ sich nicht wieder schreibschützen: %v", what, err)
+	}
+	return writeErr, roErr
+}
+
+func (s *Server) setTime(ctx context.Context, arg string) error {
+	t, err := time.Parse(time.RFC3339, arg)
+	if err != nil {
+		return errors.New("Uhrzeit ungültig")
+	}
+	if t.Year() < 2020 || t.Year() > 2100 {
+		return errors.New("Jahr außerhalb des gültigen Bereichs")
+	}
+	return s.run(ctx, "timedatectl", "set-time", t.Local().Format(timeLayout))
+}
+
+func (s *Server) setNTP(ctx context.Context, arg string) error {
+	if !config.ValidNTPServer(arg) {
+		return errors.New("NTP-Server ungültig")
+	}
+	if err := s.writeNTPFiles(arg, true); err != nil {
+		return err
+	}
+	return s.run(ctx, "timedatectl", "set-ntp", "true")
+}
+
+// writeNTPFiles schreibt die timesyncd-Datei und, weil das Wurzeldateisystem ein
+// Overlay ist, den Wert zusätzlich auf die Datenpartition.
+func (s *Server) writeNTPFiles(server string, persist bool) error {
+	if err := os.MkdirAll(filepath.Dir(s.NTPConfPath), 0o755); err != nil {
+		return fmt.Errorf("NTP-Einstellung nicht schreibbar: %v", err)
+	}
+	if err := writeAtomic(s.NTPConfPath, []byte("[Time]\nNTP="+server+"\n"), 0o644); err != nil {
+		return fmt.Errorf("NTP-Einstellung nicht schreibbar: %v", err)
+	}
+	if !persist {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.NTPStatePath), 0o755); err != nil {
+		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
+	}
+	if err := writeAtomic(s.NTPStatePath, []byte(server+"\n"), 0o644); err != nil {
+		return fmt.Errorf("NTP-Wert nicht speicherbar: %v", err)
+	}
+	return nil
+}
+
+// ReapplyNTP stellt nach dem Start die gespeicherte NTP-Einstellung wieder her.
+// Ohne gespeicherten Wert tut es nichts.
+func (s *Server) ReapplyNTP(ctx context.Context) error {
+	raw, err := os.ReadFile(s.NTPStatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("NTP-Wert nicht lesbar: %v", err)
+	}
+	server := strings.TrimSpace(string(raw))
+	if !config.ValidNTPServer(server) {
+		return errors.New("Gespeicherter NTP-Wert ungültig")
+	}
+	if err := s.writeNTPFiles(server, false); err != nil {
+		return err
+	}
+	return s.run(ctx, "timedatectl", "set-ntp", "true")
+}
+
+func (s *Server) updateActivate(_ context.Context, arg string) error {
+	if !versionRe.MatchString(arg) {
+		return errors.New("Versionsangabe ungültig")
+	}
+	return s.upd.Activate(arg)
+}

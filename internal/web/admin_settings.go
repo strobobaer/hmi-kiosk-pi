@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/netip"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -371,19 +369,9 @@ func (a *admin) handleBtOn(w http.ResponseWriter, r *http.Request, s sessionRef)
 		"Bluetooth wird wieder eingeschaltet: Neustart nötig.")
 }
 
-var ntpHostRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$`)
-
-// validNTPServer lässt nur Rechnernamen und IP-Adressen zum Helfer durch.
-func validNTPServer(s string) bool {
-	if _, err := netip.ParseAddr(s); err == nil {
-		return !strings.Contains(s, "%")
-	}
-	return ntpHostRe.MatchString(s)
-}
-
 func (a *admin) handleNTP(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	server := strings.TrimSpace(r.PostForm.Get("ntp"))
-	if !validNTPServer(server) {
+	if !config.ValidNTPServer(server) {
 		a.renderNetwork(w, s, http.StatusUnprocessableEntity, "Bitte einen gültigen Rechnernamen oder eine IP-Adresse als NTP-Server angeben.", &server)
 		return
 	}
