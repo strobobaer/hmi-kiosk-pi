@@ -749,7 +749,7 @@ func protection(ctx context.Context, d Deps) StepResult {
 		bad("Einhängepunkte nicht lesbar: %v", err)
 	} else {
 		mounts = string(b)
-		install := isInstallScriptSystem(mounts)
+		install := d.ImageMarker == nil || !d.ImageMarker()
 		// Auf install.sh-Systemen gibt es keinen Schreibschutz (Spec Abschnitt 9): nur ein Hinweis.
 		warn := func(format string, a ...any) {
 			if install {
@@ -832,32 +832,24 @@ func (r *rig) release(p *tracked) {
 	}
 }
 
+const disconnectGrace = 2 * time.Second
+
 // waitDisconnected wartet, bis der Server die Verbindung nicht mehr zählt: Er
 // bucht das Ende nebenläufig, kurz nach dem Prozessende steht sie noch.
 func (r *rig) waitDisconnected(ctx context.Context) bool {
-	for i := 0; i < 2000/max(int(r.d.Timing.Poll/time.Millisecond), 1); i++ {
+	deadline := time.Now().Add(disconnectGrace)
+	for time.Now().Before(deadline) {
 		if !r.connected() {
 			return true
 		}
-		if !sleepCtx(ctx, r.d.Timing.Poll) {
+		if !sleepCtx(ctx, min(r.d.Timing.Poll, time.Until(deadline))) {
 			break
 		}
 	}
 	return !r.connected()
 }
 
-// isInstallScriptSystem: Das SD-Abbild hat immer die Datenpartition /data (Spec Abschnitt 9);
-// Systeme aus install.sh haben weder sie noch einen Schreibschutz. Kein Overlay auf /
-// und keine Einhängung auf /data heißt also: install.sh. Mit /data, aber ohne Overlay,
-// ist es ein Abbild mit fehlendem Schreibschutz und damit ein Fehler.
-func isInstallScriptSystem(mounts string) bool {
-	if overlayOnRoot(mounts) {
-		return false
-	}
-	for _, line := range strings.Split(mounts, "\n") {
-		if f := strings.Fields(line); len(f) >= 2 && f[1] == "/data" {
-			return false
-		}
-	}
-	return true
-}
+// ImageMarkerFile wird vom Image-Bau geschrieben (packaging/image/stage-hmi/01-hmi/00-run.sh).
+// Sie erkennt das SD-Abbild positiv; auf Systemen aus install.sh fehlt sie, und dort gibt
+// es keinen Schreibschutz (Spec Abschnitt 9).
+const ImageMarkerFile = "/etc/hmi-kiosk/image-release"

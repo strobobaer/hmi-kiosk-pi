@@ -107,7 +107,9 @@ type Deps struct {
 	// Exec führt ein Programm aus und liefert die Standardausgabe.
 	Exec func(ctx context.Context, name string, args ...string) (string, error)
 	// Busy liefert eine Meldung, wenn eine echte Sitzung oder eine Daueranzeige läuft.
-	Busy func() string
+	// ImageMarker meldet, ob dies ein SD-Abbild ist (Datei /etc/hmi-kiosk/image-release); nil heißt nein.
+	ImageMarker func() bool
+	Busy        func() string
 	// Show wählt, was die Anzeige des Terminals zeigt: "touch" die Touch-Seite,
 	// "bar" die Sitzungsleiste, "" den Normalzustand.
 	Show  func(page string)

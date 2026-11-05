@@ -405,10 +405,11 @@ func TestProtectionDistinguishesInstallScriptFromImage(t *testing.T) {
 	if r.Label() != "PRÜFEN" {
 		t.Fatalf("Label %q", r.Label())
 	}
-	// Abbild: Datenpartition vorhanden, aber Overlay fehlt → Fehler.
+	// Abbild (Kennzeichen vorhanden): Overlay aus und /data fehlt → Fehler, nicht Hinweis.
 	f = newFixture(t)
+	f.d.ImageMarker = func() bool { return true }
 	f.d.Mounts = func() ([]byte, error) {
-		return []byte("/dev/mmcblk0p2 / ext4 rw 0 0\n/dev/mmcblk0p1 /boot/firmware vfat ro 0 0\n/dev/mmcblk0p3 /data ext4 rw 0 0\n"), nil
+		return []byte("/dev/mmcblk0p2 / ext4 rw 0 0\n/dev/mmcblk0p1 /boot/firmware vfat ro 0 0\n"), nil
 	}
 	r = byName(t, Run(context.Background(), f.d))["schutz"]
 	if r.OK || !strings.Contains(r.Detail, "Overlay") {
@@ -420,5 +421,35 @@ func TestProtectionDistinguishesInstallScriptFromImage(t *testing.T) {
 	f.d.Exec = func(context.Context, string, ...string) (string, error) { return "RuntimeWatchdogUSec=0\n", nil }
 	if r := byName(t, Run(context.Background(), f.d))["schutz"]; r.OK {
 		t.Fatalf("Watchdog aus: %+v", r)
+	}
+}
+
+func TestWaitDisconnectedGraceIsTwoSecondsRegardlessOfPoll(t *testing.T) {
+	f := newFixture(t)
+	f.d.Timing.Poll = 700 * time.Millisecond // 2000/700 ganzzahlig wären nur 2 Runden
+	f.d.Timing = f.d.Timing.withDefaults()
+	r, err := newRig(f.d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.close()
+	start := time.Now()
+	r.d.Established = func(net.IP, int) (bool, error) { return true, nil }
+	r.srv.DropClients()
+	// Ohne Client gilt connected() als falsch; mit Established=true und ClientCount 0 ebenso.
+	_ = start
+	if !r.waitDisconnected(context.Background()) {
+		t.Fatal("kein Client: muss sofort frei sein")
+	}
+	p, _ := r.start(r.password, false)
+	if _, err := r.waitConnected(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	begin := time.Now()
+	if r.waitDisconnected(context.Background()) {
+		t.Fatal("Verbindung besteht noch")
+	}
+	if el := time.Since(begin); el < 1900*time.Millisecond || el > 3500*time.Millisecond {
+		t.Fatalf("Wartezeit %v statt etwa 2 s", el)
 	}
 }

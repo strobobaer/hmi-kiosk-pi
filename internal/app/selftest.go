@@ -100,6 +100,7 @@ func (s *service) selftestDeps() selftest.Deps {
 	d.RAMDir = s.ramDir
 	d.BootConfig = readBootConfig
 	d.Busy = s.busyMessage
+	d.ImageMarker = func() bool { _, err := os.Stat(selftest.ImageMarkerFile); return err == nil }
 	d.Show = s.showSelftestPage
 	d.Touch = s.touch
 	d.ServicePID = os.Getpid
