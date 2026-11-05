@@ -71,13 +71,20 @@ Zustände: `Kacheln → Anfrage → (Rückfrage) → Start → Verbunden → Bee
 
 1. Touch auf eine Kachel.
 2. `coord` fragt die anderen Terminals (Abschnitt 5).
-3. Der Dienst schreibt ein Sitzungsprofil in den RAM und startet den Client.
-4. Sobald die TCP-Verbindung zum HMI steht, wird die Kachelseite beendet und die Leiste gezeigt.
+3. Der Dienst prüft Erreichbarkeit und Passwort vorab mit `rfb.Probe`. Ist `AuthOK` falsch, zeigt die Kachel einen Hinweis und es wird kein Client gestartet. Sonst schreibt der Dienst ein Sitzungsprofil in den RAM und startet den Client.
+4. Sobald die TCP-Verbindung zum HMI im Zustand ESTABLISHED steht, wird die Kachelseite beendet und die Leiste gezeigt.
 5. Sitzungsende durch „Zurück“, Übernahme, Inaktivität, Client-Ende oder Trennung durch das HMI.
 6. Der Client wird beendet, die Sitzungsdaten im RAM werden gelöscht, die Kachelseite startet.
 
+**Verbindung:** „Steht“ und „besteht“ meinen in diesem Abschnitt eine TCP-Verbindung zum HMI im Zustand
+ESTABLISHED (`platform.HasEstablished`), nicht die Erreichbarkeit. Eine neue TCP-Prüfung zum HMI zählt
+nicht, denn sie gelingt auch, wenn der Client selbst keine Verbindung hat.
+
+**Startfrist:** Steht 15 Sekunden nach dem Start des Clients keine solche Verbindung, wird der Client
+beendet und die Kachel zeigt einen Hinweis.
+
 **Sitzungsende erkennen:** Maßgeblich sind das Prozessende des Clients und zusätzlich die
-TCP-Verbindung zum HMI. Besteht für 5 Sekunden keine Verbindung mehr, gilt die Sitzung als beendet
+Verbindung zum HMI. Besteht für 5 Sekunden keine Verbindung mehr, gilt die Sitzung als beendet
 und der Client wird beendet. So bleibt der Kiosk nicht hängen, falls der Client einen Abbruch nur als
 Dialog anzeigt.
 
@@ -151,9 +158,9 @@ Geprüft im Remmina-Quellcode (Stand `master`, Abgleich mit der Trixie-Version i
 | Punkt | Befund | Folge |
 |---|---|---|
 | Instanzen | Remmina ist eine GApplication mit nur einer Instanz; ein zweiter Aufruf gibt an die laufende weiter | Eigene App-ID je Sitzung, nie eine Instanz weiterverwenden |
-| Prozessende | Nach dem Trennen endet Remmina nur, wenn keine Verbindung, kein Hauptfenster und kein Tray-Symbol da sind | `--no-tray-icon` ist Pflicht; TCP-Prüfung aus Abschnitt 4 als Absicherung; Beenden per SIGTERM |
+| Prozessende | Nach dem Trennen endet Remmina nur, wenn keine Verbindung, kein Hauptfenster und kein Tray-Symbol da sind | `--no-tray-icon` ist Pflicht; Prüfung auf eine ESTABLISHED-Verbindung und Startfrist aus Abschnitt 4 als Absicherung; Beenden per SIGTERM |
 | `--kiosk` | Öffnet die Hauptansicht | Nicht verwenden |
-| Skalierung | Clientseitig, Eingaben werden zurückgerechnet | Einsetzbar, HMI-Auflösung ist egal |
+| Skalierung | Clientseitig, Eingaben werden zurückgerechnet | Einsetzbar; das Seitenverhältnis bleibt erhalten, bei abweichendem Format entstehen schwarze Balken |
 | Passwörter | Ohne Schlüsselbund: 3DES-CBC mit dem `secret` aus `remmina.pref` (24 Byte Schlüssel, 8 Byte IV), mit Nullen aufgefüllt, Base64 | Der Dienst erzeugt `secret` und Profil selbst. Das Secret-Plugin wird nicht installiert |
 
 Erzeugte Profilfelder: `protocol=VNC`, `server`, `password`, `quality`, `colordepth`, `viewonly`,
@@ -252,7 +259,7 @@ sind in die Binärdatei eingebettet. Es gibt keine Abrufe aus dem Internet.
 |---|---|
 | Client stürzt ab | Rückkehr zur Kachelseite mit Hinweis; Daueranzeige verbindet neu |
 | HMI nicht erreichbar | Kachel zeigt das durch eine TCP-Prüfung alle 10 Sekunden |
-| Falsches VNC-Passwort | Remmina zeigt trotz `closeonfailure=1` einen Passwortdialog und endet nicht (Abschnitt 14). Die Verbindung des Clients fehlt; der Dienst beendet ihn wie in Abschnitt 4 und zeigt den Hinweis auf der Kachel |
+| Falsches VNC-Passwort | Vorabprüfung mit `rfb.Probe`: Ist `AuthOK` falsch, zeigt die Kachel einen Hinweis und es wird kein Client gestartet. Wird das Passwort danach abgelehnt, zeigt Remmina trotz `closeonfailure=1` einen Passwortdialog und endet nicht (Abschnitt 14); dann beendet die Startfrist von 15 Sekunden aus Abschnitt 4 den Client, mit Hinweis |
 | Chromium stürzt ab | Neustart durch den Dienst mit wachsender Wartezeit; VNC-Sitzung läuft weiter |
 | Dienst stürzt ab | systemd startet ihn neu, beim Start werden Kindprozesse aufgeräumt |
 | System hängt | Hardware-Watchdog startet neu |
@@ -312,7 +319,9 @@ Es gibt kein separates Testgerät. Die erste Prüfung auf echter Hardware ist al
 
 Solange nur ein Raspi umgestellt ist, greift die Abstimmung noch nicht: Die alte Version nimmt daran nicht teil.
 
-## 14. Offene Punkte
+## 14. Offene Punkte und bestätigte Ergebnisse
+
+### Offene Punkte
 
 Diese Punkte sind nicht bestätigt und werden an den genannten Stellen entschieden:
 
@@ -342,7 +351,7 @@ linux/arm64 (Emulation), Xvfb und openbox.
 | Gleiche App-ID | Der zweite Aufruf endet und übergibt die Verbindung an die erste Instanz; eigene IDs sind also nötig |
 | Ohne Sitzungsbus | Verbindung, zwei Sitzungen und Prozessende funktionieren auch ohne D-Bus und ohne Desktop-Sitzung |
 | HMI nicht erreichbar | Mit `closeonfailure=1` endet der Prozess nach etwa 3 s ohne Dialog |
-| **Falsches Passwort (Abweichung)** | `closeonfailure=1` greift nicht: Remmina bleibt mit dem Dialog „Enter VNC password“ offen, ohne TCP-Verbindung zum HMI und ohne Prozessende (nach 40 s beobachtet). Kein Profilfeld verhindert das; der Dienst muss den Client beenden |
+| **Falsches Passwort (Abweichung)** | `closeonfailure=1` greift nicht: Remmina bleibt mit dem Dialog „Enter VNC password“ offen, ohne TCP-Verbindung zum HMI und ohne Prozessende (nach 40 s beobachtet). Kein Profilfeld verhindert das. Folge: Vorabprüfung und Startfrist aus Abschnitt 4 |
 | `scale` | `1` skaliert clientseitig und behält das Seitenverhältnis; `0` zeigt das Bild mittig in Originalgröße |
 | Seitenverhältnis | Passt das HMI-Format nicht zur Fläche, entstehen Balken (800×600 in 1280×752: Maßstab 1,25, Ursprung bei x=138). `scaler_expand=1` würde verzerrt füllen und wird nicht gesetzt |
 | `viewmode` | `1` und `2`: normales Fenster, die Fensterregel gilt. `0`: maximiert. `3` und `4`: Vollbild. Fest eingestellt ist `1` |
