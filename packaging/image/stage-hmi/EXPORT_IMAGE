@@ -1,0 +1,2 @@
+# Nur diese Stufe erzeugt ein Abbild; der Dateiname kommt aus IMG_FILENAME in der Konfiguration.
+IMG_SUFFIX=""

@@ -1,0 +1,26 @@
+# Ohne empfohlene Pakete: remmina empfiehlt remmina-plugin-secret, das nicht ins Abbild darf.
+# Grafik: labwc (Wayland), Xwayland für TigerVNC unter labwc
+labwc
+xwayland
+libgl1-mesa-dri
+libegl-mesa0
+fonts-dejavu-core
+# Oberfläche und VNC-Clients
+chromium
+remmina
+remmina-plugin-vnc
+tigervnc-viewer
+# Ausweichprofil x11: minimaler X-Server mit openbox
+openbox
+xserver-xorg-core
+xserver-xorg-input-libinput
+xinit
+xauth
+x11-xserver-utils
+# xwininfo für die Selbstprüfung
+x11-utils
+# Helfer und erster Start
+rfkill
+raspi-config
+overlayroot
+fdisk

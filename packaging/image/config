@@ -1,0 +1,19 @@
+# pi-gen-Konfiguration des HMI-Kiosk-Abbilds (Raspberry Pi OS Lite, Debian Trixie, arm64).
+# packaging/build-image.sh hängt die Werte des einzelnen Baus an (IMG_FILENAME, ENABLE_SSH,
+# FIRST_USER_PASS als verworfener Zufallswert) und übergibt die Datei an build-docker.sh.
+IMG_NAME=hmi-kiosk
+RELEASE=trixie
+# Nur die Lite-Stufen und unsere Stufe, keine Desktop-Stufen.
+STAGE_LIST="stage0 stage1 stage2 stage-hmi"
+DEPLOY_COMPRESSION=none
+TARGET_HOSTNAME=hmi-kiosk
+LOCALE_DEFAULT=de_DE.UTF-8
+KEYBOARD_KEYMAP=de
+KEYBOARD_LAYOUT="German"
+TIMEZONE_DEFAULT=Europe/Berlin
+# Erster Benutzer aus pi-gen: wird in stage-hmi gesperrt. Ohne Umbenennungs-Assistent beim
+# ersten Start, der sonst tty1 blockieren würde.
+FIRST_USER_NAME=hmiadmin
+DISABLE_FIRST_BOOT_USER_RENAME=1
+# cloud-init würde u. a. die Wurzelpartition vergrößern.
+ENABLE_CLOUD_INIT=0

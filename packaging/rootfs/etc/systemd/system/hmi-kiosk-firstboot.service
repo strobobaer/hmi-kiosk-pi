@@ -1,0 +1,13 @@
+[Unit]
+Description=HMI-Kiosk erster Start: /data einrichten, Overlay einschalten, Neustart
+RequiresMountsFor=/data /boot/firmware
+ConditionPathExists=!/data/.hmi-kiosk-firstboot-done
+Before=hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hmi-kiosk-firstboot finish
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

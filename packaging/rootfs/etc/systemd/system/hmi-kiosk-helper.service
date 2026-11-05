@@ -1,0 +1,18 @@
+[Unit]
+Description=HMI-Kiosk root-Helfer
+RequiresMountsFor=/data
+After=hmi-kiosk-firstboot.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStartPre=/bin/chgrp hmikiosk /run/hmi-kiosk-helper
+ExecStart=/usr/local/bin/hmi-kiosk-helper -uid 1100 -gid 1100 -socket /run/hmi-kiosk-helper/helper.sock
+Restart=always
+RestartSec=2
+# Der Dienst (Gruppe hmikiosk) darf den Socket erreichen, aber im Ordner nichts anlegen.
+RuntimeDirectory=hmi-kiosk-helper
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

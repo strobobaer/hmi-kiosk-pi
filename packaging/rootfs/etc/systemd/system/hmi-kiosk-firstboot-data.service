@@ -1,0 +1,17 @@
+[Unit]
+Description=HMI-Kiosk Datenpartition anlegen (erster Start)
+# /data steht ohne nofail in der fstab: Fehlt die Partition, scheitert local-fs.target.
+# Deshalb muss sie vor data.mount existieren, noch innerhalb von x-systemd.device-timeout.
+DefaultDependencies=no
+Wants=systemd-udevd.service
+After=systemd-udevd.service systemd-remount-fs.service boot-firmware.mount
+Before=data.mount local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/hmi-kiosk-firstboot prepare-data
+TimeoutStartSec=25
+
+[Install]
+WantedBy=local-fs.target

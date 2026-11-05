@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- labwc im Kiosk (Spec Abschnitt 6). Gestartet mit "labwc -C /etc/xdg/labwc". -->
+<labwc_config>
+  <core>
+    <decoration>server</decoration>
+  </core>
+
+  <!-- Die oberen 48 Pixel gehören der Sitzungsleiste; maximierte Fenster bleiben darunter. -->
+  <margin top="48" />
+
+  <windowRules>
+    <!-- Remmina-Sitzung: ohne Rahmen bei 0,48 in Breite x (Höhe - 48), über den Rand oben und
+         Maximieren unabhängig von der Auflösung. Regeln greifen beim ersten Anzeigen, da steht
+         der Titel (client.RemminaTitlePrefix) noch nicht fest. Daher die Kennung: app_id unter
+         Wayland und WM_CLASS unter X11 sind org.remmina.Remmina, auch mit eigener App-ID je Sitzung. -->
+    <windowRule identifier="org.remmina.Remmina" type="normal" serverDecoration="no">
+      <action name="MoveTo" x="0" y="48" />
+      <action name="Maximize" />
+    </windowRule>
+    <!-- Sitzungsleiste (Chromium mit -app=.../bar): unter Wayland zählt -window-position nicht. -->
+    <windowRule identifier="*127.0.0.1__bar*" serverDecoration="no" fixedPosition="yes">
+      <action name="MoveTo" x="0" y="0" />
+    </windowRule>
+  </windowRules>
+
+  <!-- Eigene Bindungen ersetzen die Voreinstellungen: keine Tastenkürzel, kein Menü. -->
+  <keyboard>
+    <keybind key="W-F24">
+      <action name="Raise" />
+    </keybind>
+  </keyboard>
+  <mouse>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus" />
+        <action name="Raise" />
+      </mousebind>
+    </context>
+  </mouse>
+</labwc_config>

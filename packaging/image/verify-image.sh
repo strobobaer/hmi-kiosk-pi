@@ -1,0 +1,318 @@
+#!/bin/sh
+# Prüft ein gebautes SD-Abbild, ohne es zu starten: Partitionen, Pakete, Dienste, Benutzer,
+# Fensterregeln und Dateirechte. Hängt die Partitionen nur lesend per Loop-Gerät ein.
+#
+# Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>
+#   --version  erwartete Programmversion (sonst die aus /etc/hmi-kiosk/image-release)
+#   --pakete   schreibt die Paketliste (Name, Version, Architektur) in <datei>
+# Umgebung: HMI_ENABLE_SSH=1, wenn das Abbild mit SSH gebaut wurde (sonst muss SSH aus sein).
+# Braucht root und sfdisk, losetup, blkid, mount, dpkg-query, stat (xz für .img.xz);
+# unter Docker: docker run --rm --privileged -v "$PWD:/src" -w /src pi-gen packaging/image/verify-image.sh <abbild>
+# Exit: 0 alle Prüfungen bestanden, 1 mindestens eine gescheitert, 2 Aufruf oder Umgebung fehlerhaft.
+set -eu
+
+KIOSK_UID=1100
+REQUIRED_PACKAGES="labwc xwayland chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
+xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk"
+FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
+UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service"
+
+usage() {
+	echo "Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>" >&2
+	exit 2
+}
+
+want_version=""
+package_list=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--version)
+		[ $# -ge 2 ] || usage
+		want_version=$2
+		shift 2
+		;;
+	--pakete)
+		[ $# -ge 2 ] || usage
+		package_list=$2
+		shift 2
+		;;
+	-h | --help) usage ;;
+	-*) usage ;;
+	*) break ;;
+	esac
+done
+if [ $# -ne 1 ]; then
+	echo "Kein Abbild angegeben." >&2
+	usage
+fi
+image=$1
+if [ ! -f "$image" ]; then
+	echo "Abbild nicht gefunden: $image" >&2
+	exit 2
+fi
+if [ "$(id -u)" != 0 ]; then
+	echo "verify-image.sh braucht root für die Loop-Geräte (z. B. im privilegierten Container)." >&2
+	exit 2
+fi
+for tool in sfdisk losetup blkid mount umount dpkg-query stat od; do
+	if ! command -v "$tool" >/dev/null 2>&1; then
+		echo "Werkzeug fehlt: $tool" >&2
+		exit 2
+	fi
+done
+
+work=$(mktemp -d)
+loops=""
+cleanup() {
+	for m in "$work/root/boot/firmware" "$work/boot" "$work/root"; do
+		if mountpoint -q "$m" 2>/dev/null; then umount "$m" || true; fi
+	done
+	for l in $loops; do losetup -d "$l" 2>/dev/null || true; done
+	rm -rf "$work"
+}
+trap cleanup EXIT INT TERM
+
+case "$image" in
+*.xz)
+	command -v xz >/dev/null 2>&1 || {
+		echo "Werkzeug fehlt: xz" >&2
+		exit 2
+	}
+	echo "Entpacke $image ..."
+	xz -dc "$image" >"$work/image.img"
+	img="$work/image.img"
+	;;
+*) img=$image ;;
+esac
+
+fails=0
+ok() { echo "OK $1${2:+: $2}"; }
+bad() {
+	echo "FEHLER $1: $2"
+	fails=$((fails + 1))
+}
+
+# Partitionstabelle: Zeilen "<abbild>N : start= S, size= Z, type=T".
+parts=$(sfdisk --dump "$img" | grep "^${img}[0-9]" || true)
+nparts=$(printf '%s\n' "$parts" | grep -c . || true)
+field() { printf '%s\n' "$parts" | sed -n "${1}p" | sed -n "s/.*$2= *\([0-9a-fA-F]*\).*/\1/p"; }
+
+attach() { # attach <nr> -> Loop-Gerät der Partition, nur lesend
+	start=$(field "$1" start)
+	size=$(field "$1" size)
+	l=$(losetup -r -f --show -o $((start * 512)) --sizelimit $((size * 512)) "$img")
+	loops="$loops $l"
+	echo "$l"
+}
+
+if [ "$nparts" != 2 ]; then
+	bad partitionen "$nparts Partitionen statt 2 (Boot, System; /data entsteht beim ersten Start)"
+	echo "Abbruch: ohne die erwarteten Partitionen sind keine weiteren Prüfungen möglich."
+	exit 1
+fi
+boot_dev=$(attach 1)
+root_dev=$(attach 2)
+boot_type=$(blkid -p -o value -s TYPE "$boot_dev" || true)
+root_type=$(blkid -p -o value -s TYPE "$root_dev" || true)
+if [ "$boot_type" = vfat ] && [ "$root_type" = ext4 ]; then
+	ok partitionen "2 Partitionen: Boot ($boot_type), System ($root_type)"
+else
+	bad partitionen "Typen Boot=$boot_type System=$root_type, erwartet vfat und ext4"
+	exit 1
+fi
+mkdir -p "$work/root" "$work/boot"
+mount -o ro,noload "$root_dev" "$work/root"
+mount -o ro "$boot_dev" "$work/boot"
+R=$work/root
+B=$work/boot
+S=$R/etc/systemd/system
+
+installed() { # installed <paket>: Status "ii" im Abbild
+	dpkg-query --admindir="$R/var/lib/dpkg" -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null | grep -q '^ii'
+}
+masked() { [ "$(readlink "$S/$1" 2>/dev/null)" = /dev/null ]; }
+enabled_in() { [ -L "$S/$1.wants/$2" ] || [ -L "$S/$1.requires/$2" ]; }
+flat() { tr -d '\n\t' <"$1" | tr -s ' '; }
+unit_has() { grep -qx "$2" "$S/$1"; }
+
+# Größenänderung der Systempartition
+msg=""
+if grep -Eq '(^| )resize( |$)' "$B/cmdline.txt"; then msg="$msg; cmdline.txt enthält resize"; fi
+if grep -q 'init_resize' "$B/cmdline.txt"; then msg="$msg; cmdline.txt enthält init_resize"; fi
+if [ -e "$R/usr/lib/systemd/system/rpi-resize.service" ] && ! masked rpi-resize.service; then
+	msg="$msg; rpi-resize.service nicht maskiert"
+fi
+if grep -q 'x-systemd.growfs' "$R/etc/fstab"; then msg="$msg; fstab enthält x-systemd.growfs"; fi
+if installed cloud-init; then msg="$msg; cloud-init installiert"; fi
+if [ -z "$msg" ]; then ok groesse-fest "keine Vergrößerung der Systempartition"; else bad groesse-fest "${msg#; }"; fi
+
+# Erster Start
+msg=""
+[ -x "$R/usr/local/sbin/hmi-kiosk-firstboot" ] || msg="$msg; /usr/local/sbin/hmi-kiosk-firstboot fehlt"
+for u in hmi-kiosk-firstboot.service hmi-kiosk-firstboot-data.service; do
+	[ -f "$S/$u" ] || msg="$msg; $u fehlt"
+done
+enabled_in multi-user.target hmi-kiosk-firstboot.service || msg="$msg; hmi-kiosk-firstboot.service nicht aktiviert"
+enabled_in local-fs.target hmi-kiosk-firstboot-data.service || msg="$msg; hmi-kiosk-firstboot-data.service nicht aktiviert"
+grep -qx 'ConditionPathExists=!/data/.hmi-kiosk-firstboot-done' "$S/hmi-kiosk-firstboot.service" 2>/dev/null ||
+	msg="$msg; Erledigt-Marke auf /data fehlt in der Unit"
+if [ -z "$msg" ]; then ok erster-start "Skript und Units vorhanden und aktiviert"; else bad erster-start "${msg#; }"; fi
+
+# fstab: /data ohne nofail, mit Geräte-Frist
+line=$(grep -E '^[^#]*[[:space:]]/data[[:space:]]' "$R/etc/fstab" || true)
+if [ -z "$line" ]; then
+	bad fstab "kein Eintrag für /data"
+elif ! printf '%s\n' "$line" | grep -Eq '^LABEL=HMIDATA[[:space:]]+/data[[:space:]]+ext4[[:space:]]'; then
+	bad fstab "Eintrag passt nicht: $line"
+elif printf '%s\n' "$line" | grep -q 'nofail'; then
+	bad fstab "/data mit nofail: ein fehlendes /data darf nicht übergangen werden"
+elif ! printf '%s\n' "$line" | grep -q 'x-systemd.device-timeout=30s'; then
+	bad fstab "x-systemd.device-timeout=30s fehlt: $line"
+elif [ ! -d "$R/data" ]; then
+	bad fstab "Einhängepunkt /data fehlt"
+else
+	ok fstab "$line"
+fi
+
+# Pakete
+missing=""
+for p in $REQUIRED_PACKAGES; do installed "$p" || missing="$missing $p"; done
+if [ -z "$missing" ]; then ok pakete "alle vorhanden"; else bad pakete "fehlen:$missing"; fi
+present=""
+for p in $FORBIDDEN_PACKAGES; do if installed "$p"; then present="$present $p"; fi; done
+if [ -z "$present" ]; then ok pakete-verboten "$FORBIDDEN_PACKAGES fehlen"; else bad pakete-verboten "installiert:$present"; fi
+
+# Automatische Updates
+msg=""
+for t in apt-daily.timer apt-daily-upgrade.timer; do
+	masked "$t" || msg="$msg; $t nicht maskiert"
+	if enabled_in timers.target "$t"; then msg="$msg; $t in timers.target"; fi
+done
+if installed unattended-upgrades; then
+	if enabled_in multi-user.target unattended-upgrades.service; then msg="$msg; unattended-upgrades aktiv"; fi
+fi
+if [ -z "$msg" ]; then ok updates-aus "apt-daily-Timer maskiert, kein unattended-upgrades"; else bad updates-aus "${msg#; }"; fi
+
+# Dienstbenutzer
+pw=$(grep '^hmikiosk:' "$R/etc/passwd" || true)
+uid=$(printf '%s' "$pw" | cut -d: -f3)
+msg=""
+[ -n "$pw" ] || msg="Benutzer hmikiosk fehlt"
+[ -z "$pw" ] || [ "$uid" = "$KIOSK_UID" ] || msg="$msg; UID $uid statt $KIOSK_UID (fest in den Units)"
+[ "$uid" != 0 ] || msg="$msg; UID 0"
+for g in input video render; do
+	grep -Eq "^$g:[^:]*:[0-9]+:([^,]*,)*hmikiosk(,|$)" "$R/etc/group" || msg="$msg; nicht in Gruppe $g"
+done
+grep -Eq '^hmikiosk:[!*]' "$R/etc/shadow" || msg="$msg; Passwort nicht gesperrt"
+if [ -z "$msg" ]; then ok benutzer "hmikiosk UID $uid, Gruppen input video render, ohne Passwort"; else bad benutzer "${msg#; }"; fi
+
+# Fensterregeln: Remmina ohne Rahmen bei 0,48, darunter maximiert (Rand oben 48)
+lw=$(flat "$R/etc/xdg/labwc/rc.xml" 2>/dev/null || true)
+if printf '%s' "$lw" | grep -q '<margin top="48" */>' &&
+	printf '%s' "$lw" | grep -Eq '<windowRule identifier="org\.remmina\.Remmina"[^>]*serverDecoration="no"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>'; then
+	ok rc-labwc "Remmina ohne Rahmen bei 0,48, maximiert unter dem Rand von 48"
+else
+	bad rc-labwc "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/labwc/rc.xml"
+fi
+ob=$(flat "$R/etc/xdg/openbox/rc.xml" 2>/dev/null || true)
+if printf '%s' "$ob" | grep -q '<margins> *<top>48</top>' &&
+	printf '%s' "$ob" | grep -Eq '<application class="org\.remmina\.Remmina"[^>]*> *<decor>no</decor> *<position force="yes"> *<x>0</x> *<y>48</y> *</position> *<maximized>yes</maximized>'; then
+	ok rc-openbox "Remmina ohne Rahmen bei 0,48, maximiert unter dem Rand von 48"
+else
+	bad rc-openbox "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/openbox/rc.xml"
+fi
+
+# Dienste
+msg=""
+for u in $UNITS; do
+	[ -f "$S/$u" ] || msg="$msg; $u fehlt"
+	enabled_in multi-user.target "$u" || msg="$msg; $u nicht aktiviert"
+done
+k=hmi-kiosk.service
+for l in User=hmikiosk Type=notify WatchdogSec=30s Restart=always RestartSec=2 StartLimitIntervalSec=0 \
+	RequiresMountsFor=/data RuntimeDirectory=hmi-kiosk RuntimeDirectoryPreserve=yes KillMode=control-group \
+	"ExecStart=/data/app/current/hmi-kiosk -data /data -run /run/hmi-kiosk -helper-socket /run/hmi-kiosk-helper/helper.sock" \
+	"Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID"; do
+	unit_has "$k" "$l" || msg="$msg; $k ohne $l"
+done
+if grep -Eq '^(PartOf|BindsTo)=.*hmi-kiosk-helper' "$S/$k"; then msg="$msg; $k an den Helfer gebunden"; fi
+h=hmi-kiosk-helper.service
+if grep -q '^User=' "$S/$h"; then msg="$msg; $h nicht als root"; fi
+if grep -Eq '^(PartOf|BindsTo)=.*hmi-kiosk\.service' "$S/$h"; then msg="$msg; $h an hmi-kiosk.service gebunden"; fi
+unit_has "$h" "ExecStart=/usr/local/bin/hmi-kiosk-helper -uid $KIOSK_UID -gid $KIOSK_UID -socket /run/hmi-kiosk-helper/helper.sock" ||
+	msg="$msg; $h ohne -uid/-gid $KIOSK_UID"
+unit_has "$h" RuntimeDirectoryMode=0750 || msg="$msg; $h ohne RuntimeDirectoryMode=0750"
+unit_has hmi-kiosk-update-guard.service Type=oneshot || msg="$msg; Update-Wächter nicht oneshot"
+masked getty@tty1.service || msg="$msg; getty@tty1.service nicht maskiert"
+[ -x "$R/usr/local/bin/hmi-kiosk-session" ] || msg="$msg; /usr/local/bin/hmi-kiosk-session fehlt"
+[ -f "$R/etc/pam.d/hmi-kiosk-session" ] || msg="$msg; /etc/pam.d/hmi-kiosk-session fehlt"
+[ -e "$R/var/lib/systemd/linger/hmikiosk" ] || msg="$msg; linger für hmikiosk fehlt"
+[ -f "$R/usr/share/icons/hmi-blank/cursors/default" ] || msg="$msg; Zeigerthema hmi-blank fehlt"
+if [ -z "$msg" ]; then ok dienste "$UNITS vorhanden und aktiviert; Dienst als hmikiosk, Helfer als root"; else bad dienste "${msg#; }"; fi
+
+# Hardware-Watchdog
+if grep -qx 'RuntimeWatchdogSec=15s' "$R/etc/systemd/system.conf.d/watchdog.conf" 2>/dev/null; then
+	ok watchdog "RuntimeWatchdogSec=15s"
+else
+	bad watchdog "RuntimeWatchdogSec=15s fehlt in system.conf.d/watchdog.conf"
+fi
+
+# SSH nur, wenn beim Bau verlangt
+ssh_on=0
+if enabled_in multi-user.target ssh.service || enabled_in multi-user.target sshd.service; then ssh_on=1; fi
+if [ "$ssh_on" = "${HMI_ENABLE_SSH:-0}" ]; then
+	ok ssh "$([ "$ssh_on" = 1 ] && echo an || echo aus)"
+else
+	bad ssh "SSH ist $([ "$ssh_on" = 1 ] && echo an || echo aus), erwartet HMI_ENABLE_SSH=${HMI_ENABLE_SSH:-0}"
+fi
+
+is_arm64_elf() { [ "$(od -A n -t x1 -j 18 -N 2 "$1" 2>/dev/null | tr -d ' ')" = b700 ]; }
+
+# Helfer: root gehört er, nur root darf schreiben
+hp=$R/usr/local/bin/hmi-kiosk-helper
+if [ -f "$hp" ]; then
+	owner=$(stat -c %u:%g "$hp")
+	mode=$(stat -c %a "$hp")
+	if [ "$owner" = 0:0 ] && [ $((0$mode & 022)) = 0 ] && [ -x "$hp" ] && is_arm64_elf "$hp"; then
+		ok helfer "/usr/local/bin/hmi-kiosk-helper root:root $mode, arm64"
+	else
+		bad helfer "Besitzer $owner, Modus $mode (erwartet root:root, für andere nicht schreibbar, arm64)"
+	fi
+else
+	bad helfer "/usr/local/bin/hmi-kiosk-helper fehlt"
+fi
+
+# Kennzeichen und erste Programmversion
+rf=$R/etc/hmi-kiosk/image-release
+version=""
+if [ -f "$rf" ]; then
+	version=$(sed -n 's/^version=//p' "$rf")
+	lines=$(grep -c . "$rf")
+	if [ "$(stat -c %u:%g:%a "$rf")" = 0:0:644 ] && [ "$lines" = 1 ] && [ -n "$version" ] &&
+		{ [ -z "$want_version" ] || [ "$version" = "$want_version" ]; }; then
+		ok image-release "version=$version, root:root 644"
+	else
+		bad image-release "Inhalt oder Rechte falsch: $(stat -c %u:%g:%a "$rf"), $(tr '\n' ' ' <"$rf")${want_version:+(erwartet version=$want_version)}"
+	fi
+else
+	bad image-release "/etc/hmi-kiosk/image-release fehlt"
+fi
+iv=$R/opt/hmi-kiosk/initial/$version
+if [ -n "$version" ] && [ -x "$iv/hmi-kiosk" ] && is_arm64_elf "$iv/hmi-kiosk" &&
+	[ "$(cat "$iv/VERSION" 2>/dev/null)" = "$version" ]; then
+	ok erste-version "/opt/hmi-kiosk/initial/$version/hmi-kiosk (arm64)"
+else
+	bad erste-version "/opt/hmi-kiosk/initial/$version/hmi-kiosk oder VERSION fehlt oder passt nicht"
+fi
+
+if [ -n "$package_list" ]; then
+	dpkg-query --admindir="$R/var/lib/dpkg" -W -f='${db:Status-Abbrev}\t${Package}\t${Version}\t${Architecture}\n' |
+		awk -F'\t' '$1 ~ /^ii/ {print $2 "\t" $3 "\t" $4}' | sort >"$package_list"
+	echo "Paketliste: $package_list ($(wc -l <"$package_list") Pakete)"
+fi
+
+if [ "$fails" -gt 0 ]; then
+	echo "$fails Prüfung(en) gescheitert."
+	exit 1
+fi
+echo "Alle Prüfungen bestanden."

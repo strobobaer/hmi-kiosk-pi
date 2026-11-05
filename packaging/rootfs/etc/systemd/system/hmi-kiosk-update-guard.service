@@ -1,0 +1,13 @@
+[Unit]
+Description=HMI-Kiosk Update-Wächter
+RequiresMountsFor=/data
+After=hmi-kiosk.service hmi-kiosk-helper.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hmi-kiosk-helper update-guard
+# Der Wächter wartet bis zu 60 Sekunden auf die Gesundmeldung.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

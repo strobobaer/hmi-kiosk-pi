@@ -1,0 +1,36 @@
+[Unit]
+Description=HMI-Kiosk Grafiksitzung auf tty1
+# Eigene logind-Sitzung ohne Anmeldung: Zugriff auf Anzeige und Eingabegeräte über seat0.
+After=systemd-user-sessions.service plymouth-quit-wait.service systemd-logind.service dbus.socket hmi-kiosk-firstboot.service
+Wants=systemd-logind.service dbus.socket
+Conflicts=getty@tty1.service
+After=getty@tty1.service
+ConditionPathExists=/dev/tty0
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=hmikiosk
+Group=hmikiosk
+PAMName=hmi-kiosk-session
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+UtmpMode=user
+Environment=XDG_RUNTIME_DIR=/run/user/1100 XDG_SESSION_TYPE=wayland XDG_SESSION_CLASS=user
+# Legt das Grafikprofil fest und schreibt die Umgebungsdatei für hmi-kiosk.service,
+# bevor dieser nach dem Start der Sitzung beginnt (als root).
+ExecStartPre=+/usr/local/bin/hmi-kiosk-session prepare
+ExecStart=/usr/local/bin/hmi-kiosk-session
+RuntimeDirectory=hmi-kiosk-session
+RuntimeDirectoryPreserve=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

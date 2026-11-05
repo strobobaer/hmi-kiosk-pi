@@ -1,0 +1,77 @@
+#!/bin/sh
+# Grafiksitzung des Kiosk-Benutzers, gestartet von hmi-kiosk-session.service.
+#   hmi-kiosk-session prepare     liest GraphicsProfile und schreibt die Umgebungsdatei (als root)
+#   hmi-kiosk-session             startet labwc (Standard) oder X11 mit openbox
+#   hmi-kiosk-session x11-client  Sitzungsprogramm unter X11 (von startx aufgerufen)
+set -eu
+
+CONFIG=${HMI_KIOSK_CONFIG:-/data/config.json}
+STATE_DIR=${HMI_KIOSK_SESSION_DIR:-/run/hmi-kiosk-session}
+RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/1100}
+
+# graphics_profile gibt labwc oder x11 aus. Gelesen wird config.json, sonst der letzte gute
+# Stand; ohne lesbaren Wert gilt labwc wie in der Voreinstellung des Dienstes.
+graphics_profile() {
+	for f in "$CONFIG" "$CONFIG.good"; do
+		[ -r "$f" ] || continue
+		p=$(tr -d '\n' <"$f" | grep -o '"graphicsProfile"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/') || p=""
+		case "$p" in
+		labwc | x11)
+			echo "$p"
+			return
+			;;
+		"") ;;
+		*) echo "Unbekanntes Grafikprofil $p in $f, verwende labwc" >&2 ;;
+		esac
+	done
+	echo labwc
+}
+
+prepare() {
+	profile=$(graphics_profile)
+	mkdir -p "$STATE_DIR"
+	tmp="$STATE_DIR/.env.$$"
+	case "$profile" in
+	# DISPLAY=:0 unter labwc ist Xwayland, nötig für TigerVNC (nur X11).
+	labwc) printf 'WAYLAND_DISPLAY=wayland-0\nDISPLAY=:0\n' >"$tmp" ;;
+	x11) printf 'DISPLAY=:0\nXAUTHORITY=%s/Xauthority\n' "$STATE_DIR" >"$tmp" ;;
+	esac
+	chmod 0644 "$tmp"
+	mv -f "$tmp" "$STATE_DIR/env"
+	printf '%s\n' "$profile" >"$STATE_DIR/.profile.$$"
+	mv -f "$STATE_DIR/.profile.$$" "$STATE_DIR/profile"
+	echo "Grafikprofil: $profile"
+}
+
+run_session() {
+	profile=$(cat "$STATE_DIR/profile" 2>/dev/null || graphics_profile)
+	export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+	case "$profile" in
+	labwc)
+		export XDG_SESSION_TYPE=wayland
+		# -C: nur die Konfiguration des Abbilds, nie eine aus dem Benutzerordner.
+		exec labwc -C /etc/xdg/labwc
+		;;
+	x11)
+		export XDG_SESSION_TYPE=x11
+		export XAUTHORITY="$STATE_DIR/Xauthority"
+		exec startx "$0" x11-client -- :0 vt1 -keeptty -nolisten tcp -nocursor -s 0 -dpms
+		;;
+	esac
+}
+
+x11_client() {
+	# Bildschirmschoner und Energiesparen aus; -nocursor beim Start blendet den Zeiger aus.
+	xset s off s noblank -dpms || echo "xset fehlgeschlagen" >&2
+	exec openbox --config-file /etc/xdg/openbox/rc.xml
+}
+
+case "${1:-}" in
+prepare) prepare ;;
+x11-client) x11_client ;;
+"") run_session ;;
+*)
+	echo "Aufruf: hmi-kiosk-session [prepare|x11-client]" >&2
+	exit 2
+	;;
+esac
