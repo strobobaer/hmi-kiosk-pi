@@ -145,7 +145,7 @@ So baut man ein Abbild mit SSH:
 5. Die SSH-Host-Schlüssel werden wegen des Schreibschutzes bei jedem Start neu erzeugt. Der SSH-Client meldet deshalb nach jedem Neustart einen geänderten Host-Schlüssel.
 6. Ob `hmiadmin` per `sudo` Rechte bekommt, ist bei diesem Abbild nicht geprüft.
 
-Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist, ist eine Entscheidung der Anlage (Inbetriebnahme, Abschnitt 11). Eine Datei `ssh` auf der Boot-Partition schaltet SSH ebenfalls ein, hilft aber ohne Schlüssel nicht bei der Anmeldung.
+Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist, ist eine Entscheidung der Anlage (Inbetriebnahme, Abschnitt 12). Eine Datei `ssh` auf der Boot-Partition schaltet SSH ebenfalls ein, hilft aber ohne Schlüssel nicht bei der Anmeldung.
 
 ## 4. Fehlersuche
 
@@ -169,7 +169,7 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 |---|---|---|
 | Admin-Seite nicht erreichbar | Falsche Adresse, Port 8443, Dienst nicht gestartet, Netz. | Adresse im Router prüfen. `https://` und `:8443` angeben. Zertifikatswarnung bestätigen. Kachelseite am Bildschirm ansehen: Zeigt sie sich nicht, läuft der Dienst nicht (Terminal aus- und einschalten). |
 | Zertifikatswarnung | Das Gerät erzeugt ein eigenes Zertifikat. | Erwartet, bestätigen (Inbetriebnahme, Abschnitt 5). |
-| Admin-Passwort vergessen | Es gibt keine Rücksetzung in der Admin-Seite. | Neues Abbild schreiben (Ersatzkarte), danach die gesicherte Konfiguration importieren. Das Admin-Passwort ist nicht in der Sicherung. |
+| Admin-Passwort vergessen | Es gibt keine Rücksetzung in der Admin-Seite. | Neues Abbild schreiben (Ersatzkarte), Admin-Passwort festlegen, **Name und Rolle des Geräts setzen**, danach die gesicherte Konfiguration importieren (auch die eines anderen Terminals: der Import behält Name, Kennung und Rolle des Geräts). Das Admin-Passwort ist nicht in der Sicherung. |
 | Admin-Seite meldet **500 „Konfiguration nicht lesbar“** | Siehe unten. | Siehe unten. |
 | Admin-Seite meldet 503 | Der Schlüssel des Geräts (`secrets.key`) ist nicht lesbar. Die Ursache steht im Protokoll. | Terminal neu starten. Hält es an, Ersatzkarte (Abschnitt 3). |
 | Warnung „Der Schreibschutz (Overlay auf /) ist nicht aktiv.“ (System) | Das Overlay ist aus, zum Beispiel nach Wartung. | `overlayroot=tmpfs:recurse=0` in `cmdline.txt` wieder einfügen (Abschnitt 3). |
@@ -190,12 +190,12 @@ Wege zur Erholung:
 1. **Neu schreiben (Standardweg):**
    1. Das Abbild neu auf die Karte schreiben (Inbetriebnahme, Abschnitt 3).
    2. Starten, Admin-Passwort festlegen.
-   3. Falls eine Sicherung existiert, importieren. Die Ersteinrichtung ist bei einer Karte im Zustand der Auslieferung schnell wiederholt.
+   3. Unter „Terminals“ zuerst Name und Rolle dieses Geräts setzen, dann eine vorhandene Sicherung importieren (auch die eines anderen Terminals: der Import behält Name, Kennung und Rolle des Geräts). Die Ersteinrichtung ist bei einer Karte im Zustand der Auslieferung schnell wiederholt.
 2. **Datei entfernen (nur mit Linux-PC):**
    1. Terminal ausschalten, Karte in einen Linux-PC stecken. Windows kann die Datenpartition (ext4, Label `HMIDATA`, dritte Partition) nicht lesen.
    2. Die Partition einhängen.
    3. `config.json` und `config.json.good` verschieben (nicht löschen, zur Sicherheit aufheben). Die Datei `secrets.key` bleibt.
-   4. Karte zurück, Terminal starten. Das Gerät beginnt mit einer leeren Konfiguration: Admin-Passwort festlegen, Konfiguration importieren oder neu eingeben.
+   4. Karte zurück, Terminal starten. Das Gerät beginnt mit einer leeren Konfiguration: Admin-Passwort festlegen, Name und Rolle des Geräts setzen, danach Konfiguration importieren (auch die eines anderen Terminals) oder neu eingeben.
 3. **Mit Zugriff per SSH-Abbild:**
 
    ```
