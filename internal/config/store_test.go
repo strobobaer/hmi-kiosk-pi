@@ -126,6 +126,41 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 	}
 }
 
+func TestLoadMissingFallsBackToGood(t *testing.T) {
+	dir := t.TempDir()
+	s := Open(dir)
+	good := sample()
+	if err := s.Save(good); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkGood(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "config.json")); err != nil {
+		t.Fatal(err)
+	}
+	got, info, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.UsedFallback || info.Reason == "" {
+		t.Fatalf("info=%+v", info)
+	}
+	if !reflect.DeepEqual(got, good) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestLoadMissingWithCorruptGoodReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json.good"), []byte("{kaputt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Open(dir).Load(); err == nil {
+		t.Fatal("expected error, not a default config")
+	}
+}
+
 func TestSaveLeavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := Open(dir)

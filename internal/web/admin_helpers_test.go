@@ -75,20 +75,21 @@ func (f *fakeUpdate) Install(_ context.Context, blob []byte) (string, error) {
 
 // adminEnv ist ein Admin-Handler mit Fälschungen für alle Abhängigkeiten.
 type adminEnv struct {
-	t       *testing.T
-	dir     string
-	store   *config.Store
-	box     *secrets.Box
-	helper  *fakeHelper
-	update  *fakeUpdate
-	clock   *fakeClock
-	logDir  string
-	wifi    bool
-	eth     bool
-	probe   func(context.Context, config.HMI) rfb.ProbeResult
-	mu      sync.Mutex
-	applied []config.Config
-	a       *admin
+	t        *testing.T
+	dir      string
+	store    *config.Store
+	box      *secrets.Box
+	helper   *fakeHelper
+	update   *fakeUpdate
+	clock    *fakeClock
+	logDir   string
+	wifi     bool
+	eth      bool
+	probe    func(context.Context, config.HMI) rfb.ProbeResult
+	selftest func(context.Context) []SelftestStep
+	mu       sync.Mutex
+	applied  []config.Config
+	a        *admin
 }
 
 // useFastHash ersetzt Argon2 durch einen Vergleich, sonst dauert jeder Test Sekunden.
@@ -135,7 +136,10 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		RemoteIsWifi: func(*http.Request) bool { return e.wifi },
 		EthernetLink: func() bool { return e.eth },
 		Update:       e.update,
-		Selftest: func(context.Context) []SelftestStep {
+		Selftest: func(ctx context.Context) []SelftestStep {
+			if e.selftest != nil {
+				return e.selftest(ctx)
+			}
 			return []SelftestStep{{Name: "Remmina", OK: true, Detail: "gefunden"}, {Name: "Touch", OK: false, Detail: "fehlt"}}
 		},
 		Clock: e.clock,

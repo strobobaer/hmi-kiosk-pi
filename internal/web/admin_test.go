@@ -289,6 +289,7 @@ func TestClientKioskSettings(t *testing.T) {
 		{"profile": {"rdp"}, "quality": {"2"}, "color_depth": {"32"}},
 		{"profile": {"remmina"}, "quality": {"5"}, "color_depth": {"32"}},
 		{"profile": {"remmina"}, "quality": {"2"}, "color_depth": {"12"}},
+		{"profile": {"remmina"}, "quality": {"2"}, "color_depth": {"24"}},
 	} {
 		if r := b.post("/admin/client", f); r.Code != http.StatusUnprocessableEntity {
 			t.Errorf("%v: %d", f, r.Code)

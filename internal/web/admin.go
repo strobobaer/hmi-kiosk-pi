@@ -100,11 +100,12 @@ type admin struct {
 	// parallele Anfragen die Sperre und belegen je 64 MB.
 	authSlot chan struct{}
 	// cfgMu hält Laden, Ändern, Speichern und Apply als eine Einheit zusammen.
-	cfgMu    sync.Mutex
-	updateMu sync.Mutex
-	pages    map[string]*template.Template
-	static   fs.FS
-	h        http.Handler
+	cfgMu      sync.Mutex
+	updateMu   sync.Mutex
+	selftestMu sync.Mutex
+	pages      map[string]*template.Template
+	static     fs.FS
+	h          http.Handler
 }
 
 // NewAdmin baut den Handler der Admin-Seite. Alle Routen liegen unter /admin/.
@@ -198,7 +199,7 @@ func (a *admin) routes() []route {
 
 		// Auffangroute: auch unbekannte Pfade verraten ohne Anmeldung nichts.
 		{path: "/admin/", kind: routeSession, limit: formBodyLimit, handle: func(w http.ResponseWriter, r *http.Request, _ sessionRef) {
-			http.Error(w, "Seite nicht gefunden", http.StatusNotFound)
+			notFound(w)
 		}},
 	}
 }
@@ -216,15 +217,15 @@ func (a *admin) wrap(rt route) http.Handler {
 			rt.handle(w, r, sessionRef{})
 			return
 		}
-		cfg, _, err := a.d.Store.Load()
-		if err != nil {
+		cfg, info, err := a.d.Store.Load()
+		if err != nil || setupClosedByFallback(cfg, info) {
 			http.Error(w, "Konfiguration nicht lesbar", http.StatusInternalServerError)
 			return
 		}
 		noPassword := cfg.Admin.PasswordHash == ""
 		switch {
 		case rt.kind == routeSetup && !noPassword:
-			http.NotFound(w, r)
+			notFound(w)
 			return
 		case rt.kind != routeSetup && noPassword:
 			redirect(w, r, "/admin/setup")
@@ -261,6 +262,17 @@ func (a *admin) wrap(rt route) http.Handler {
 		}
 		rt.handle(w, r, s)
 	})
+}
+
+// setupClosedByFallback erkennt einen Rückfallstand ohne Passwort. Die aktuelle
+// Datei ist dann verloren oder defekt und kann durchaus ein Passwort enthalten
+// haben; die Ersteinrichtung stünde sonst jedem im Anlagennetz offen.
+func setupClosedByFallback(c config.Config, info config.LoadInfo) bool {
+	return info.UsedFallback && c.Admin.PasswordHash == ""
+}
+
+func notFound(w http.ResponseWriter) {
+	http.Error(w, "Seite nicht gefunden", http.StatusNotFound)
 }
 
 func isWrite(r *http.Request) bool { return r.Method != http.MethodGet && r.Method != http.MethodHead }
@@ -318,7 +330,7 @@ func (a *admin) asset(name, ctype string) func(http.ResponseWriter, *http.Reques
 	return func(w http.ResponseWriter, r *http.Request, _ sessionRef) {
 		b, err := fs.ReadFile(a.static, name)
 		if err != nil {
-			http.NotFound(w, r)
+			notFound(w)
 			return
 		}
 		w.Header().Set("Content-Type", ctype)
@@ -335,6 +347,19 @@ func (e saveFailed) Error() string {
 	return "Speichern fehlgeschlagen, es bleiben die bisherigen Einstellungen in Kraft (" + e.err.Error() + ")."
 }
 
+// errConfigUnreadable nennt bewusst weder Datei noch Pfad: Die Meldung kann auch
+// auf der Anmeldeseite erscheinen.
+var errConfigUnreadable = errors.New("Die Konfiguration ist nicht lesbar, es bleiben die bisherigen Einstellungen in Kraft.")
+
+// publicMessage ist der Text für Seiten ohne Anmeldung, ohne technische Details.
+func publicMessage(err error) string {
+	var sf saveFailed
+	if errors.As(err, &sf) {
+		return "Speichern fehlgeschlagen, es bleiben die bisherigen Einstellungen in Kraft."
+	}
+	return err.Error()
+}
+
 // update ist der einzige Schreibweg: laden, ändern, prüfen, speichern, Apply.
 func (a *admin) update(change func(*config.Config) error) error {
 	a.cfgMu.Lock()
@@ -343,9 +368,9 @@ func (a *admin) update(change func(*config.Config) error) error {
 }
 
 func (a *admin) updateLocked(change func(*config.Config) error) error {
-	cfg, _, err := a.d.Store.Load()
-	if err != nil {
-		return saveFailed{err}
+	cfg, info, err := a.d.Store.Load()
+	if err != nil || setupClosedByFallback(cfg, info) {
+		return errConfigUnreadable
 	}
 	if err := change(&cfg); err != nil {
 		return err
@@ -419,7 +444,7 @@ func (a *admin) done(w http.ResponseWriter, r *http.Request, s sessionRef, path,
 // formStatus liefert den Status einer abgelehnten Eingabe.
 func formStatus(err error) int {
 	var sf saveFailed
-	if errors.As(err, &sf) {
+	if errors.As(err, &sf) || errors.Is(err, errConfigUnreadable) {
 		return http.StatusInternalServerError
 	}
 	return http.StatusUnprocessableEntity

@@ -40,17 +40,19 @@ func readConfig(path string) (Config, error) {
 	return c, nil
 }
 
-// Load returns the active config. A missing file yields Default(); an
-// unreadable or invalid one falls back to the last known-good copy.
+// Load returns the active config. Only when neither config.json nor the
+// known-good copy exists does it yield Default(); a missing, unreadable or
+// invalid config.json otherwise falls back to the known-good copy, so a lost
+// file cannot pass for a first start.
 func (s *Store) Load() (Config, LoadInfo, error) {
 	c, err := readConfig(s.path(fileName))
 	if err == nil {
 		return c, LoadInfo{}, nil
 	}
-	if errors.Is(err, fs.ErrNotExist) {
+	g, gerr := readConfig(s.path(goodFileName))
+	if errors.Is(err, fs.ErrNotExist) && errors.Is(gerr, fs.ErrNotExist) {
 		return Default(), LoadInfo{}, nil
 	}
-	g, gerr := readConfig(s.path(goodFileName))
 	if gerr != nil {
 		return Config{}, LoadInfo{}, fmt.Errorf("Konfiguration defekt (%v) und kein gültiger Rückfall (%v)", err, gerr)
 	}

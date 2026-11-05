@@ -36,13 +36,32 @@ func loadOrCreateCert(dir string, now time.Time) (tls.Certificate, error) {
 	if cert, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
 		leaf, err := x509.ParseCertificate(cert.Certificate[0])
 		if err == nil && leaf.NotAfter.Sub(now) > certRenewBy {
-			if err := os.Chmod(keyPath, 0o600); err != nil {
+			if err := tightenKeyFile(keyPath); err != nil {
 				return tls.Certificate{}, fmt.Errorf("Rechte des Zertifikatsschlüssels: %w", err)
 			}
 			return cert, nil
 		}
 	}
 	return createCert(dir, certPath, keyPath, now)
+}
+
+var chmodFile = os.Chmod
+
+// tightenKeyFile setzt 0600, ohne ein schreibgeschütztes /data zum Fehler zu
+// machen: Ist die Datei für andere ohnehin unlesbar, darf das Setzen scheitern.
+func tightenKeyFile(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	perm := fi.Mode().Perm()
+	if perm == 0o600 {
+		return nil
+	}
+	if err := chmodFile(path, 0o600); err != nil && perm&0o077 != 0 {
+		return err
+	}
+	return nil
 }
 
 func createCert(dir, certPath, keyPath string, now time.Time) (tls.Certificate, error) {

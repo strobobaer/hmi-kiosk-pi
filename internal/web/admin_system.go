@@ -261,6 +261,11 @@ func (a *admin) handleRestartService(w http.ResponseWriter, r *http.Request, s s
 // --- Selbstprüfung ---
 
 func (a *admin) handleSelftest(w http.ResponseWriter, r *http.Request, s sessionRef) {
+	if !a.selftestMu.TryLock() {
+		a.renderSystem(w, s, http.StatusConflict, "Selbstprüfung läuft bereits.", systemExtras{})
+		return
+	}
+	defer a.selftestMu.Unlock()
 	ctx, cancel := context.WithTimeout(r.Context(), selftestLimit)
 	defer cancel()
 	a.renderSystem(w, s, http.StatusOK, "", systemExtras{Selftest: a.d.Selftest(ctx)})

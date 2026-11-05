@@ -233,7 +233,7 @@ func (a *admin) verifyHeld(pw string) error {
 	}
 	cfg, _, err := a.d.Store.Load()
 	if err != nil {
-		return saveFailed{err}
+		return errConfigUnreadable
 	}
 	if checkPassword(cfg.Admin.PasswordHash, pw) {
 		a.lock.reset()
@@ -251,8 +251,7 @@ func authStatus(err error) int {
 	if errors.As(err, &locked) {
 		return http.StatusTooManyRequests
 	}
-	var sf saveFailed
-	if errors.As(err, &sf) {
+	if errors.Is(err, errConfigUnreadable) {
 		return http.StatusInternalServerError
 	}
 	return http.StatusUnauthorized
@@ -324,9 +323,9 @@ func (a *admin) handleSetup(w http.ResponseWriter, r *http.Request, _ sessionRef
 	})
 	switch {
 	case errors.Is(err, errAlreadySet):
-		http.NotFound(w, r)
+		notFound(w)
 	case err != nil:
-		a.renderSetup(w, r, formStatus(err), err.Error())
+		a.renderSetup(w, r, formStatus(err), publicMessage(err))
 	default:
 		s := a.startSession(w)
 		a.done(w, r, s, "/admin/hmis", "Passwort gesetzt.")

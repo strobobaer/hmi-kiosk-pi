@@ -41,7 +41,7 @@ func checkClient(c config.ClientCfg) error {
 	if c.Quality != 0 && c.Quality != 1 && c.Quality != 2 && c.Quality != 9 {
 		return fmt.Errorf("Unbekannte Qualitätsstufe: %d", c.Quality)
 	}
-	if c.ColorDepth != 8 && c.ColorDepth != 16 && c.ColorDepth != 24 && c.ColorDepth != 32 {
+	if c.ColorDepth != 8 && c.ColorDepth != 16 && c.ColorDepth != 32 {
 		return fmt.Errorf("Unbekannte Farbtiefe: %d", c.ColorDepth)
 	}
 	return nil
@@ -327,6 +327,8 @@ func (a *admin) helperThenPersist(ctx context.Context, cmd, arg string, change f
 		var sf saveFailed
 		if errors.As(err, &sf) {
 			err = sf.err
+		} else if errors.Is(err, errConfigUnreadable) {
+			err = errors.New("Konfiguration nicht lesbar")
 		}
 		return fmt.Errorf("Der Befehl wurde ausgeführt, die Einstellung wurde aber nicht gespeichert. Diese Seite zeigt deshalb den alten Stand; bitte erneut versuchen (%v).", err)
 	}

@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDefaultIsValid(t *testing.T) {
 	if err := Validate(Default()); err != nil {
@@ -46,6 +49,25 @@ func TestValidateRejectsDuplicateHMIIDsAndBadPort(t *testing.T) {
 		c.HMIs[0].Port = p
 		if Validate(c) == nil {
 			t.Errorf("port %d accepted", p)
+		}
+	}
+}
+
+func TestValidateRestrictsHMIIDs(t *testing.T) {
+	for _, id := range []string{"new", "a/b", "../x", "a b", "a.b", "ä", "a?b", "a%2Fb", strings.Repeat("a", 65)} {
+		c := sample()
+		c.Kiosk.PermanentHMI = ""
+		c.HMIs[0].ID = id
+		if Validate(c) == nil {
+			t.Errorf("ID %q accepted", id)
+		}
+	}
+	for _, id := range []string{"a", "New", "h1", "A-b_9", "0123456789abcdef", strings.Repeat("a", 64)} {
+		c := sample()
+		c.Kiosk.PermanentHMI = ""
+		c.HMIs[0].ID = id
+		if err := Validate(c); err != nil {
+			t.Errorf("ID %q rejected: %v", id, err)
 		}
 	}
 }

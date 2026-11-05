@@ -220,7 +220,7 @@ func (a *admin) handleHMINewForm(w http.ResponseWriter, _ *http.Request, s sessi
 func (a *admin) handleHMIEditForm(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	h, ok := a.findHMI(r.PathValue("id"))
 	if !ok {
-		http.NotFound(w, r)
+		notFound(w)
 		return
 	}
 	a.renderHMIForm(w, s, http.StatusOK, "", hmiFormFrom(h))
@@ -256,7 +256,7 @@ func (a *admin) handleHMISave(w http.ResponseWriter, r *http.Request, s sessionR
 	id := r.PathValue("id")
 	cur, ok := a.findHMI(id)
 	if !ok {
-		http.NotFound(w, r)
+		notFound(w)
 		return
 	}
 	f := hmiFormFromRequest(r, id, false, cur.PasswordEnc != "")
@@ -272,7 +272,7 @@ func (a *admin) handleHMISave(w http.ResponseWriter, r *http.Request, s sessionR
 	})
 	switch {
 	case errors.Is(err, errNoSuchHMI):
-		http.NotFound(w, r)
+		notFound(w)
 	case err != nil:
 		a.renderHMIForm(w, s, formStatus(err), err.Error(), f)
 	default:
@@ -297,7 +297,7 @@ func (a *admin) handleHMIDelete(w http.ResponseWriter, r *http.Request, s sessio
 	})
 	switch {
 	case errors.Is(err, errNoSuchHMI):
-		http.NotFound(w, r)
+		notFound(w)
 	case err != nil:
 		a.renderHMIList(w, s, formStatus(err), err.Error(), "", nil)
 	default:
@@ -308,7 +308,7 @@ func (a *admin) handleHMIDelete(w http.ResponseWriter, r *http.Request, s sessio
 func (a *admin) handleHMIProbe(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	h, ok := a.findHMI(r.PathValue("id"))
 	if !ok {
-		http.NotFound(w, r)
+		notFound(w)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), probeLimit)

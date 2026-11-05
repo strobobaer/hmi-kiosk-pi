@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -125,6 +126,47 @@ func TestCertBrokenFilesAreReplaced(t *testing.T) {
 	}
 	if _, err := LoadOrCreateCert(dir); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Auf schreibgeschütztem /data scheitert jedes chmod (EROFS). Als root lässt sich
+// das nicht erzwingen, darum die Fälschung.
+func TestCertLoadOnReadOnlyData(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := LoadOrCreateCert(dir); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	old := chmodFile
+	chmodFile = func(string, os.FileMode) error { calls++; return errors.New("read-only file system") }
+	defer func() { chmodFile = old }()
+	p := filepath.Join(dir, certKeyFile)
+
+	if _, err := LoadOrCreateCert(dir); err != nil {
+		t.Errorf("Rechte 0600: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("chmod bei unveränderten Rechten: %d", calls)
+	}
+	fi, _ := os.Stat(p)
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("Rechte %o", fi.Mode().Perm())
+	}
+
+	// Strenger als nötig: Das gescheiterte Setzen ist kein Fehler.
+	if err := os.Chmod(p, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateCert(dir); err != nil {
+		t.Errorf("Rechte 0400: %v", err)
+	}
+
+	// Für andere lesbar und nicht korrigierbar: nicht stillschweigend benutzen.
+	if err := os.Chmod(p, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateCert(dir); err == nil {
+		t.Error("Rechte 0644 ohne Fehler hingenommen")
 	}
 }
 

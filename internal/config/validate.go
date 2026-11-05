@@ -9,6 +9,12 @@ import (
 
 var hostRe = regexp.MustCompile(`^[A-Za-z0-9._:\[\]][A-Za-z0-9._:\-\[\]]{0,252}$`)
 
+// hmiIDRe begrenzt Kennungen, weil sie in Adressen der Admin-Seite stehen und per
+// Import von außen kommen können. "new" ist dort ein eigener Pfad.
+var hmiIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+
+const reservedHMIID = "new"
+
 const maxNameLen = 120
 
 func checkName(what, s string) error {
@@ -51,6 +57,9 @@ func Validate(c Config) error {
 	for i, h := range c.HMIs {
 		if h.ID == "" {
 			return fmt.Errorf("HMI %d: Kennung fehlt", i+1)
+		}
+		if !hmiIDRe.MatchString(h.ID) || h.ID == reservedHMIID {
+			return fmt.Errorf("HMI %d: Kennung ungültig: %q", i+1, h.ID)
 		}
 		if ids[h.ID] {
 			return fmt.Errorf("HMI-Kennung doppelt: %q", h.ID)
