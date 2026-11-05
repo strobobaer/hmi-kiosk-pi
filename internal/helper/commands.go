@@ -77,7 +77,7 @@ var commands = map[string]command{
 	CmdSetTime:        {takesArg: true, run: (*Server).setTime},
 	CmdSetNTP:         {takesArg: true, run: (*Server).setNTP},
 	CmdUpdateActivate: {takesArg: true, run: (*Server).updateActivate},
-	CmdUpdateRollback: {run: func(s *Server, _ context.Context, _ string) error { return s.upd.Rollback() }},
+	CmdUpdateRollback: {run: (*Server).updateRollback},
 }
 
 // Dispatch führt einen Befehl aus. Fehlertexte sind für die Admin-Seite bestimmt.
@@ -220,9 +220,36 @@ func (s *Server) ReapplyNTP(ctx context.Context) error {
 	return s.applyNTP(ctx, server)
 }
 
-func (s *Server) updateActivate(_ context.Context, arg string) error {
+const (
+	serviceUnit = "hmi-kiosk.service"
+	guardUnit   = "hmi-kiosk-update-guard.service"
+)
+
+// updateActivate entfernt zuerst die alte Gesundmarke, damit sie die neue Version
+// nicht fälschlich bestätigt, schaltet um, startet den Dienst neu und löst den
+// Wächter aus. Der Wächter wird auch nach einem fehlgeschlagenen Neustart gestartet:
+// Er schaltet zurück, wenn die Marke ausbleibt.
+func (s *Server) updateActivate(ctx context.Context, arg string) error {
 	if len(arg) > maxVersionLen || !versionRe.MatchString(arg) {
 		return errors.New("Versionsangabe ungültig")
 	}
-	return s.upd.Activate(arg)
+	if err := os.Remove(s.HealthyMarker); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("Gesundmarke nicht entfernbar: %v", err)
+	}
+	if err := s.upd.Activate(arg); err != nil {
+		return err
+	}
+	restartErr := s.run(ctx, "systemctl", "restart", serviceUnit)
+	guardErr := s.run(ctx, "systemctl", "start", "--no-block", guardUnit)
+	if restartErr != nil {
+		return restartErr
+	}
+	return guardErr
+}
+
+func (s *Server) updateRollback(ctx context.Context, _ string) error {
+	if err := s.upd.Rollback(); err != nil {
+		return err
+	}
+	return s.run(ctx, "systemctl", "restart", serviceUnit)
 }

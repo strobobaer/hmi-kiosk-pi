@@ -1,0 +1,81 @@
+package main
+
+import (
+	"bytes"
+	"encoding/hex"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"hmikiosk/internal/update"
+)
+
+func runCLI(args ...string) (int, string) {
+	var out, errb bytes.Buffer
+	code := run(args, &out, &errb)
+	return code, out.String() + errb.String()
+}
+
+func TestKeygenPackVerify(t *testing.T) {
+	keys := filepath.Join(t.TempDir(), "keys")
+	if code, out := runCLI("keygen", "-out", keys); code != 0 {
+		t.Fatalf("keygen: %d %s", code, out)
+	}
+	fi, err := os.Stat(filepath.Join(keys, "release.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("Modus %v", fi.Mode().Perm())
+	}
+	// Kein Überschreiben.
+	before, _ := os.ReadFile(filepath.Join(keys, "release.key"))
+	if code, _ := runCLI("keygen", "-out", keys); code == 0 {
+		t.Fatal("überschrieben")
+	}
+	after, _ := os.ReadFile(filepath.Join(keys, "release.key"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("Schlüssel verändert")
+	}
+
+	in := t.TempDir()
+	os.WriteFile(filepath.Join(in, "hmi-kiosk"), []byte("BIN"), 0o755)
+	outFile := filepath.Join(t.TempDir(), "u.pkg")
+	if code, out := runCLI("pack", "-key", filepath.Join(keys, "release.key"), "-version", "3.2.1", "-in", in, "-out", outFile); code != 0 {
+		t.Fatalf("pack: %d %s", code, out)
+	}
+	blob, _ := os.ReadFile(outFile)
+	pubHex, _ := os.ReadFile(filepath.Join(keys, "release.pub"))
+	pub, err := hex.DecodeString(string(bytes.TrimSpace(pubHex)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := update.Verify(blob, pub)
+	if err != nil || p.Version != "3.2.1" {
+		t.Fatalf("%v %v", p, err)
+	}
+}
+
+func TestPackRejectsBadInput(t *testing.T) {
+	keys := filepath.Join(t.TempDir(), "keys")
+	runCLI("keygen", "-out", keys)
+	in := t.TempDir()
+	os.WriteFile(filepath.Join(in, "hmi-kiosk"), []byte("BIN"), 0o755)
+	key := filepath.Join(keys, "release.key")
+	out := filepath.Join(t.TempDir(), "u.pkg")
+	if code, _ := runCLI("pack", "-key", key, "-version", "x", "-in", in, "-out", out); code == 0 {
+		t.Error("Version x angenommen")
+	}
+	if code, _ := runCLI("pack", "-key", "/nicht/da", "-version", "1.0.0", "-in", in, "-out", out); code == 0 {
+		t.Error("fehlender Schlüssel angenommen")
+	}
+	if code, _ := runCLI("pack", "-version", "1.0.0", "-in", in, "-out", out); code == 0 {
+		t.Error("fehlende Flags angenommen")
+	}
+	if code, _ := runCLI("nonsense"); code == 0 {
+		t.Error("unbekannter Befehl angenommen")
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Error("Ausgabe trotz Fehler")
+	}
+}

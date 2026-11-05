@@ -33,12 +33,23 @@ func (f *fakeExec) got() []string {
 }
 
 type fakeUpd struct {
-	activated []string
-	rollbacks int
+	activated                []string
+	rollbacks                int
+	onActivate               func()
+	activateErr, rollbackErr error
 }
 
-func (u *fakeUpd) Activate(v string) error { u.activated = append(u.activated, v); return nil }
-func (u *fakeUpd) Rollback() error         { u.rollbacks++; return nil }
+func (u *fakeUpd) Activate(v string) error {
+	u.activated = append(u.activated, v)
+	if u.onActivate != nil {
+		u.onActivate()
+	}
+	return u.activateErr
+}
+func (u *fakeUpd) Rollback() error {
+	u.rollbacks++
+	return u.rollbackErr
+}
 
 type env struct {
 	srv  *Server
@@ -58,6 +69,7 @@ func newEnv(t *testing.T, bootContent string) *env {
 	e.srv = NewServer(filepath.Join(dir, "s.sock"), 1000, e.fx.exec, e.boot, e.upd)
 	e.srv.NTPConfPath = filepath.Join(dir, "timesyncd.d", "hmi-kiosk.conf")
 	e.srv.NTPStatePath = filepath.Join(dir, "data", "system", "ntp-server")
+	e.srv.HealthyMarker = filepath.Join(dir, "healthy")
 	return e
 }
 

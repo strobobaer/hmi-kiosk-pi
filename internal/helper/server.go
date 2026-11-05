@@ -48,6 +48,8 @@ type Server struct {
 	// NTPConfPath ist die timesyncd-Datei, NTPStatePath der dauerhafte Wert auf /data.
 	NTPConfPath  string
 	NTPStatePath string
+	// HealthyMarker meldet, dass die gestartete Version gesund ist (Dienst schreibt ihre Version hinein).
+	HealthyMarker string
 
 	peerUID func(net.Conn) (int, error)
 	mu      sync.Mutex
@@ -56,10 +58,11 @@ type Server struct {
 func NewServer(socket string, allowedUID int, e Exec, bootCfg string, upd UpdateOps) *Server {
 	return &Server{
 		socket: socket, allowedUID: allowedUID, exec: e, bootCfg: bootCfg, upd: upd,
-		SocketGID:    -1,
-		NTPConfPath:  "/etc/systemd/timesyncd.conf.d/hmi-kiosk.conf",
-		NTPStatePath: "/data/system/ntp-server",
-		peerUID:      peerUID,
+		SocketGID:     -1,
+		NTPConfPath:   "/etc/systemd/timesyncd.conf.d/hmi-kiosk.conf",
+		NTPStatePath:  "/data/system/ntp-server",
+		HealthyMarker: "/run/hmi-kiosk/healthy",
+		peerUID:       peerUID,
 	}
 }
 
