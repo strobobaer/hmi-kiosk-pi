@@ -52,7 +52,7 @@ func (s *Store) Load() (Config, LoadInfo, error) {
 	}
 	g, gerr := readConfig(s.path(goodFileName))
 	if gerr != nil {
-		return Config{}, LoadInfo{}, fmt.Errorf("Konfiguration defekt (%v) und kein gueltiger Rueckfall (%v)", err, gerr)
+		return Config{}, LoadInfo{}, fmt.Errorf("Konfiguration defekt (%v) und kein gültiger Rückfall (%v)", err, gerr)
 	}
 	return g, LoadInfo{UsedFallback: true, Reason: err.Error()}, nil
 }

@@ -21,7 +21,7 @@ func TestValidateRejectsControlCharsInNameAndHost(t *testing.T) {
 			t.Errorf("terminal name %q accepted", name)
 		}
 	}
-	for _, host := range []string{"a;b", "a=b", "a b", "a\nb", ""} {
+	for _, host := range []string{"-oProxyCommand=x", "-h", "a;b", "a=b", "a b", "a\nb", ""} {
 		c := sample()
 		c.HMIs[0].Host = host
 		if Validate(c) == nil {

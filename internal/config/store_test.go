@@ -37,6 +37,9 @@ func TestSaveLeavesOldFileWhenTargetDirNotWritable(t *testing.T) {
 	if err := s.Save(old); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.MarkGood(); err != nil {
+		t.Fatal(err)
+	}
 
 	bad := sample()
 	bad.HMIs[0].Port = 0
@@ -44,24 +47,34 @@ func TestSaveLeavesOldFileWhenTargetDirNotWritable(t *testing.T) {
 		t.Fatal("expected error for invalid config")
 	}
 
-	if err := os.Chmod(dir, 0o500); err != nil {
+	// A non-empty directory in place of config.json makes the final Rename
+	// fail even for root, exercising the write error and cleanup path.
+	target := filepath.Join(dir, "config.json")
+	if err := os.Remove(target); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0o700)
+	if err := os.MkdirAll(filepath.Join(target, "blocker"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	changed := sample()
 	changed.Terminal.Name = "Anders"
-	err := s.Save(changed)
-	if err == nil && os.Geteuid() == 0 {
-		// root ignores directory permissions
-		os.Chmod(dir, 0o700)
-		_ = s.Save(old)
-	} else if err == nil {
-		t.Fatal("expected error for unwritable dir")
+	if err := s.Save(changed); err == nil {
+		t.Fatal("expected error when rename target is blocked")
 	}
 
-	got, _, lerr := s.Load()
-	if lerr != nil {
-		t.Fatal(lerr)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "config.json" && e.Name() != "config.json.good" {
+			t.Errorf("leftover file %q", e.Name())
+		}
+	}
+
+	got, info, lerr := s.Load()
+	if lerr != nil || !info.UsedFallback {
+		t.Fatalf("err=%v info=%+v", lerr, info)
 	}
 	if !reflect.DeepEqual(got, old) {
 		t.Fatalf("old state lost: %+v", got)

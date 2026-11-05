@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-var hostRe = regexp.MustCompile(`^[A-Za-z0-9._:\-\[\]]{1,253}$`)
+var hostRe = regexp.MustCompile(`^[A-Za-z0-9._:\[\]][A-Za-z0-9._:\-\[\]]{0,252}$`)
 
 const maxNameLen = 120
 
@@ -16,11 +16,11 @@ func checkName(what, s string) error {
 		return fmt.Errorf("%s darf nicht leer sein", what)
 	}
 	if utf8.RuneCountInString(s) > maxNameLen {
-		return fmt.Errorf("%s ist laenger als %d Zeichen", what, maxNameLen)
+		return fmt.Errorf("%s ist länger als %d Zeichen", what, maxNameLen)
 	}
 	for _, r := range s {
 		if unicode.IsControl(r) {
-			return fmt.Errorf("%s enthaelt Steuerzeichen", what)
+			return fmt.Errorf("%s enthält Steuerzeichen", what)
 		}
 	}
 	return nil
@@ -28,7 +28,7 @@ func checkName(what, s string) error {
 
 func checkHost(what, s string) error {
 	if !hostRe.MatchString(s) {
-		return fmt.Errorf("%s ist ungueltig: %q", what, s)
+		return fmt.Errorf("%s ist ungültig: %q", what, s)
 	}
 	return nil
 }
@@ -42,10 +42,10 @@ func Validate(c Config) error {
 		return err
 	}
 	if c.Terminal.Role != RolePrimary && c.Terminal.Role != RoleNormal {
-		return fmt.Errorf("Terminalrolle ungueltig: %q", c.Terminal.Role)
+		return fmt.Errorf("Terminalrolle ungültig: %q", c.Terminal.Role)
 	}
 	if !validMode(c.DefaultMode) {
-		return fmt.Errorf("Standardmodus ungueltig: %q", c.DefaultMode)
+		return fmt.Errorf("Standardmodus ungültig: %q", c.DefaultMode)
 	}
 	ids := map[string]bool{}
 	for i, h := range c.HMIs {
@@ -63,13 +63,13 @@ func Validate(c Config) error {
 			return err
 		}
 		if h.Port < 1 || h.Port > 65535 {
-			return fmt.Errorf("HMI %q: Port ausserhalb 1-65535: %d", h.ID, h.Port)
+			return fmt.Errorf("HMI %q: Port außerhalb 1-65535: %d", h.ID, h.Port)
 		}
 		if h.Mode != nil && !validMode(*h.Mode) {
-			return fmt.Errorf("HMI %q: Modus ungueltig: %q", h.ID, *h.Mode)
+			return fmt.Errorf("HMI %q: Modus ungültig: %q", h.ID, *h.Mode)
 		}
 		if h.Takeover != "" && h.Takeover != StyleConfirm && h.Takeover != StyleImmediate {
-			return fmt.Errorf("HMI %q: Uebernahmeart ungueltig: %q", h.ID, h.Takeover)
+			return fmt.Errorf("HMI %q: Übernahmeart ungültig: %q", h.ID, h.Takeover)
 		}
 	}
 	for i, p := range c.Peers {
