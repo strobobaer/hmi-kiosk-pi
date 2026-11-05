@@ -23,6 +23,8 @@ type Settings struct {
 	Self     Holder
 	Peers    []config.Peer
 	RulesFor func(hmi string) Rules
+	// IsPermanent meldet die Daueranzeige je HMI; nil heißt nein. Self.Permanent zählt nicht.
+	IsPermanent func(hmi string) bool
 }
 
 // Result ist das Ergebnis einer Anfrage. Unreachable und BadKey enthalten
@@ -258,10 +260,15 @@ func (c *Coordinator) peerOf(hmi string, h Holder) (config.Peer, bool) {
 func (c *Coordinator) Hold(hmi, session string) {
 	h := c.s.Self
 	h.Session = session
+	h.Permanent = c.isPermanent(hmi)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.held[hmi] = h
 	delete(c.pending, hmi)
+}
+
+func (c *Coordinator) isPermanent(hmi string) bool {
+	return c.s.IsPermanent != nil && c.s.IsPermanent(hmi)
 }
 
 // Release beendet die Belegung. Die anderen erfahren es nicht, ihre Frist läuft ab.
@@ -297,6 +304,7 @@ func (c *Coordinator) tick(ctx context.Context) {
 
 	var wg sync.WaitGroup
 	for hmi, h := range held {
+		h.Permanent = c.isPermanent(hmi)
 		for _, peer := range c.s.Peers {
 			wg.Add(1)
 			go func() {
@@ -326,12 +334,14 @@ func (c *Coordinator) handleClaim(req ClaimReq) ClaimResp {
 	if req.Claim.Terminal == c.s.Self.Terminal {
 		return ClaimResp{}
 	}
+	permanent := c.isPermanent(req.HMI)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var resp ClaimResp
 	// Wer schon hält, konkurriert nicht mehr, auch wenn er erneut angefragt hat:
 	// Verdrängt wird er nur per Übernahme mit Vorwarnung.
 	if h, ok := c.held[req.HMI]; ok {
+		h.Permanent = permanent
 		resp.Holder = &h
 		return resp
 	}

@@ -47,8 +47,10 @@ type Deps struct {
 type attempt struct {
 	hmi       config.HMI
 	password  string
+	checked   bool // Passwort ist gelesen, a.password also gültig
 	permanent bool
 	auto      bool // ohne Touch gestartet, es kann also niemand rückfragen
+	confirmed bool // Rückfrage ist bejaht, nicht erneut fragen
 	watch     bool
 	decision  coord.Decision
 
@@ -80,6 +82,7 @@ type Manager struct {
 	state    State
 	notice   string
 	hint     []string
+	badKey   []string
 	cur      *attempt
 	sessionN int
 	timers   timers
@@ -194,8 +197,12 @@ func (m *Manager) Confirm() error {
 		if m.state != StateConfirming {
 			return errors.New("Es steht keine Rückfrage an")
 		}
+		// Die Antwort kann beliebig alt sein, der Halter längst ein anderer.
+		a := m.cur
+		a.confirmed = true
 		m.state = StateRequesting
-		m.precheck(m.cur)
+		m.hint, m.badKey = nil, nil
+		m.request(a)
 		return nil
 	})
 }
@@ -267,9 +274,8 @@ func (m *Manager) publish() {
 
 func (m *Manager) buildSnapshot() Snapshot {
 	s := Snapshot{State: m.state, Notice: m.notice}
-	if len(m.hint) > 0 {
-		s.Unreachable = append(s.Unreachable, m.hint...)
-	}
+	s.Unreachable = append(s.Unreachable, m.hint...)
+	s.BadKey = append(s.BadKey, m.badKey...)
 	switch {
 	case m.cur != nil:
 		s.HMI, s.HMIName = m.cur.hmi.ID, m.cur.hmi.Name

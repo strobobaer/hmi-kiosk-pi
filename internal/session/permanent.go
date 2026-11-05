@@ -10,8 +10,9 @@ import (
 // permanentState führt die Daueranzeige über einzelne Versuche hinweg.
 type permanentState struct {
 	target         string
-	halted         bool // der Bediener hat „Zurück“ gedrückt
-	missingNoticed bool // Hinweis auf ein gelöschtes Ziel ist schon erfolgt
+	targetName     string // letzter bekannter Name des Ziels
+	halted         bool   // der Bediener hat „Zurück“ gedrückt
+	missingNoticed bool   // Hinweis auf ein gelöschtes Ziel ist schon erfolgt
 	backoff        time.Duration
 	waitingID      string
 	waitingName    string
@@ -32,18 +33,21 @@ func (m *Manager) checkPermanent(cfg config.Config) {
 		}
 	}
 	h, exists := findHMI(cfg, target)
+	if exists {
+		p.targetName = h.Name
+	}
 	switch m.state {
 	case StateReconnecting:
 		if !exists {
 			m.clearDeadline()
 			m.state = StateTiles
-			m.noticeMissing(target)
+			m.noticeMissing()
 		}
 	case StateTiles:
 		switch {
 		case target == "" || p.halted:
 		case !exists:
-			m.noticeMissing(target)
+			m.noticeMissing()
 		default:
 			p.missingNoticed = false
 			m.begin(h, cfg, true)
@@ -51,12 +55,15 @@ func (m *Manager) checkPermanent(cfg config.Config) {
 	}
 }
 
-func (m *Manager) noticeMissing(target string) {
+func (m *Manager) noticeMissing() {
 	if m.perm.missingNoticed {
 		return
 	}
 	m.perm.missingNoticed = true
-	m.notice = fmt.Sprintf("Das HMI „%s“ der Daueranzeige gibt es nicht mehr", target)
+	m.notice = "Das HMI der Daueranzeige gibt es nicht mehr"
+	if name := m.perm.targetName; name != "" {
+		m.notice = fmt.Sprintf("Das HMI „%s“ der Daueranzeige gibt es nicht mehr", name)
+	}
 }
 
 // afterPermanentEnd legt fest, wie es nach einem beendeten Versuch weitergeht.
@@ -116,7 +123,7 @@ func (m *Manager) retryPermanent(id string) {
 	h, ok := findHMI(cfg, id)
 	if !ok {
 		m.state = StateTiles
-		m.noticeMissing(id)
+		m.noticeMissing()
 		return
 	}
 	m.begin(h, cfg, true)

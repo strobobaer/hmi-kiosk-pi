@@ -754,7 +754,7 @@ func TestHMIViewOnlySettingIsPassedOn(t *testing.T) {
 }
 
 func TestAskConfirmWaitsThenStartsAfterConfirm(t *testing.T) {
-	h := newHarness(t, func(h *harness) { h.coord.queue(askConfirm("Terminal 2")) })
+	h := newHarness(t, func(h *harness) { h.coord.queue(askConfirm("Terminal 2"), askConfirm("Terminal 2")) })
 	h.open("a")
 	s := h.waitState(StateConfirming)
 	if s.Confirm == nil || s.Confirm.Name != "Terminal 2" {
@@ -857,13 +857,13 @@ func TestUnreachableAndBadKeyAreHintsOnly(t *testing.T) {
 	})
 	h.open("a")
 	s := h.waitState(StateStarting)
-	if !slices.Equal(s.Unreachable, []string{"T2", "T3"}) {
+	if !slices.Equal(s.Unreachable, []string{"T2"}) || !slices.Equal(s.BadKey, []string{"T3"}) {
 		t.Fatalf("Snapshot %+v", s)
 	}
 	p := h.runner.last()
 	p.exit(nil)
 	s = h.waitState(StateTiles)
-	if len(s.Unreachable) != 0 {
+	if len(s.Unreachable) != 0 || len(s.BadKey) != 0 {
 		t.Fatalf("Hinweis bleibt nach Sitzungsende: %+v", s)
 	}
 }
@@ -1032,7 +1032,10 @@ func TestRAMDirRemovedAfterSessionAndOnStartFailure(t *testing.T) {
 	t.Run("Profilfehler", func(t *testing.T) {
 		h := newHarness(t, func(h *harness) { h.profile.err = errors.New("Profil kaputt") })
 		h.open("a")
-		h.waitNotice(StateTiles, "Profil kaputt")
+		s := h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+		if strings.Contains(s.Notice, "Profil kaputt") {
+			t.Fatalf("Rohfehler in der Kachel: %q", s.Notice)
+		}
 		if h.cleanupCount() != 1 || h.runner.count() != 0 || h.log.count("hold:a") != 0 {
 			t.Fatalf("Ablauf %v", h.log.all())
 		}
@@ -1040,7 +1043,10 @@ func TestRAMDirRemovedAfterSessionAndOnStartFailure(t *testing.T) {
 	t.Run("Startfehler", func(t *testing.T) {
 		h := newHarness(t, func(h *harness) { h.runner.err = errors.New("nicht installiert") })
 		h.open("a")
-		h.waitNotice(StateTiles, "nicht installiert")
+		s := h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+		if strings.Contains(s.Notice, "nicht installiert") {
+			t.Fatalf("Rohfehler in der Kachel: %q", s.Notice)
+		}
 		if h.cleanupCount() != 1 || h.log.count("release:a") != 1 {
 			t.Fatalf("Ablauf %v", h.log.all())
 		}
@@ -1048,7 +1054,10 @@ func TestRAMDirRemovedAfterSessionAndOnStartFailure(t *testing.T) {
 	t.Run("RAM-Ordner-Fehler", func(t *testing.T) {
 		h := newHarness(t, func(h *harness) { h.ramErr = errors.New("voll") })
 		h.open("a")
-		h.waitNotice(StateTiles, "voll")
+		s := h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+		if strings.Contains(s.Notice, "voll") {
+			t.Fatalf("Rohfehler in der Kachel: %q", s.Notice)
+		}
 		if h.runner.count() != 0 {
 			t.Fatal("Client gestartet")
 		}
@@ -1232,7 +1241,10 @@ func TestPermanentDisplayIgnoresInactivity(t *testing.T) {
 func TestPermanentHMIDeletedShowsTilesAndNotice(t *testing.T) {
 	t.Run("beim Start", func(t *testing.T) {
 		h := newHarness(t, permanentOn("weg"))
-		h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+		s := h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+		if strings.Contains(s.Notice, "weg") {
+			t.Fatalf("Kennung im Hinweis: %q", s.Notice)
+		}
 		h.advance(2 * time.Minute)
 		if h.log.count("request:weg") != 0 || h.runner.count() != 0 {
 			t.Fatalf("Versuche %v", h.log.all())
@@ -1263,7 +1275,7 @@ func TestPermanentHMIDeletedShowsTilesAndNotice(t *testing.T) {
 		h.waitState(StateReconnecting)
 		h.setConfig(func(c *config.Config) { c.HMIs = c.HMIs[1:] })
 		h.advance(PollEvery)
-		h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+		h.waitNotice(StateTiles, "Presse")
 		h.advance(time.Minute)
 		if h.runner.count() != 1 {
 			t.Fatalf("%d Starts", h.runner.count())
@@ -1387,5 +1399,181 @@ func TestSubscribeDeliversCurrentStateAndCancelCloses(t *testing.T) {
 	cancel()
 	if _, ok := <-ch; ok {
 		t.Fatal("Kanal offen")
+	}
+}
+
+// --- Prüfbefunde Runde 1 ---
+
+func primaryTakeover(name string) coord.Result {
+	return coord.Result{Decision: coord.Decision{Outcome: coord.TakeOver, Warn: coord.TakeoverWarn, Holder: &coord.Holder{Terminal: "t3", Name: name, Role: config.RolePrimary}}}
+}
+
+func TestConfirmAppliesFreshDecision(t *testing.T) {
+	confirmed := func(t *testing.T, fresh coord.Result) *harness {
+		t.Helper()
+		h := newHarness(t, func(h *harness) { h.coord.queue(askConfirm("B"), fresh) })
+		h.open("a")
+		h.waitState(StateConfirming)
+		if err := h.m.Confirm(); err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	takenFrom := func(h *harness) []string {
+		h.coord.mu.Lock()
+		defer h.coord.mu.Unlock()
+		var names []string
+		for _, d := range h.coord.taken {
+			names = append(names, d.Holder.Name)
+		}
+		return names
+	}
+	t.Run("jetzt primärer Halter lehnt ab", func(t *testing.T) {
+		h := confirmed(t, coord.Result{Decision: coord.Decision{Outcome: coord.Reject, Holder: &coord.Holder{Name: "C", Role: config.RolePrimary}}})
+		h.waitNotice(StateTiles, "C")
+		if h.log.count("takeover:a") != 0 || h.runner.count() != 0 {
+			t.Fatalf("Ablauf %v", h.log.all())
+		}
+		if n := h.log.count("request:a"); n != 2 {
+			t.Fatalf("%d Anfragen", n)
+		}
+	})
+	t.Run("Halter weg startet ohne Übernahme", func(t *testing.T) {
+		h := confirmed(t, coord.Result{})
+		h.waitState(StateStarting)
+		if h.log.count("takeover:a") != 0 {
+			t.Fatalf("Ablauf %v", h.log.all())
+		}
+	})
+	t.Run("neuer Halter wird übernommen, ohne zweite Rückfrage", func(t *testing.T) {
+		h := confirmed(t, askConfirm("D"))
+		h.waitNotice(StateRequesting, "D")
+		if got := takenFrom(h); !slices.Equal(got, []string{"D"}) {
+			t.Fatalf("übernommen von %v", got)
+		}
+	})
+	t.Run("vorrangige Übernahme trifft den aktuellen Halter", func(t *testing.T) {
+		h := confirmed(t, takeover("E", 0))
+		h.waitState(StateStarting)
+		if got := takenFrom(h); !slices.Equal(got, []string{"E"}) {
+			t.Fatalf("übernommen von %v", got)
+		}
+	})
+}
+
+func TestPermanentTargetChangeEndsOldSession(t *testing.T) {
+	t.Run("anderes Ziel", func(t *testing.T) {
+		h := newHarness(t, permanentOn("a"))
+		h.waitState(StateStarting)
+		h.tcp.Store(true)
+		h.advance(PollEvery)
+		h.waitState(StateConnected)
+		p := h.runner.last()
+		h.setConfig(func(c *config.Config) { c.Kiosk.PermanentHMI = "b" })
+		h.advance(PollEvery)
+		h.waitNotice(StateTiles, "Presse")
+		if p.stops.Load() != 1 {
+			t.Fatalf("%d Stops", p.stops.Load())
+		}
+		h.advance(PollEvery)
+		if s := h.waitState(StateStarting); s.HMI != "b" {
+			t.Fatalf("Snapshot %+v", s)
+		}
+	})
+	t.Run("Ziel entfernt, kein Neuverbinden", func(t *testing.T) {
+		h := newHarness(t, permanentOn("a"))
+		h.waitState(StateStarting)
+		h.setConfig(func(c *config.Config) { c.Kiosk.PermanentHMI = "" })
+		h.advance(PollEvery)
+		h.waitNotice(StateTiles, "Presse")
+		h.advance(time.Minute)
+		if h.runner.count() != 1 {
+			t.Fatalf("%d Starts", h.runner.count())
+		}
+	})
+	t.Run("manuelle Sitzung bleibt", func(t *testing.T) {
+		h := newHarness(t, permanentOn("weg"))
+		p := h.connect("b")
+		h.setConfig(func(c *config.Config) { c.Kiosk.PermanentHMI = "" })
+		h.advance(time.Second)
+		if p.stops.Load() != 0 || h.m.Snapshot().State != StateConnected {
+			t.Fatalf("Snapshot %+v", h.m.Snapshot())
+		}
+	})
+}
+
+func TestAutomaticStartNeverDisplacesPrimaryHolder(t *testing.T) {
+	t.Run("automatisch: belegt, Neuversuch", func(t *testing.T) {
+		h := newHarness(t, func(h *harness) {
+			h.cfg.Kiosk.PermanentHMI = "a"
+			h.coord.queue(primaryTakeover("Leitstand"))
+		})
+		h.waitNotice(StateReconnecting, "Leitstand")
+		if h.log.count("takeover:a") != 0 || h.runner.count() != 0 {
+			t.Fatalf("Ablauf %v", h.log.all())
+		}
+	})
+	t.Run("automatisch gegen normalen Halter bleibt erlaubt", func(t *testing.T) {
+		h := newHarness(t, func(h *harness) {
+			h.cfg.Kiosk.PermanentHMI = "a"
+			h.coord.queue(takeover("Terminal 2", 0))
+		})
+		h.waitState(StateStarting)
+		if h.log.count("takeover:a") != 1 {
+			t.Fatalf("Ablauf %v", h.log.all())
+		}
+	})
+	t.Run("Touch folgt der Tabelle", func(t *testing.T) {
+		h := newHarness(t, func(h *harness) { h.coord.queue(primaryTakeover("Leitstand")) })
+		h.open("a")
+		h.waitNotice(StateRequesting, "Leitstand")
+		if h.log.count("takeover:a") != 1 {
+			t.Fatalf("Ablauf %v", h.log.all())
+		}
+	})
+}
+
+func TestTakeoverBadKeyGoesToBadKeyHint(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.coord.queue(takeover("Terminal 2", 5*time.Second))
+		h.coord.takeoverErr = fmt.Errorf("abgelehnt: %w", coord.ErrBadKey)
+	})
+	h.open("a")
+	s := h.waitState(StateStarting)
+	if !slices.Equal(s.BadKey, []string{"Terminal 2"}) || len(s.Unreachable) != 0 {
+		t.Fatalf("Snapshot %+v", s)
+	}
+}
+
+func TestBackDuringStoppingKeepsCauseNotice(t *testing.T) {
+	stopGate := make(chan struct{})
+	h := newHarness(t, func(h *harness) { h.runner.stopGate = stopGate })
+	h.connect("a")
+	h.tcp.Store(false)
+	h.advance(PollEvery + LostAfter)
+	h.waitNotice(StateStopping, "verloren")
+	h.m.Back()
+	close(stopGate)
+	h.waitNotice(StateTiles, "verloren")
+}
+
+func TestPasswordChangeBeforePrecheckDoesNotEndAttempt(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.coord.queue(askConfirm("B")) })
+	h.open("a")
+	h.waitState(StateConfirming)
+	h.mu.Lock()
+	h.password = "neu"
+	h.mu.Unlock()
+	h.setConfig(func(c *config.Config) { c.HMIs[0].PasswordEnc = "neu verschlüsselt" })
+	h.advance(PollEvery)
+	if s := h.m.Snapshot(); s.State != StateConfirming || s.Notice != "" {
+		t.Fatalf("Snapshot %+v", s)
+	}
+	if err := h.m.Confirm(); err != nil {
+		t.Fatal(err)
+	}
+	h.waitState(StateStarting)
+	if got := h.profile.last().Password; got != "neu" {
+		t.Fatalf("Passwort %q", got)
 	}
 }

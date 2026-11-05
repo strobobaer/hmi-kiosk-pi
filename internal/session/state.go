@@ -40,17 +40,20 @@ const (
 )
 
 // Snapshot ist der Stand für die Oberfläche. Unreachable nennt Terminals, die
-// nicht antworten oder den Schlüssel ablehnen; das ist nur ein Hinweis.
+// nicht antworten, BadKey solche, die den gemeinsamen Schlüssel ablehnen. Beides
+// ist nur ein Hinweis.
 type Snapshot struct {
 	State        State
 	HMI, HMIName string
 	Notice       string
 	Confirm      *coord.Holder
 	Unreachable  []string
+	BadKey       []string
 }
 
 func (s Snapshot) clone() Snapshot {
 	s.Unreachable = slices.Clone(s.Unreachable)
+	s.BadKey = slices.Clone(s.BadKey)
 	if s.Confirm != nil {
 		c := *s.Confirm
 		s.Confirm = &c

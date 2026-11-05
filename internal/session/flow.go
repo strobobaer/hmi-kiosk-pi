@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"slices"
@@ -26,12 +27,16 @@ func (m *Manager) begin(h config.HMI, cfg config.Config, auto bool) {
 	}
 	m.cur = a
 	m.state = StateRequesting
-	m.hint = nil
+	m.hint, m.badKey = nil, nil
 	if !auto {
 		m.notice = ""
 	}
+	m.request(a)
+}
+
+func (m *Manager) request(a *attempt) {
 	go func() {
-		res := m.d.Coord.Request(a.ctx, h.ID)
+		res := m.d.Coord.Request(a.ctx, a.hmi.ID)
 		m.post(func() { m.onRequest(a, res) })
 	}()
 }
@@ -45,22 +50,26 @@ func (m *Manager) onRequest(a *attempt, res coord.Result) {
 		}
 		return
 	}
-	m.addHint(res.Unreachable...)
-	m.addHint(res.BadKey...)
+	addNames(&m.hint, res.Unreachable...)
+	addNames(&m.badKey, res.BadKey...)
 	a.decision = res.Decision
 	d := res.Decision
 	switch {
 	case res.Rejected || d.Outcome == coord.Reject:
 		m.end(a, busyNotice(d.Holder), false)
-	case d.Outcome == coord.AskConfirm && a.auto:
-		// Eine Daueranzeige ohne Bediener darf weder übernehmen noch ewig warten.
+	case a.auto && (d.Outcome == coord.AskConfirm || displacesPrimary(d)):
+		// Ohne Bediener wird weder ewig gewartet noch ein primäres Terminal verdrängt.
 		m.end(a, busyNotice(d.Holder), false)
-	case d.Outcome == coord.AskConfirm:
+	case d.Outcome == coord.AskConfirm && !a.confirmed:
 		m.state = StateConfirming
 	default:
 		a.watch = d.Outcome == coord.AllowWatch
 		m.precheck(a)
 	}
+}
+
+func displacesPrimary(d coord.Decision) bool {
+	return d.Outcome == coord.TakeOver && d.Holder != nil && d.Holder.Role == config.RolePrimary
 }
 
 func busyNotice(h *coord.Holder) string {
@@ -74,10 +83,10 @@ func holderName(h *coord.Holder) string {
 	return h.Name
 }
 
-func (m *Manager) addHint(names ...string) {
+func addNames(list *[]string, names ...string) {
 	for _, n := range names {
-		if !slices.Contains(m.hint, n) {
-			m.hint = append(m.hint, n)
+		if !slices.Contains(*list, n) {
+			*list = append(*list, n)
 		}
 	}
 }
@@ -91,7 +100,7 @@ func (m *Manager) precheck(a *attempt) {
 		m.end(a, fmt.Sprintf("Passwort von „%s“ lässt sich nicht entschlüsseln", a.hmi.Name), false)
 		return
 	}
-	a.password = pw
+	a.password, a.checked = pw, true
 	h := a.hmi
 	go func() {
 		ctx, cancel := context.WithTimeout(a.ctx, probeTimeout)
@@ -136,7 +145,11 @@ func (m *Manager) onTakeoverSent(a *attempt, err error) {
 	// dann nichts, und die Verbindung ist laut Spec trotzdem erlaubt.
 	if err != nil {
 		log.Printf("Sitzung: Übernahme von HMI %q: %v", a.hmi.ID, err)
-		m.addHint(holderName(d.Holder))
+		if errors.Is(err, coord.ErrBadKey) {
+			addNames(&m.badKey, holderName(d.Holder))
+		} else {
+			addNames(&m.hint, holderName(d.Holder))
+		}
 		m.startClient(a)
 		return
 	}
@@ -174,14 +187,16 @@ const barHeight = 48
 func (m *Manager) startClient(a *attempt) {
 	dir, cleanup, err := m.d.RAMDir()
 	if err != nil {
-		m.end(a, fmt.Sprintf("Sitzungsdaten nicht anlegbar: %v", err), false)
+		log.Printf("Sitzung: RAM-Ordner für HMI %q: %v", a.hmi.ID, err)
+		m.end(a, "Sitzungsdaten konnten nicht angelegt werden", false)
 		return
 	}
 	a.cleanup = cleanup
 	m.sessionN++
 	cmd, err := m.d.Profile().Prepare(dir, m.buildSpec(a, m.d.Config()))
 	if err != nil {
-		m.end(a, fmt.Sprintf("Client nicht vorbereitet: %v", err), false)
+		log.Printf("Sitzung: Profil für HMI %q: %v", a.hmi.ID, err)
+		m.end(a, "Der VNC-Client konnte nicht vorbereitet werden", false)
 		return
 	}
 	// Mitschauen belegt nicht.
@@ -190,7 +205,8 @@ func (m *Manager) startClient(a *attempt) {
 	}
 	proc, err := m.d.Runner.Start(cmd)
 	if err != nil {
-		m.end(a, fmt.Sprintf("Client nicht gestartet: %v", err), false)
+		log.Printf("Sitzung: Client für HMI %q: %v", a.hmi.ID, err)
+		m.end(a, "Der VNC-Client konnte nicht gestartet werden", false)
 		return
 	}
 	now := m.d.Clock.Now()
@@ -261,7 +277,7 @@ func (m *Manager) end(a *attempt, notice string, operator bool) {
 	m.cur = nil
 	m.clearDeadline()
 	if a.proc != nil {
-		m.hint = nil
+		m.hint, m.badKey = nil, nil
 	}
 	if m.afterPermanentEnd(a, notice, operator, now) {
 		return
@@ -274,10 +290,13 @@ func (m *Manager) onBack() {
 	switch m.state {
 	case StateRequesting, StateConfirming:
 		m.end(m.cur, "", true)
-	case StateStarting, StateConnected, StateWarned, StateStopping:
+	case StateStarting, StateConnected, StateWarned:
 		a := m.cur
 		a.operator = true
 		m.stopClient(a, a.takenNotice)
+	case StateStopping:
+		// Die Ursache des laufenden Stopps bleibt sichtbar.
+		m.cur.operator = true
 	case StateReconnecting:
 		m.perm.halted = true
 		m.perm.backoff = 0
@@ -322,7 +341,6 @@ func (m *Manager) checkConfig(cfg config.Config) {
 	if a == nil || m.state == StateStopping {
 		return
 	}
-	a.permanent = cfg.Kiosk.PermanentHMI == a.hmi.ID
 	h, ok := findHMI(cfg, a.hmi.ID)
 	if !ok {
 		m.endOrStop(a, fmt.Sprintf("„%s“ wurde gelöscht", a.hmi.Name))
@@ -330,6 +348,13 @@ func (m *Manager) checkConfig(cfg config.Config) {
 	}
 	if h.Host != a.hmi.Host || h.Port != a.hmi.Port || m.passwordChanged(a, h) {
 		m.endOrStop(a, fmt.Sprintf("Einstellungen von „%s“ wurden geändert", a.hmi.Name))
+		return
+	}
+	switch {
+	case cfg.Kiosk.PermanentHMI == a.hmi.ID:
+		a.permanent = true
+	case a.permanent:
+		m.endOrStop(a, fmt.Sprintf("„%s“ ist nicht mehr die Daueranzeige", a.hmi.Name))
 	}
 }
 
@@ -340,6 +365,9 @@ func (m *Manager) passwordChanged(a *attempt, h config.HMI) bool {
 		return false
 	}
 	a.hmi.PasswordEnc = h.PasswordEnc
+	if !a.checked {
+		return false // precheck liest dann schon das neue
+	}
 	pw, err := m.d.Password(h)
 	return err != nil || pw != a.password
 }

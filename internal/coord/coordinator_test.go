@@ -755,7 +755,7 @@ func TestSimultaneousWatchersBothAllowed(t *testing.T) {
 	node := func(id string, peers ...string) *Coordinator {
 		s := settings(id, nor, peers...)
 		s.RulesFor = watchRules
-		s.Self.Permanent = id == "p"
+		s.IsPermanent = func(string) bool { return id == "p" }
 		c := New(s, net, clk)
 		net.nodes[id] = c
 		return c
@@ -885,5 +885,58 @@ func TestFailedTakeoverKeepsHolderInTable(t *testing.T) {
 	}
 	if _, ok := c.Occupancy()["h1"]; !ok {
 		t.Fatal("holder must stay after failed takeover")
+	}
+}
+
+func TestHolderPermanentFollowsIsPermanentPerHMI(t *testing.T) {
+	tr := &fakeTransport{}
+	s := settings("a", nor, "b")
+	var mu sync.Mutex
+	target := "h1"
+	s.IsPermanent = func(hmi string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hmi == target
+	}
+	s.Self.Permanent = true // zählt nicht mehr
+	c := New(s, tr, newClock())
+	c.Hold("h1", "s1")
+	c.Hold("h2", "s2")
+
+	claim := func(hmi string) *Holder {
+		return c.handleClaim(ClaimReq{HMI: hmi, Claim: Claim{Terminal: "b", Role: nor}}).Holder
+	}
+	if h := claim("h1"); h == nil || !h.Permanent {
+		t.Fatalf("h1: %+v", h)
+	}
+	if h := claim("h2"); h == nil || h.Permanent {
+		t.Fatalf("h2: %+v", h)
+	}
+
+	// Eine Konfigurationsänderung wirkt ohne neues Hold.
+	mu.Lock()
+	target = "h2"
+	mu.Unlock()
+	c.tick(context.Background())
+	got := map[string]bool{}
+	for _, b := range tr.sentBeats() {
+		got[b.hmi] = b.holder.Permanent
+	}
+	if got["h1"] || !got["h2"] {
+		t.Fatalf("Herzschläge %+v", got)
+	}
+	if h := claim("h2"); h == nil || !h.Permanent {
+		t.Fatalf("h2 nach Änderung: %+v", h)
+	}
+}
+
+func TestIsPermanentNilMeansFalse(t *testing.T) {
+	s := settings("a", nor, "b")
+	s.Self.Permanent = true
+	c := New(s, &fakeTransport{}, newClock())
+	c.Hold("h1", "s1")
+	h := c.handleClaim(ClaimReq{HMI: "h1", Claim: Claim{Terminal: "b", Role: nor}}).Holder
+	if h == nil || h.Permanent {
+		t.Fatalf("got %+v", h)
 	}
 }
