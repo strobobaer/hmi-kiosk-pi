@@ -32,7 +32,7 @@ func main() {
 }
 
 func serveMain() {
-	socket := flag.String("socket", "/run/hmi-kiosk/helper.sock", "Pfad des Unix-Sockets")
+	socket := flag.String("socket", "/run/hmi-kiosk-helper/helper.sock", "Pfad des Unix-Sockets")
 	uid := flag.Int("uid", -1, "Benutzerkennung des Kiosk-Dienstes (erforderlich)")
 	gid := flag.Int("gid", -1, "Gruppe des Sockets, -1 für unverändert")
 	bootCfg := flag.String("boot-config", "/boot/firmware/config.txt", "Pfad der config.txt")

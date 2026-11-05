@@ -234,7 +234,12 @@ func TestHandlerRejectsInvalidJSONAndMethod(t *testing.T) {
 // tlsPeer startet den Handler hinter selbst erzeugtem Zertifikat.
 func tlsPeer(t *testing.T, c *Coordinator, key []byte) config.Peer {
 	t.Helper()
-	srv := httptest.NewTLSServer(NewHandler(c, key))
+	return tlsPeerHandler(t, NewHandler(c, key))
+}
+
+func tlsPeerHandler(t *testing.T, h http.Handler) config.Peer {
+	t.Helper()
+	srv := httptest.NewTLSServer(h)
 	t.Cleanup(srv.Close)
 	return config.Peer{Name: "remote", Address: strings.TrimPrefix(srv.URL, "https://")}
 }

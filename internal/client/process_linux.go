@@ -58,6 +58,9 @@ func (execRunner) Start(c Command) (Process, error) {
 
 func (p *execProcess) Done() <-chan error { return p.done }
 
+// Pid ist zugleich die Prozessgruppe (Setpgid).
+func (p *execProcess) Pid() int { return p.cmd.Process.Pid }
+
 func (p *execProcess) signalGroup(sig syscall.Signal) {
 	err := syscall.Kill(-p.cmd.Process.Pid, sig)
 	if err != nil && !errors.Is(err, syscall.ESRCH) {

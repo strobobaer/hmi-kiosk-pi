@@ -1,0 +1,379 @@
+// Package app setzt alle Pakete zum Kiosk-Dienst zusammen.
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"hmikiosk/internal/browser"
+	"hmikiosk/internal/client"
+	"hmikiosk/internal/config"
+	"hmikiosk/internal/coord"
+	"hmikiosk/internal/helperapi"
+	"hmikiosk/internal/platform"
+	"hmikiosk/internal/release"
+	"hmikiosk/internal/rfb"
+	"hmikiosk/internal/secrets"
+	"hmikiosk/internal/session"
+	"hmikiosk/internal/web"
+)
+
+const (
+	procRoot = "/proc"
+	sysRoot  = "/sys"
+	devInput = "/dev/input"
+
+	healthyFile   = "healthy"
+	sessionsDir   = "sessions"
+	chromiumDir   = "chromium"
+	secretsFile   = "secrets.key"
+	logDirName    = "log"
+	tlsDirName    = "tls"
+	shutdownLimit = 5 * time.Second
+
+	DefaultLocalAddr    = "127.0.0.1:8080"
+	DefaultAdminAddr    = ":8443"
+	DefaultHelperSocket = "/run/hmi-kiosk-helper/helper.sock"
+)
+
+// Options sind die Startwerte des Dienstes. Adressen dürfen Port 0 nennen.
+type Options struct {
+	DataDir, RunDir, LocalAddr, AdminAddr string
+	HelperSocket                          string
+	Runner                                client.Runner
+	ChromiumEnabled                       bool
+	// Ready wird gerufen, wenn der Dienst läuft (für Tests).
+	Ready func(Bound)
+}
+
+// Bound beschreibt den laufenden Dienst. Admin ist leer, wenn die Admin-Seite
+// nicht gestartet werden konnte.
+type Bound struct {
+	Local, Admin string
+	Status       func() web.SystemStatus
+	Snapshot     func() session.Snapshot
+}
+
+type service struct {
+	opts     Options
+	store    *config.Store
+	journal  *Journal
+	notify   notifier
+	box      *secrets.Box
+	runner   client.Runner
+	coord    *coord.Coordinator
+	mgr      *session.Manager
+	hosts    *hostCache
+	reach    *reachability
+	helper   *helperapi.Client
+	lookPath func(string) (string, error)
+	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
+
+	markGood bool // der geladene Stand kommt unverändert aus config.json
+
+	mu       sync.RWMutex
+	cfg      config.Config
+	key      []byte
+	keyWarn  string
+	cfgWarn  string
+	warnings []string
+}
+
+// Run führt den Dienst aus, bis ctx endet; ein geordnetes Ende ergibt nil.
+func Run(ctx context.Context, opts Options) error {
+	s, err := newService(opts)
+	if err != nil {
+		return err
+	}
+	return s.serve(ctx)
+}
+
+func newService(opts Options) (*service, error) {
+	if opts.Runner == nil {
+		return nil, errors.New("Options.Runner fehlt")
+	}
+	if opts.DataDir == "" || opts.RunDir == "" {
+		return nil, errors.New("Datenordner und Laufzeitordner müssen angegeben sein")
+	}
+	if opts.LocalAddr == "" {
+		opts.LocalAddr = DefaultLocalAddr
+	}
+	if opts.AdminAddr == "" {
+		opts.AdminAddr = DefaultAdminAddr
+	}
+	if opts.HelperSocket == "" {
+		opts.HelperSocket = DefaultHelperSocket
+	}
+	s := &service{
+		opts:    opts,
+		store:   config.Open(opts.DataDir),
+		notify:  notifierFromEnv(),
+		helper:  helperapi.New(opts.HelperSocket),
+		browser: make(chan struct{}, 1),
+	}
+	journal, err := NewJournal(filepath.Join(opts.DataDir, logDirName), MaxLogBytes)
+	s.journal = journal
+	log.SetOutput(journal)
+	if err != nil {
+		log.Printf("Protokoll nicht verfügbar: %v", err)
+	}
+	if err := os.MkdirAll(opts.RunDir, 0o755); err != nil {
+		s.warn(fmt.Sprintf("Laufzeitordner nicht verfügbar: %v", err))
+	}
+	s.cleanupStartup()
+	s.loadConfig()
+	s.openBox()
+	s.mu.Lock()
+	s.key, s.keyWarn = s.openKey(s.cfg)
+	cfg, key := s.cfg, s.key
+	s.mu.Unlock()
+	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
+	s.buildParts(cfg, key)
+	return s, nil
+}
+
+// cleanupStartup räumt auf, was ein abgestürzter Vorgänger hinterlassen hat. Die
+// alte Gesundmarke zählt nicht mehr: Sie gälte sonst, bevor dieser Start gelungen ist.
+func (s *service) cleanupStartup() {
+	run := s.opts.RunDir
+	killLeftovers(procRoot, filepath.Join(run, pidFileName), leftoverGrace)
+	for _, dir := range []string{sessionsDir, chromiumDir} {
+		if err := os.RemoveAll(filepath.Join(run, dir)); err != nil {
+			log.Printf("Reste in %s nicht entfernt: %v", dir, err)
+		}
+	}
+	if err := os.Remove(filepath.Join(run, healthyFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("Alte Gesundmarke nicht entfernt: %v", err)
+	}
+}
+
+func (s *service) loadConfig() {
+	cfg, info, err := s.store.Load()
+	var warn string
+	switch {
+	case err != nil:
+		cfg = config.Default()
+		warn = fmt.Sprintf("Konfiguration nicht lesbar, der Dienst läuft mit der Grundeinstellung: %v", err)
+	case info.UsedFallback:
+		warn = fmt.Sprintf("Konfiguration defekt, Rückfall auf den letzten guten Stand: %s", info.Reason)
+	case info.FirstStart:
+		// Die Kennung des Terminals muss einen Neustart überleben.
+		if err := s.store.Save(cfg); err != nil {
+			warn = fmt.Sprintf("Konfiguration nicht gespeichert, sie gilt nur bis zum Neustart: %v", err)
+		} else {
+			s.markGood = true
+		}
+	default:
+		s.markGood = true
+	}
+	if warn != "" {
+		log.Print(warn)
+	}
+	s.mu.Lock()
+	s.cfg, s.cfgWarn = cloneConfig(cfg), warn
+	s.mu.Unlock()
+}
+
+func (s *service) openBox() {
+	err := os.MkdirAll(s.opts.DataDir, 0o700)
+	if err == nil {
+		s.box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile))
+	}
+	if err != nil {
+		s.box = nil
+		s.warn(fmt.Sprintf("Schlüsseldatei nicht verfügbar, VNC-Passwörter sind nicht lesbar: %v", err))
+	}
+}
+
+func (s *service) buildParts(cfg config.Config, key []byte) {
+	s.coord = coord.New(coord.Settings{
+		Self:        selfOf(cfg),
+		Peers:       peersFor(cfg, key),
+		RulesFor:    s.rulesFor,
+		IsPermanent: s.isPermanent,
+	}, coord.NewHTTPTransportFunc(s.peerKey, nil), coord.SystemClock{})
+	s.hosts = newHostCache(
+		func(ctx context.Context, host string) ([]net.IP, error) {
+			return net.DefaultResolver.LookupIP(ctx, "ip", host)
+		},
+		func(ip net.IP, port int) (bool, error) { return platform.HasEstablished(procRoot, ip, port) },
+	)
+	s.mgr = session.New(session.Deps{
+		Coord:    s.coord,
+		Runner:   s.runner,
+		Profile:  s.profile,
+		TCP:      s.hosts.tcp,
+		RAMDir:   s.ramDir,
+		Clock:    session.SystemClock{},
+		Config:   s.config,
+		Password: s.password,
+		Screen:   s.screen,
+		Probe:    s.sessionProbe,
+		OnEnd:    s.onSessionEnd,
+	})
+	s.reach = newReachability(
+		func() []config.HMI { return s.config().HMIs },
+		s.hmiInSession,
+		rfb.TCPReachable,
+	)
+}
+
+// serve läuft bis ctx endet. Der Automat startet vor den Servern, weil seine
+// öffentlichen Methoden sonst blockieren.
+func (s *service) serve(parent context.Context) error {
+	defer s.close()
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	background := func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	}
+	mgrDone := make(chan struct{})
+	go func() {
+		defer close(mgrDone)
+		s.mgr.Run(ctx)
+	}()
+	background(func() { s.coord.Run(ctx) })
+	background(func() { s.reach.run(ctx) })
+	background(func() {
+		if err := platform.WatchTouch(ctx, devInput, s.mgr.TouchActivity); err != nil && ctx.Err() == nil {
+			log.Printf("Touch-Überwachung beendet: %v", err)
+		}
+	})
+	browserDone := s.startBrowser(ctx)
+
+	local, admin, localErr, bound, err := s.startServers(ctx, &wg)
+	if err == nil {
+		err = s.announce(ctx, bound, background)
+	}
+	if err == nil {
+		select {
+		case <-ctx.Done():
+		case err = <-localErr:
+		}
+	}
+	cancel()
+	if serr := s.notify.send("STOPPING=1"); serr != nil {
+		log.Printf("Abmeldung bei systemd: %v", serr)
+	}
+	<-mgrDone
+	<-browserDone
+	shutdownServers(local, admin)
+	wg.Wait()
+	return err
+}
+
+func (s *service) close() {
+	if log.Writer() == s.journal {
+		log.SetOutput(os.Stderr)
+	}
+	s.journal.Close()
+}
+
+// announce schließt den Start ab: Alles läuft, also gilt der Stand als gut, die
+// Marke für den Update-Wächter steht, und systemd erfährt es.
+func (s *service) announce(ctx context.Context, bound Bound, background func(func())) error {
+	pctx, cancel := context.WithTimeout(ctx, watchdogProbeLimit)
+	defer cancel()
+	if err := s.mgr.Ping(pctx); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return fmt.Errorf("Sitzungsverwaltung antwortet nicht: %w", err)
+	}
+	cfg := s.config()
+	// Ohne Passwort kein Rückfall: Dieser Stand öffnete sonst die Ersteinrichtung.
+	if s.markGood && cfg.Admin.PasswordHash != "" {
+		if err := s.store.MarkGood(); err != nil {
+			log.Printf("Rückfallstand nicht gespeichert: %v", err)
+		}
+	}
+	if err := writeAtomic(filepath.Join(s.opts.RunDir, healthyFile), []byte(release.Version), 0o644); err != nil {
+		s.warn(fmt.Sprintf("Gesundmarke nicht geschrieben, ein Update fiele zurück: %v", err))
+	}
+	if err := s.notify.send("READY=1"); err != nil {
+		log.Printf("Anmeldung bei systemd: %v", err)
+	}
+	if every := watchdogInterval(os.Getenv, os.Getpid()); every > 0 {
+		background(func() { runWatchdog(ctx, s.notify, every, s.mgr.Ping) })
+	}
+	if _, _, found := platform.DisplaySize(sysRoot); !found {
+		log.Print("Kein Monitor erkannt, die Auflösung kommt aus der Einstellung oder dem Standardwert")
+	}
+	log.Printf("Dienst läuft, Version %s", release.Version)
+	if s.opts.Ready != nil {
+		s.opts.Ready(bound)
+	}
+	return nil
+}
+
+// startBrowser liefert einen Kanal, der schließt, sobald Chromium beendet ist.
+func (s *service) startBrowser(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	if !s.opts.ChromiumEnabled {
+		close(done)
+		return done
+	}
+	path, err := browser.FindChromium(s.lookPath)
+	if err != nil {
+		s.warn(fmt.Sprintf("Chromium nicht verfügbar: %v", err))
+	}
+	ram := filepath.Join(s.opts.RunDir, chromiumDir)
+	if err := os.MkdirAll(ram, 0o700); err != nil {
+		s.warn(fmt.Sprintf("RAM-Ordner für Chromium nicht verfügbar: %v", err))
+	}
+	sup := browser.New(s.runner, path, ram, func() int {
+		w, _ := s.screen()
+		return w
+	})
+	sup.SetProfile(s.config().Display.GraphicsProfile)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		sup.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		s.feedBrowser(ctx, sup)
+	}()
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	return done
+}
+
+// feedBrowser zeigt je Sitzungsstand Kacheln oder Leiste. Eine geänderte
+// Einstellung löst das auch ohne neuen Stand aus.
+func (s *service) feedBrowser(ctx context.Context, sup *browser.Supervisor) {
+	snaps, stop := s.mgr.Subscribe()
+	defer stop()
+	var last session.Snapshot
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case snap, ok := <-snaps:
+			if !ok {
+				return
+			}
+			last = snap
+		case <-s.browser:
+			sup.SetProfile(s.config().Display.GraphicsProfile)
+		}
+		sup.Show(browser.TargetFor(last, s.config().Kiosk.HideBar))
+	}
+}

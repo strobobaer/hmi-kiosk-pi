@@ -52,6 +52,17 @@ type Snapshot struct {
 	BadKey       []string
 }
 
+// Ended beschreibt eine beendete Sitzung für das Sitzungsprotokoll.
+type Ended struct {
+	HMI, HMIName string
+	ViewOnly     bool // Einstellung des HMI
+	Watch        bool // Mitschauen
+	Permanent    bool
+	Connected    bool // die Verbindung stand mindestens einmal
+	Duration     time.Duration
+	Reason       string
+}
+
 func (s Snapshot) clone() Snapshot {
 	s.Unreachable = slices.Clone(s.Unreachable)
 	s.BadKey = slices.Clone(s.BadKey)

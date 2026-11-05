@@ -17,6 +17,8 @@ const (
 type LoadInfo struct {
 	UsedFallback bool
 	Reason       string
+	// FirstStart: Es gibt weder config.json noch den Rückfall, das Ergebnis ist Default().
+	FirstStart bool
 }
 
 type Store struct{ dir string }
@@ -51,7 +53,7 @@ func (s *Store) Load() (Config, LoadInfo, error) {
 	}
 	g, gerr := readConfig(s.path(goodFileName))
 	if errors.Is(err, fs.ErrNotExist) && errors.Is(gerr, fs.ErrNotExist) {
-		return Default(), LoadInfo{}, nil
+		return Default(), LoadInfo{FirstStart: true}, nil
 	}
 	if gerr != nil {
 		return Config{}, LoadInfo{}, fmt.Errorf("Konfiguration defekt (%v) und kein gültiger Rückfall (%v)", err, gerr)

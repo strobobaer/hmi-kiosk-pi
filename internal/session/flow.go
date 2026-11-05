@@ -274,6 +274,7 @@ func (m *Manager) end(a *attempt, notice string, operator bool) {
 	a.cancel()
 	m.cleanupRAM(a)
 	m.d.Coord.Release(a.hmi.ID)
+	m.reportEnd(a, notice, operator)
 	m.cur = nil
 	m.clearDeadline()
 	if a.proc != nil {
@@ -284,6 +285,28 @@ func (m *Manager) end(a *attempt, notice string, operator bool) {
 	}
 	m.state = StateTiles
 	m.notice = notice
+}
+
+// reportEnd meldet nur Versuche, die bis zum Client gekommen sind.
+func (m *Manager) reportEnd(a *attempt, notice string, operator bool) {
+	if m.d.OnEnd == nil || a.proc == nil {
+		return
+	}
+	reason := notice
+	switch {
+	case reason != "":
+	case operator:
+		reason = "Zurück durch Bediener"
+	default:
+		reason = "Beendet"
+	}
+	m.d.OnEnd(Ended{
+		HMI: a.hmi.ID, HMIName: a.hmi.Name,
+		ViewOnly: a.hmi.ViewOnly, Watch: a.watch, Permanent: a.permanent,
+		Connected: !a.connectedAt.IsZero(),
+		Duration:  m.d.Clock.Now().Sub(a.startedAt),
+		Reason:    reason,
+	})
 }
 
 func (m *Manager) onBack() {

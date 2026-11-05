@@ -40,6 +40,9 @@ type Deps struct {
 	Password func(config.HMI) (string, error)
 	Screen   func() (w, h int)
 	Probe    func(ctx context.Context, h config.HMI, password string) rfb.ProbeResult
+	// OnEnd meldet jedes Ende einer Sitzung mit gestartetem Client; nil heißt niemand.
+	// Läuft in der Zustands-Goroutine und darf nicht blockieren.
+	OnEnd func(Ended)
 }
 
 // attempt ist ein Sitzungsversuch vom Touch bis zum Aufräumen. Ein laufender
@@ -144,6 +147,7 @@ func (m *Manager) shutdown() {
 	}
 	m.cleanupRAM(a)
 	m.d.Coord.Release(a.hmi.ID)
+	m.reportEnd(a, "Dienst beendet", false)
 	m.cur = nil
 	m.state = StateTiles
 	m.publish()
@@ -223,6 +227,25 @@ func (m *Manager) Back() {
 		m.onBack()
 		return nil
 	})
+}
+
+// Ping kehrt zurück, sobald die Zustands-Goroutine einen Befehl ausgeführt hat.
+// Snapshot taugt dafür nicht: Es antwortet auch, wenn sie hängt.
+func (m *Manager) Ping(ctx context.Context) error {
+	done := make(chan struct{})
+	select {
+	case m.cmds <- func() { close(done) }:
+	case <-m.stopped:
+		return ErrStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // TouchActivity wird bei jeder Touch-Eingabe gerufen und blockiert nie. Die

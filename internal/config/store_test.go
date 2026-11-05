@@ -177,3 +177,18 @@ func TestSaveLeavesNoTempFiles(t *testing.T) {
 		t.Fatalf("entries: %v", entries)
 	}
 }
+
+func TestLoadMarksFirstStartOnly(t *testing.T) {
+	s := Open(t.TempDir())
+	_, info, err := s.Load()
+	if err != nil || !info.FirstStart {
+		t.Fatalf("erster Start: err=%v info=%+v", err, info)
+	}
+	if err := s.Save(Default()); err != nil {
+		t.Fatal(err)
+	}
+	_, info, err = s.Load()
+	if err != nil || info.FirstStart {
+		t.Fatalf("mit Datei: err=%v info=%+v", err, info)
+	}
+}

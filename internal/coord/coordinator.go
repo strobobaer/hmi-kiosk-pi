@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
@@ -58,7 +59,9 @@ type holderSource struct {
 
 // Coordinator stimmt die Belegung von HMIs mit den anderen Terminals ab.
 type Coordinator struct {
-	s      Settings
+	sMu sync.RWMutex
+	s   Settings // Self und Peers ändert UpdateIdentity; nur über settings lesen
+
 	tr     Transport
 	clock  Clock
 	table  *Table
@@ -90,6 +93,26 @@ func New(s Settings, tr Transport, c Clock) *Coordinator {
 	}
 }
 
+// UpdateIdentity übernimmt geänderte Terminaldaten. Laufende Anfragen behalten ihren Stand.
+func (c *Coordinator) UpdateIdentity(self Holder, peers []config.Peer) {
+	c.sMu.Lock()
+	defer c.sMu.Unlock()
+	c.s.Self = self
+	c.s.Peers = slices.Clone(peers)
+}
+
+func (c *Coordinator) settings() Settings {
+	c.sMu.RLock()
+	defer c.sMu.RUnlock()
+	return c.s
+}
+
+// withIdentity meldet eine Belegung unter den aktuellen Terminaldaten.
+func withIdentity(h, self Holder) Holder {
+	h.Terminal, h.Name, h.Role = self.Terminal, self.Name, self.Role
+	return h
+}
+
 // Events liefert eingehende Übernahmen.
 func (c *Coordinator) Events() <-chan Event { return c.events }
 
@@ -101,16 +124,17 @@ type peerReply struct {
 // Request fragt alle Terminals an und entscheidet. Bleibt die Anfrage offen
 // (kein Reject), gilt sie bis Hold, Release oder Fristablauf als laufend.
 func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
-	self := c.s.Self.Terminal
+	s := c.settings()
+	self := s.Self.Terminal
 	own := &claimState{
-		claim: Claim{Terminal: self, Role: c.s.Self.Role, Nonce: rand.Text(), Name: c.s.Self.Name},
+		claim: Claim{Terminal: self, Role: s.Self.Role, Nonce: rand.Text(), Name: s.Self.Name},
 		at:    c.clock.Now(),
 	}
 	c.mu.Lock()
 	c.pending[hmi] = own
 	c.mu.Unlock()
 
-	replies := c.askPeers(ctx, ClaimReq{HMI: hmi, Claim: own.claim})
+	replies := c.askPeers(ctx, s.Peers, ClaimReq{HMI: hmi, Claim: own.claim})
 
 	var (
 		res        Result
@@ -119,7 +143,7 @@ func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 		winner     *Claim
 	)
 	for i, rep := range replies {
-		peer := c.s.Peers[i]
+		peer := s.Peers[i]
 		switch {
 		case errors.Is(rep.err, ErrBadKey):
 			res.BadKey = append(res.BadKey, peer.Name)
@@ -143,7 +167,7 @@ func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 	if h, ok := c.table.Holder(hmi); ok && h.Terminal != self && (best == nil || stronger(h, *best)) {
 		best, bestSource = &h, nil
 	}
-	res.Decision = Decide(c.s.Self.Role, best, c.s.RulesFor(hmi))
+	res.Decision = Decide(s.Self.Role, best, s.RulesFor(hmi))
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -175,10 +199,10 @@ func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 	return res
 }
 
-func (c *Coordinator) askPeers(ctx context.Context, req ClaimReq) []peerReply {
-	replies := make([]peerReply, len(c.s.Peers))
+func (c *Coordinator) askPeers(ctx context.Context, peers []config.Peer, req ClaimReq) []peerReply {
+	replies := make([]peerReply, len(peers))
 	var wg sync.WaitGroup
-	for i, peer := range c.s.Peers {
+	for i, peer := range peers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -218,7 +242,8 @@ func (c *Coordinator) Takeover(ctx context.Context, hmi string, d Decision) erro
 	if d.Holder == nil {
 		return errors.New("Übernahme ohne Halter")
 	}
-	if d.Holder.Terminal == c.s.Self.Terminal {
+	s := c.settings()
+	if d.Holder.Terminal == s.Self.Terminal {
 		return nil
 	}
 	peer, ok := c.peerOf(hmi, *d.Holder)
@@ -227,7 +252,7 @@ func (c *Coordinator) Takeover(ctx context.Context, hmi string, d Decision) erro
 	}
 	pctx, cancel := context.WithTimeout(ctx, peerTimeout)
 	defer cancel()
-	err := c.tr.Takeover(pctx, peer, hmi, c.s.Self, d.Warn)
+	err := c.tr.Takeover(pctx, peer, hmi, s.Self, d.Warn)
 	switch {
 	case err == nil:
 		c.table.Drop(hmi, d.Holder.Terminal)
@@ -248,7 +273,7 @@ func (c *Coordinator) peerOf(hmi string, h Holder) (config.Peer, bool) {
 	if ok && src.terminal == h.Terminal {
 		return src.peer, true
 	}
-	for _, p := range c.s.Peers {
+	for _, p := range c.settings().Peers {
 		if p.Name == h.Name {
 			return p, true
 		}
@@ -258,7 +283,7 @@ func (c *Coordinator) peerOf(hmi string, h Holder) (config.Peer, bool) {
 
 // Hold beginnt die Belegung: Run meldet sie ab jetzt per Herzschlag.
 func (c *Coordinator) Hold(hmi, session string) {
-	h := c.s.Self
+	h := c.settings().Self
 	h.Session = session
 	h.Permanent = c.isPermanent(hmi)
 	c.mu.Lock()
@@ -268,7 +293,8 @@ func (c *Coordinator) Hold(hmi, session string) {
 }
 
 func (c *Coordinator) isPermanent(hmi string) bool {
-	return c.s.IsPermanent != nil && c.s.IsPermanent(hmi)
+	isPermanent := c.settings().IsPermanent
+	return isPermanent != nil && isPermanent(hmi)
 }
 
 // Release beendet die Belegung. Die anderen erfahren es nicht, ihre Frist läuft ab.
@@ -302,10 +328,12 @@ func (c *Coordinator) tick(ctx context.Context) {
 	}
 	c.mu.Unlock()
 
+	s := c.settings()
 	var wg sync.WaitGroup
 	for hmi, h := range held {
+		h = withIdentity(h, s.Self)
 		h.Permanent = c.isPermanent(hmi)
-		for _, peer := range c.s.Peers {
+		for _, peer := range s.Peers {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -321,9 +349,10 @@ func (c *Coordinator) tick(ctx context.Context) {
 
 // Occupancy liefert die von anderen Terminals belegten HMIs.
 func (c *Coordinator) Occupancy() map[string]Holder {
+	self := c.settings().Self.Terminal
 	occ := c.table.Snapshot()
 	for hmi, h := range occ {
-		if h.Watch || h.Terminal == c.s.Self.Terminal {
+		if h.Watch || h.Terminal == self {
 			delete(occ, hmi)
 		}
 	}
@@ -331,7 +360,8 @@ func (c *Coordinator) Occupancy() map[string]Holder {
 }
 
 func (c *Coordinator) handleClaim(req ClaimReq) ClaimResp {
-	if req.Claim.Terminal == c.s.Self.Terminal {
+	self := c.settings().Self
+	if req.Claim.Terminal == self.Terminal {
 		return ClaimResp{}
 	}
 	permanent := c.isPermanent(req.HMI)
@@ -341,6 +371,7 @@ func (c *Coordinator) handleClaim(req ClaimReq) ClaimResp {
 	// Wer schon hält, konkurriert nicht mehr, auch wenn er erneut angefragt hat:
 	// Verdrängt wird er nur per Übernahme mit Vorwarnung.
 	if h, ok := c.held[req.HMI]; ok {
+		h = withIdentity(h, self)
 		h.Permanent = permanent
 		resp.Holder = &h
 		return resp
@@ -370,14 +401,14 @@ func (c *Coordinator) handleClaim(req ClaimReq) ClaimResp {
 }
 
 func (c *Coordinator) handleHeartbeat(hmi string, h Holder) {
-	if h.Terminal == c.s.Self.Terminal {
+	if h.Terminal == c.settings().Self.Terminal {
 		return
 	}
 	c.table.Renew(hmi, h)
 }
 
 func (c *Coordinator) handleTakeover(hmi string, by Holder, warn time.Duration) {
-	if by.Terminal == c.s.Self.Terminal {
+	if by.Terminal == c.settings().Self.Terminal {
 		return
 	}
 	c.emit(Event{HMI: hmi, By: by, After: warn})

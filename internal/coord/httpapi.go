@@ -35,13 +35,18 @@ type takeoverReq struct {
 var errBadRequest = errors.New("ungültige Anfrage")
 
 type peerAPI struct {
-	key    []byte
+	key    func() []byte
 	nonces *nonceStore
 }
 
 // NewHandler stellt die Terminal-API bereit. Außer /peer/nonce ist jede Route
 // signiert und verlangt eine frische Zufallszahl.
 func NewHandler(c *Coordinator, key []byte) http.Handler {
+	return NewHandlerFunc(c, func() []byte { return key })
+}
+
+// NewHandlerFunc liest den Schlüssel je Anfrage, damit ein neuer sofort gilt.
+func NewHandlerFunc(c *Coordinator, key func() []byte) http.Handler {
 	a := &peerAPI{key: key, nonces: newNonceStore(c.clock)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+pathNonce, a.serveNonce)
@@ -91,7 +96,7 @@ func signedJSON[Req any](a *peerAPI, path string, handle func(Req) (any, error))
 		}
 		// Erst die Signatur prüfen: Ohne Schlüssel darf niemand Zufallszahlen entwerten.
 		nonce := r.Header.Get(headerNonce)
-		if !verify(a.key, path, nonce, body, r.Header.Get(headerSignature)) || !a.nonces.consume(nonce) {
+		if !verify(a.key(), path, nonce, body, r.Header.Get(headerSignature)) || !a.nonces.consume(nonce) {
 			http.Error(w, "Signatur abgelehnt", http.StatusUnauthorized)
 			return
 		}

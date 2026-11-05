@@ -246,6 +246,7 @@ type harness struct {
 	probes      int
 	cleanups    int
 	cancelRun   context.CancelFunc
+	onEnd       func(Ended)
 	runDone     chan struct{}
 }
 
@@ -308,6 +309,7 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 			return h.password, h.passwordErr
 		},
 		Screen: func() (int, int) { return 1920, 1080 },
+		OnEnd:  h.onEnd,
 		Probe: func(context.Context, config.HMI, string) rfb.ProbeResult {
 			h.mu.Lock()
 			defer h.mu.Unlock()

@@ -1,0 +1,101 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"hmikiosk/internal/platform"
+	"hmikiosk/internal/release"
+	"hmikiosk/internal/web"
+)
+
+// warn merkt sich einen Hinweis für die Admin-Seite und schreibt ihn ins Protokoll.
+func (s *service) warn(msg string) {
+	log.Print(msg)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !slices.Contains(s.warnings, msg) {
+		s.warnings = append(s.warnings, msg)
+	}
+}
+
+// Status liefert die Anzeigewerte der Admin-Seite.
+func (s *service) Status() web.SystemStatus {
+	s.mu.RLock()
+	cfgWarn, keyWarn := s.cfgWarn, s.keyWarn
+	warnings := slices.Clone(s.warnings)
+	cfg := s.cfg
+	s.mu.RUnlock()
+
+	st := web.SystemStatus{Version: release.Version, OverlayActive: overlayActive(procRoot)}
+	add := func(w string) {
+		if w != "" {
+			st.Warnings = append(st.Warnings, w)
+		}
+	}
+	add(cfgWarn)
+	add(keyWarn)
+	st.Warnings = append(st.Warnings, warnings...)
+	add(s.journal.Warning())
+	if !st.OverlayActive {
+		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
+	}
+
+	w, h, found := platform.DisplaySize(sysRoot)
+	rw, rh := platform.Resolve(cfg.Display.OverrideW, cfg.Display.OverrideH, w, h, found)
+	st.Display = fmt.Sprintf("%d×%d", rw, rh)
+	override := cfg.Display.OverrideW > 0 && cfg.Display.OverrideH > 0
+	switch {
+	case override:
+		st.Display += " (fest eingestellt)"
+	case !found:
+		st.Display += " (Standardwert)"
+		add(fmt.Sprintf("Kein Monitor erkannt, es gilt %d×%d.", rw, rh))
+	}
+
+	if free, total, err := diskUsage(s.opts.DataDir); err == nil {
+		st.DataFreeBytes, st.DataTotalBytes = free, total
+	} else {
+		add(fmt.Sprintf("Datenpartition nicht verfügbar: %v", err))
+	}
+	return st
+}
+
+// overlayActive wertet den letzten Eintrag für / aus: Er verdeckt die früheren.
+func overlayActive(root string) bool {
+	data, err := os.ReadFile(filepath.Join(root, "mounts"))
+	if err != nil {
+		return false
+	}
+	active := false
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && fields[1] == "/" {
+			active = fields[2] == "overlay"
+		}
+	}
+	return active
+}
+
+// selftest prüft den Dienst selbst; die Prüfung am Gerät ergänzt das später.
+func (s *service) selftest(context.Context) []web.SelftestStep {
+	st := s.Status()
+	steps := []web.SelftestStep{
+		{Name: "Datenpartition beschreibbar", OK: true},
+		{Name: "Schreibschutz aktiv", OK: st.OverlayActive},
+		{Name: "Watchdog aktiv", OK: os.Getenv("WATCHDOG_USEC") != ""},
+	}
+	f, err := os.CreateTemp(s.opts.DataDir, ".selbsttest-*")
+	if err != nil {
+		steps[0].OK, steps[0].Detail = false, err.Error()
+	} else {
+		f.Close()
+		os.Remove(f.Name())
+	}
+	return steps
+}

@@ -42,13 +42,18 @@ type Transport interface {
 }
 
 type httpTransport struct {
-	key    []byte
+	key    func() []byte
 	client *http.Client
 }
 
 // NewHTTPTransport signiert jede Anfrage mit key. Ohne client wird einer erzeugt,
 // der selbst erzeugte Zertifikate annimmt.
 func NewHTTPTransport(key []byte, client *http.Client) Transport {
+	return NewHTTPTransportFunc(func() []byte { return key }, client)
+}
+
+// NewHTTPTransportFunc liest den Schlüssel je Anfrage, damit ein neuer sofort gilt.
+func NewHTTPTransportFunc(key func() []byte, client *http.Client) Transport {
 	if client == nil {
 		client = &http.Client{Transport: &http.Transport{
 			// Die Terminals haben selbst erzeugte Zertifikate. Die Echtheit kommt
@@ -87,7 +92,7 @@ func (t *httpTransport) call(ctx context.Context, peer config.Peer, path string,
 	}
 	headers := map[string]string{
 		headerNonce:     nonce.Nonce,
-		headerSignature: sign(t.key, path, nonce.Nonce, body),
+		headerSignature: sign(t.key(), path, nonce.Nonce, body),
 	}
 	return t.post(ctx, base+path, headers, body, out)
 }
