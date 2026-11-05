@@ -97,17 +97,52 @@ create_partition() {
 	log "Datenpartition angelegt: $data"
 }
 
+# Hängt das neue Dateisystem probeweise ein, schreibt und liest eine Testdatei. Erst danach darf
+# die fstab-Zeile entstehen: Ohne nofail führt ein nicht einhängbares /data sonst bei jedem
+# Start in den Notfallmodus.
+probe_mount() {
+	dev=$(blkid -L "$LABEL" 2>/dev/null) || return 1
+	probe=$(mktemp -d /run/hmi-kiosk-firstboot.XXXXXX) || return 1
+	ok=1
+	if mount -t ext4 "$dev" "$probe"; then
+		if printf 'hmi-kiosk\n' >"$probe/.hmi-kiosk-probe" && sync &&
+			[ "$(cat "$probe/.hmi-kiosk-probe")" = hmi-kiosk ] && rm -f "$probe/.hmi-kiosk-probe"; then
+			ok=0
+		fi
+		umount "$probe" || ok=1
+	fi
+	rmdir "$probe" 2>/dev/null || true
+	return "$ok"
+}
+
+# Entfernt genau die eigene Zeile wieder; die übrige fstab bleibt unverändert (atomar ersetzt).
+remove_fstab_entry() {
+	tmp="$FSTAB.hmi-kiosk.$$"
+	grep -vxF "$FSTAB_LINE" "$FSTAB" >"$tmp" || true
+	chmod --reference="$FSTAB" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+	sync
+	mv -f "$tmp" "$FSTAB"
+	sync
+}
+
 # Trägt /data in die fstab ein (einmal) und hängt es über systemd ein.
 add_fstab_entry() {
 	if grep -Eq "^[^#]*[[:space:]]${DATA}[[:space:]]" "$FSTAB"; then
 		return 0
 	fi
+	probe_mount || fail "$LABEL lässt sich nicht probeweise einhängen und beschreiben; kein fstab-Eintrag"
 	printf '%s\n' "$FSTAB_LINE" >>"$FSTAB"
 	sync
 	log "fstab-Eintrag für $DATA ergänzt"
-	systemctl daemon-reload || fail "systemctl daemon-reload gescheitert"
-	systemctl start data.mount || fail "$DATA lässt sich nicht einhängen"
-	log "$DATA eingehängt"
+	if systemctl daemon-reload && systemctl start data.mount; then
+		log "$DATA eingehängt"
+		return 0
+	fi
+	# Ohne diesen Rückbau stünde beim nächsten Start eine Zeile ohne nofail für ein
+	# nicht einhängbares /data in der fstab.
+	remove_fstab_entry
+	systemctl daemon-reload || true
+	fail "$DATA lässt sich über data.mount nicht einhängen; fstab-Eintrag wieder entfernt"
 }
 
 prepare_data() {

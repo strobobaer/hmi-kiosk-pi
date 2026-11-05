@@ -55,12 +55,47 @@ PARTUUID=abcd-01  /boot/firmware  vfat    defaults          0       2
 PARTUUID=abcd-02  /               ext4    defaults,noatime  0       1
 EOF
 mkdir -p "$work/bin"
-printf '#!/bin/sh\necho "systemctl $*" >>%s/systemctl.log\n' "$work" >"$work/bin/systemctl"
+# systemctl wird protokolliert; mit $work/fail-start scheitert "start".
+# shellcheck disable=SC2016 # $* und $1 gehören in das erzeugte Skript
+printf '#!/bin/sh\necho "systemctl $*" >>%s/systemctl.log\nif [ "$1" = start ] && [ -e %s/fail-start ]; then exit 1; fi\n' "$work" "$work" >"$work/bin/systemctl"
 chmod 755 "$work/bin/systemctl"
 export PATH="$work/bin:$PATH"
+cp /etc/fstab "$work/fstab.orig"
+data_lines() { grep -c '^LABEL=HMIDATA  /data .*ext4 .*x-systemd.device-timeout=30s' /etc/fstab || true; }
+
+echo "== prepare-data, Probe-Einhängen scheitert"
+printf '#!/bin/sh\necho "mount $*" >>%s/mount.log\nexit 32\n' "$work" >"$work/bin/mount"
+chmod 755 "$work/bin/mount"
+if sh "$FB" prepare-data >/dev/null 2>&1; then
+	bad "Probe gescheitert, trotzdem Exit 0"
+elif [ "$(data_lines)" = 0 ] && cmp -s /etc/fstab "$work/fstab.orig" && [ ! -s "$work/systemctl.log" ] && [ -s "$work/mount.log" ]; then
+	ok "Probe gescheitert: kein fstab-Eintrag, kein systemctl, Exit ungleich 0"
+else
+	bad "Probe gescheitert, aber fstab/systemctl: $(cat /etc/fstab "$work/systemctl.log")"
+fi
+rm -f "$work/bin/mount"
+
+echo "== prepare-data, data.mount scheitert"
+touch "$work/fail-start"
+if sh "$FB" prepare-data >/dev/null 2>&1; then
+	bad "data.mount gescheitert, trotzdem Exit 0"
+elif cmp -s /etc/fstab "$work/fstab.orig" &&
+	[ "$(cat "$work/systemctl.log")" = "$(printf 'systemctl daemon-reload\nsystemctl start data.mount\nsystemctl daemon-reload')" ]; then
+	ok "data.mount gescheitert: fstab-Eintrag wieder entfernt, fstab sonst unverändert, daemon-reload"
+else
+	bad "nach gescheitertem data.mount: $(cat /etc/fstab "$work/systemctl.log")"
+fi
+rm -f "$work/fail-start"
+: >"$work/systemctl.log"
+: >"$work/firstboot.log"
 
 echo "== prepare-data"
 sh "$FB" prepare-data
+if grep -q 'Formatiere' "$work/firstboot.log"; then
+	bad "gültiges HMIDATA beim erneuten Versuch neu formatiert"
+else
+	ok "erneuter Versuch formatiert das vorhandene HMIDATA nicht neu"
+fi
 if [ "$(blkid -p -o value -s LABEL "${loop}p3")" = HMIDATA ] && [ "$(blkid -p -o value -s TYPE "${loop}p3")" = ext4 ]; then
 	ok "Partition 3 ext4 HMIDATA angelegt"
 else
@@ -76,7 +111,6 @@ if [ "$p3start" -ge "$p2end" ] && [ $((p3start + p3size)) -le "$total" ] && [ $(
 else
 	bad "Partition 3 an falscher Stelle: $p3, Ende p2 $p2end, gesamt $total"
 fi
-data_lines() { grep -c '^LABEL=HMIDATA  /data .*ext4 .*x-systemd.device-timeout=30s' /etc/fstab || true; }
 if [ "$(data_lines)" = 1 ] && ! grep -q nofail /etc/fstab; then
 	ok "fstab-Eintrag /data ergänzt, ohne nofail"
 else
