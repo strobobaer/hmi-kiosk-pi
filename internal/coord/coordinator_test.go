@@ -743,3 +743,147 @@ func TestOccupancyListsOtherTerminalsOnly(t *testing.T) {
 		t.Fatal("expired lease listed")
 	}
 }
+
+func watchRules(string) Rules {
+	return Rules{Mode: config.ModeTakeover, Style: config.StyleConfirm, AllowWatch: true}
+}
+
+// Mitschauen schließt niemanden aus: Gleichzeitige Zuschauer verdrängen sich nicht.
+func TestSimultaneousWatchersBothAllowed(t *testing.T) {
+	net := &memNet{nodes: map[string]*Coordinator{}}
+	clk := newClock()
+	node := func(id string, peers ...string) *Coordinator {
+		s := settings(id, nor, peers...)
+		s.RulesFor = watchRules
+		s.Self.Permanent = id == "p"
+		c := New(s, net, clk)
+		net.nodes[id] = c
+		return c
+	}
+	p := node("p", "a", "b")
+	a := node("a", "p", "b")
+	b := node("b", "p", "a")
+	p.Hold("h1", "dauer")
+
+	var arrived sync.WaitGroup
+	arrived.Add(4)
+	net.beforeClaim = func() { // beide Anfragen sind offen, bevor eine zugestellt wird
+		arrived.Done()
+		arrived.Wait()
+	}
+	var ra, rb Result
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); ra = a.Request(context.Background(), "h1") }()
+	go func() { defer wg.Done(); rb = b.Request(context.Background(), "h1") }()
+	wg.Wait()
+
+	for name, r := range map[string]Result{"a": ra, "b": rb} {
+		if r.Rejected || r.Decision.Outcome != AllowWatch || r.Decision.Holder == nil || r.Decision.Holder.Terminal != "p" {
+			t.Fatalf("%s got %+v", name, r)
+		}
+	}
+	noEvent(t, a)
+	noEvent(t, b)
+	noEvent(t, p)
+}
+
+// Wer hält und erneut anfragt, wird nur per Übernahme mit Vorwarnung verdrängt.
+func TestHolderReRequestIsNotEvictedByStrongerClaim(t *testing.T) {
+	c := New(settings("b", nor, "x"), &fakeTransport{}, newClock())
+	c.Hold("h1", "s1")
+	if r := c.Request(context.Background(), "h1"); r.Decision.Outcome != Allow {
+		t.Fatalf("got %+v", r)
+	}
+	resp := c.handleClaim(ClaimReq{HMI: "h1", Claim: Claim{Terminal: "a", Role: pri}})
+	if resp.Holder == nil || resp.Holder.Terminal != "b" || resp.Holder.Session != "s1" {
+		t.Fatalf("got %+v", resp)
+	}
+	if resp.ContestedBy != nil {
+		t.Fatalf("holder must not contest: %+v", resp.ContestedBy)
+	}
+	noEvent(t, c)
+}
+
+func TestContestPathsCarryTerminalName(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("own claim", func(t *testing.T) {
+		var got Claim
+		s := settings("a", nor, "x")
+		s.Self.Name = "Halle"
+		tr := &fakeTransport{claim: func(_ context.Context, _ config.Peer, req ClaimReq) (ClaimResp, error) {
+			got = req.Claim
+			return ClaimResp{}, nil
+		}}
+		New(s, tr, newClock()).Request(ctx, "h1")
+		if got.Name != "Halle" {
+			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("reply", func(t *testing.T) {
+		tr := &fakeTransport{claim: func(context.Context, config.Peer, ClaimReq) (ClaimResp, error) {
+			return ClaimResp{ContestedBy: &Claim{Terminal: "a", Role: nor, Name: "Halle"}}, nil
+		}}
+		r := New(settings("b", nor, "peername"), tr, newClock()).Request(ctx, "h1")
+		if !r.Rejected || r.Decision.Holder == nil || r.Decision.Holder.Name != "Halle" {
+			t.Fatalf("got %+v", r)
+		}
+	})
+	t.Run("arrives while running", func(t *testing.T) {
+		var c *Coordinator
+		tr := &fakeTransport{claim: func(_ context.Context, _ config.Peer, _ ClaimReq) (ClaimResp, error) {
+			c.handleClaim(ClaimReq{HMI: "h1", Claim: Claim{Terminal: "a", Role: nor, Name: "Halle"}})
+			return ClaimResp{}, nil
+		}}
+		c = New(settings("b", nor, "x"), tr, newClock())
+		r := c.Request(ctx, "h1")
+		if !r.Rejected || r.Decision.Holder == nil || r.Decision.Holder.Name != "Halle" {
+			t.Fatalf("got %+v", r)
+		}
+	})
+	t.Run("arrives after return", func(t *testing.T) {
+		c := New(settings("b", nor, "x"), &fakeTransport{}, newClock())
+		c.Request(ctx, "h1")
+		c.handleClaim(ClaimReq{HMI: "h1", Claim: Claim{Terminal: "a", Role: nor, Name: "Halle"}})
+		select {
+		case e := <-c.Events():
+			if e.By.Name != "Halle" {
+				t.Fatalf("got %+v", e)
+			}
+		default:
+			t.Fatal("no event")
+		}
+	})
+}
+
+func TestTakeoverDropsReplacedHolderFromTable(t *testing.T) {
+	ctx := context.Background()
+	tr := &fakeTransport{}
+	c := New(settings("a", pri, "b"), tr, newClock())
+	c.handleHeartbeat("h1", Holder{Terminal: "tb", Name: "b", Role: nor})
+	r := c.Request(ctx, "h1")
+	if err := c.Takeover(ctx, "h1", r.Decision); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Occupancy()["h1"]; ok {
+		t.Fatal("replaced holder still listed")
+	}
+	if r := c.Request(ctx, "h1"); r.Decision.Outcome != Allow {
+		t.Fatalf("spurious second takeover: %+v", r)
+	}
+}
+
+func TestFailedTakeoverKeepsHolderInTable(t *testing.T) {
+	ctx := context.Background()
+	tr := &fakeTransport{takeoverEr: errors.New("connection refused")}
+	c := New(settings("a", pri, "b"), tr, newClock())
+	c.handleHeartbeat("h1", Holder{Terminal: "tb", Name: "b", Role: nor})
+	r := c.Request(ctx, "h1")
+	if err := c.Takeover(ctx, "h1", r.Decision); err == nil {
+		t.Fatal("want error")
+	}
+	if _, ok := c.Occupancy()["h1"]; !ok {
+		t.Fatal("holder must stay after failed takeover")
+	}
+}

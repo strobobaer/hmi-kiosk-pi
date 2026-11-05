@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -356,5 +357,60 @@ func TestCoordinatorRequestOverHTTP(t *testing.T) {
 	}
 	if e := <-remote.Events(); e.By.Terminal != "a" || e.After != TakeoverWarn {
 		t.Fatalf("got %+v", e)
+	}
+}
+
+func TestTransportReusesConnections(t *testing.T) {
+	remote := New(settings("r", nor, "x"), &fakeTransport{}, newClock())
+	var mu sync.Mutex
+	opened := 0
+	srv := httptest.NewUnstartedServer(NewHandler(remote, testKey))
+	srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			mu.Lock()
+			opened++
+			mu.Unlock()
+		}
+	}
+	srv.StartTLS()
+	defer srv.Close()
+	peer := config.Peer{Name: "r", Address: strings.TrimPrefix(srv.URL, "https://")}
+	tr := NewHTTPTransport(testKey, nil)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if err := tr.Heartbeat(ctx, peer, "h1", Holder{Terminal: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tr.Claim(ctx, peer, ClaimReq{HMI: "h1", Claim: Claim{Terminal: "a"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if opened != 1 {
+		t.Fatalf("opened %d connections", opened)
+	}
+}
+
+func TestDefaultClientDropsIdleConnectionsAfter30s(t *testing.T) {
+	ht := NewHTTPTransport(testKey, nil).(*httpTransport).client.Transport.(*http.Transport)
+	if ht.IdleConnTimeout != 30*time.Second {
+		t.Fatalf("got %v", ht.IdleConnTimeout)
+	}
+}
+
+func TestClaimNameTravelsOverHTTP(t *testing.T) {
+	s := settings("r", nor, "x")
+	s.Self.Name = "Halle"
+	remote := New(s, &fakeTransport{}, newClock())
+	peer := tlsPeer(t, remote, testKey)
+	ctx := context.Background()
+	remote.Request(ctx, "h1")
+	resp, err := NewHTTPTransport(testKey, nil).Claim(ctx, peer, ClaimReq{HMI: "h1", Claim: Claim{Terminal: "z", Role: nor}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ContestedBy == nil || resp.ContestedBy.Name != "Halle" {
+		t.Fatalf("got %+v", resp)
 	}
 }

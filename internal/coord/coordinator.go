@@ -101,7 +101,7 @@ type peerReply struct {
 func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 	self := c.s.Self.Terminal
 	own := &claimState{
-		claim: Claim{Terminal: self, Role: c.s.Self.Role, Nonce: rand.Text()},
+		claim: Claim{Terminal: self, Role: c.s.Self.Role, Nonce: rand.Text(), Name: c.s.Self.Name},
 		at:    c.clock.Now(),
 	}
 	c.mu.Lock()
@@ -115,7 +115,6 @@ func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 		best       *Holder
 		bestSource *config.Peer
 		winner     *Claim
-		winnerName string
 	)
 	for i, rep := range replies {
 		peer := c.s.Peers[i]
@@ -132,9 +131,8 @@ func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 		}
 		if cb := rep.resp.ContestedBy; cb != nil && cb.Terminal != self {
 			if w := ResolveSimultaneous(own.claim, *cb); w.Terminal != self {
-				if merged := strongerClaim(winner, w); winner == nil || merged.Terminal != winner.Terminal {
-					winner, winnerName = &merged, peer.Name
-				}
+				merged := strongerClaim(winner, w)
+				winner = &merged
 			}
 		}
 	}
@@ -148,15 +146,15 @@ func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if own.lostTo != nil {
-		if merged := strongerClaim(winner, *own.lostTo); winner == nil || merged.Terminal != winner.Terminal {
-			winner, winnerName = &merged, ""
-		}
+		merged := strongerClaim(winner, *own.lostTo)
+		winner = &merged
 	}
-	if winner != nil {
+	// Mitschauen schließt niemanden aus, also gibt es dabei nichts zu verlieren.
+	if winner != nil && res.Decision.Outcome != AllowWatch {
 		res.Rejected = true
 		res.Decision = Decision{
 			Outcome: Reject,
-			Holder:  &Holder{Terminal: winner.Terminal, Name: winnerName, Role: winner.Role},
+			Holder:  &Holder{Terminal: winner.Terminal, Name: winner.Name, Role: winner.Role},
 		}
 	}
 	if best != nil && bestSource != nil {
@@ -230,6 +228,7 @@ func (c *Coordinator) Takeover(ctx context.Context, hmi string, d Decision) erro
 	err := c.tr.Takeover(pctx, peer, hmi, c.s.Self, d.Warn)
 	switch {
 	case err == nil:
+		c.table.Drop(hmi, d.Holder.Terminal)
 		return nil
 	case errors.Is(err, ErrBadKey):
 		return fmt.Errorf("Terminal „%s“ lehnt den Schlüssel ab: %w", peer.Name, err)
@@ -330,8 +329,11 @@ func (c *Coordinator) handleClaim(req ClaimReq) ClaimResp {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var resp ClaimResp
+	// Wer schon hält, konkurriert nicht mehr, auch wenn er erneut angefragt hat:
+	// Verdrängt wird er nur per Übernahme mit Vorwarnung.
 	if h, ok := c.held[req.HMI]; ok {
 		resp.Holder = &h
+		return resp
 	}
 	p, ok := c.pending[req.HMI]
 	if !ok {
@@ -349,7 +351,7 @@ func (c *Coordinator) handleClaim(req ClaimReq) ClaimResp {
 		// geantwortet, bleibt dafür nur das Ereignis.
 		if p.returned {
 			delete(c.pending, req.HMI)
-			c.emit(Event{HMI: req.HMI, By: Holder{Terminal: w.Terminal, Role: w.Role}})
+			c.emit(Event{HMI: req.HMI, By: Holder{Terminal: w.Terminal, Name: w.Name, Role: w.Role}})
 		} else {
 			p.lostTo = &w
 		}

@@ -16,7 +16,10 @@ import (
 	"hmikiosk/internal/config"
 )
 
-const defaultPeerPort = "8443"
+const (
+	defaultPeerPort = "8443"
+	idleConnTimeout = 30 * time.Second
+)
 
 // ErrBadKey: Der Empfänger lehnt die Signatur ab.
 var ErrBadKey = errors.New("Schlüssel vom Terminal abgelehnt")
@@ -51,6 +54,8 @@ func NewHTTPTransport(key []byte, client *http.Client) Transport {
 			// Die Terminals haben selbst erzeugte Zertifikate. Die Echtheit kommt
 			// aus der HMAC über jede Anfrage, nicht aus TLS.
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			// Ein neu gestartetes Terminal soll keine tote Verbindung hinterlassen.
+			IdleConnTimeout: idleConnTimeout,
 		}}
 	}
 	return &httpTransport{key: key, client: client}
@@ -100,7 +105,11 @@ func (t *httpTransport) post(ctx context.Context, url string, headers map[string
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Nur ein ganz gelesener Körper gibt die Verbindung zur Wiederverwendung frei.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxBodyBytes))
+		resp.Body.Close()
+	}()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrBadKey

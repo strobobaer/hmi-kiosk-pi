@@ -72,9 +72,9 @@ func TestDecideTable(t *testing.T) {
 
 func TestResolveHigherRoleWinsThenSmallerID(t *testing.T) {
 	cases := []struct{ a, b, want Claim }{
-		{Claim{"b", nor, "1"}, Claim{"z", pri, "2"}, Claim{"z", pri, "2"}},
-		{Claim{"b", pri, "1"}, Claim{"a", pri, "2"}, Claim{"a", pri, "2"}},
-		{Claim{"b", nor, "1"}, Claim{"a", nor, "2"}, Claim{"a", nor, "2"}},
+		{Claim{Terminal: "b", Role: nor, Nonce: "1"}, Claim{Terminal: "z", Role: pri, Nonce: "2"}, Claim{Terminal: "z", Role: pri, Nonce: "2"}},
+		{Claim{Terminal: "b", Role: pri, Nonce: "1"}, Claim{Terminal: "a", Role: pri, Nonce: "2"}, Claim{Terminal: "a", Role: pri, Nonce: "2"}},
+		{Claim{Terminal: "b", Role: nor, Nonce: "1"}, Claim{Terminal: "a", Role: nor, Nonce: "2"}, Claim{Terminal: "a", Role: nor, Nonce: "2"}},
 	}
 	for _, c := range cases {
 		if got := ResolveSimultaneous(c.a, c.b); got != c.want {

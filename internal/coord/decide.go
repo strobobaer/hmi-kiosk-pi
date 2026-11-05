@@ -90,6 +90,7 @@ type Claim struct {
 	Terminal string
 	Role     config.Role
 	Nonce    string
+	Name     string // für die Anzeige, zählt nicht bei der Entscheidung
 }
 
 // ResolveSimultaneous: höhere Rolle gewinnt, bei gleicher Rolle die kleinere
