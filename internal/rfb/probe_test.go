@@ -1,0 +1,254 @@
+package rfb
+
+import (
+	"context"
+	"encoding/binary"
+	"image"
+	"io"
+	"log"
+	"net"
+	"os"
+	"strconv"
+	"testing"
+	"time"
+)
+
+func startServer(t *testing.T, w, h int, password string) (*TestServer, string, int) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewTestServer(w, h, password)
+	go s.Serve(l)
+	t.Cleanup(func() { l.Close(); s.DropClients() })
+	addr := l.Addr().(*net.TCPAddr)
+	return s, "127.0.0.1", addr.Port
+}
+
+func TestProbeReadsResolutionAndName(t *testing.T) {
+	for _, pw := range []string{"", "geheim"} {
+		_, host, port := startServer(t, 1024, 600, pw)
+		r := Probe(context.Background(), host, port, pw)
+		if !r.Reachable || !r.AuthOK || r.Width != 1024 || r.Height != 600 || r.Name == "" || r.Err != "" {
+			t.Fatalf("pw=%q: %+v", pw, r)
+		}
+	}
+}
+
+func TestProbeWrongPassword(t *testing.T) {
+	_, host, port := startServer(t, 800, 480, "richtig")
+	r := Probe(context.Background(), host, port, "falsch")
+	if !r.Reachable || r.AuthOK || r.Err == "" {
+		t.Fatalf("%+v", r)
+	}
+	r = Probe(context.Background(), host, port, "")
+	if !r.Reachable || r.AuthOK || r.Err == "" {
+		t.Fatalf("ohne Passwort: %+v", r)
+	}
+}
+
+func TestProbeNonVNCPort(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
+			c.Close()
+		}
+	}()
+	r := Probe(context.Background(), "127.0.0.1", l.Addr().(*net.TCPAddr).Port, "")
+	if !r.Reachable || r.AuthOK || r.Err == "" {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestProbeSilentPortHonoursContext(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	r := Probe(ctx, "127.0.0.1", l.Addr().(*net.TCPAddr).Port, "")
+	if !r.Reachable || r.Err == "" || time.Since(start) > 2*time.Second {
+		t.Fatalf("%+v nach %v", r, time.Since(start))
+	}
+}
+
+func TestProbeClosedPort(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	r := Probe(context.Background(), "127.0.0.1", port, "")
+	if r.Reachable || r.Err == "" {
+		t.Fatalf("%+v", r)
+	}
+	if TCPReachable(context.Background(), "127.0.0.1", port) {
+		t.Fatal("TCPReachable true bei geschlossenem Port")
+	}
+}
+
+func TestTCPReachable(t *testing.T) {
+	_, host, port := startServer(t, 100, 100, "")
+	if !TCPReachable(context.Background(), host, port) {
+		t.Fatal("erreichbarer Port nicht erkannt")
+	}
+}
+
+func TestProbeUmlautAndLongPassword(t *testing.T) {
+	for _, pw := range []string{"pässwörtchen-sehr-lang", "äöüß€"} {
+		_, host, port := startServer(t, 640, 480, pw)
+		if r := Probe(context.Background(), host, port, pw); !r.AuthOK {
+			t.Fatalf("%q: %+v", pw, r)
+		}
+	}
+	ch := []byte("0123456789abcdef")
+	a, _ := vncAuthResponse("12345678", ch)
+	b, _ := vncAuthResponse("12345678xyz", ch)
+	c, _ := vncAuthResponse("1234567", ch)
+	if string(a) != string(b) {
+		t.Fatal("nur die ersten 8 Byte dürfen zählen")
+	}
+	if string(a) == string(c) {
+		t.Fatal("kürzeres Passwort muss andere Antwort ergeben")
+	}
+}
+
+// rawClient führt Handshake 3.8 ohne Passwort aus.
+func rawClient(t *testing.T, host string, port int) net.Conn {
+	t.Helper()
+	c, err := net.Dial("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 12)
+	io.ReadFull(c, buf)
+	c.Write([]byte("RFB 003.008\n"))
+	sec := make([]byte, 2)
+	io.ReadFull(c, sec)
+	c.Write([]byte{sec[1]})
+	res := make([]byte, 4)
+	io.ReadFull(c, res)
+	c.Write([]byte{1})
+	si := make([]byte, 24+len(testServerName))
+	if _, err := io.ReadFull(c, si); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func request(c net.Conn, incremental byte, x, y, w, h uint16) {
+	b := []byte{3, incremental, 0, 0, 0, 0, 0, 0, 0, 0}
+	binary.BigEndian.PutUint16(b[2:], x)
+	binary.BigEndian.PutUint16(b[4:], y)
+	binary.BigEndian.PutUint16(b[6:], w)
+	binary.BigEndian.PutUint16(b[8:], h)
+	c.Write(b)
+}
+
+func TestServerUpdatesPointersAndFormats(t *testing.T) {
+	s, host, port := startServer(t, 300, 200, "")
+	c := rawClient(t, host, port)
+
+	// unbekannte Nachrichten in definierter Länge werden ignoriert
+	c.Write([]byte{2, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1})    // SetEncodings, 2 Kodierungen
+	c.Write([]byte{4, 1, 0, 0, 0, 0, 0, 65})               // KeyEvent
+	c.Write([]byte{6, 0, 0, 0, 0, 0, 0, 3, 'a', 'b', 'c'}) // ClientCutText
+	c.Write([]byte{5, 0, 0, 10, 0, 10})                    // Zeiger ohne Taste
+	c.Write([]byte{5, 1, 0, 42, 0, 17})                    // Zeiger mit Taste
+	request(c, 0, 0, 0, 300, 200)
+	hdr := make([]byte, 16)
+	if _, err := io.ReadFull(c, hdr); err != nil {
+		t.Fatal(err)
+	}
+	if hdr[0] != 0 || binary.BigEndian.Uint16(hdr[2:]) != 1 || binary.BigEndian.Uint16(hdr[8:]) != 300 || binary.BigEndian.Uint16(hdr[10:]) != 200 {
+		t.Fatalf("Kopf %v", hdr)
+	}
+	px := make([]byte, 300*200*4)
+	if _, err := io.ReadFull(c, px); err != nil {
+		t.Fatal(err)
+	}
+	if px[0] != 255 || px[1] != 255 || px[2] != 255 { // weißer Rand
+		t.Fatalf("Randpixel %v", px[:4])
+	}
+	if o := (50*300 + 50) * 4; px[o] != 32 || px[o+1] != 24 || px[o+2] != 20 { // B,G,R
+		t.Fatalf("Hintergrund %v", px[o:o+4])
+	}
+	got := s.Pointers()
+	if len(got) != 1 || got[0] != image.Pt(42, 17) {
+		t.Fatalf("Zeiger %v", got)
+	}
+	got[0] = image.Pt(0, 0)
+	if s.Pointers()[0] != image.Pt(42, 17) {
+		t.Fatal("Pointers liefert keine Kopie")
+	}
+
+	// 16 bpp: 5/6/5, little endian
+	pf := []byte{0, 0, 0, 0, 16, 16, 0, 1, 0, 31, 0, 63, 0, 31, 11, 5, 0, 0, 0, 0}
+	c.Write(pf)
+	request(c, 0, 0, 0, 2, 1)
+	small := make([]byte, 16+2*2)
+	if _, err := io.ReadFull(c, small); err != nil {
+		t.Fatal(err)
+	}
+	if small[16] != 0xff || small[17] != 0xff {
+		t.Fatalf("16-bpp-Weiß %v", small[16:])
+	}
+
+	// inkrementell: leere Aktualisierung, nicht schneller als alle 100 ms
+	start := time.Now()
+	for i := 0; i < 3; i++ {
+		request(c, 1, 0, 0, 300, 200)
+		e := make([]byte, 4)
+		if _, err := io.ReadFull(c, e); err != nil {
+			t.Fatal(err)
+		}
+		if e[0] != 0 || binary.BigEndian.Uint16(e[2:]) != 0 {
+			t.Fatalf("keine leere Aktualisierung: %v", e)
+		}
+	}
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatalf("zu schnell: %v", time.Since(start))
+	}
+
+	if s.ClientCount() != 1 {
+		t.Fatalf("ClientCount %d", s.ClientCount())
+	}
+	s.DropClients()
+	deadline := time.Now().Add(2 * time.Second)
+	for s.ClientCount() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if s.ClientCount() != 0 {
+		t.Fatal("Clients nicht getrennt")
+	}
+}
+
+func TestServerClosesOnUnsupportedPixelFormat(t *testing.T) {
+	_, host, port := startServer(t, 100, 100, "")
+	c := rawClient(t, host, port)
+	c.Write([]byte{0, 0, 0, 0, 8, 8, 0, 1, 0, 7, 0, 7, 0, 3, 5, 2, 0, 0, 0, 0})
+	if _, err := c.Read(make([]byte, 1)); err == nil {
+		t.Fatal("Verbindung hätte geschlossen werden müssen")
+	}
+}
+
+func TestMain(m *testing.M) {
+	log.SetOutput(io.Discard)
+	os.Exit(m.Run())
+}
