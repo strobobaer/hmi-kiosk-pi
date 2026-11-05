@@ -86,6 +86,10 @@ func runGuard(ctx context.Context, root, marker string, timeout time.Duration, e
 		if err := update.Rollback(root); err != nil {
 			return err
 		}
+		// Nach mehreren Fehlstarts hätte systemd den Dienst gesperrt; reset-failed hebt das auf.
+		if err := e(ctx, "systemctl", "reset-failed", "hmi-kiosk.service"); err != nil {
+			log.Printf("Update-Wächter: reset-failed: %v", err)
+		}
 		return e(ctx, "systemctl", "restart", "hmi-kiosk.service")
 	})
 }

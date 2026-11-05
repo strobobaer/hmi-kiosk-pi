@@ -1,6 +1,8 @@
 package update
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -40,8 +42,7 @@ func readLink(root, name string) (string, error) {
 // setLink ersetzt den Verweis atomar über einen temporären Verweis und Rename.
 func setLink(root, name, version string) error {
 	dir := appPath(root)
-	tmp := filepath.Join(dir, ".link-"+name)
-	os.Remove(tmp)
+	tmp := filepath.Join(dir, ".link-"+name+"-"+randSuffix())
 	if err := os.Symlink(version, tmp); err != nil {
 		return err
 	}
@@ -62,9 +63,16 @@ func syncDir(dir string) error {
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	// CreateTemp legt die Datei mit zufälligem Namen exklusiv an; ein untergeschobener
+	// Symlink wird nie verfolgt. Rename ersetzt am Ziel den Eintrag selbst.
+	f, err := os.CreateTemp(filepath.Dir(path), ".write-*")
 	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		os.Remove(tmp)
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
@@ -162,4 +170,12 @@ func removePending(root string) error {
 		return err
 	}
 	return syncDir(appPath(root))
+}
+
+func randSuffix() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(b[:])
 }

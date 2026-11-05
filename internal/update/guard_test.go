@@ -198,3 +198,41 @@ func TestGuardResolvesInterruptedActivation(t *testing.T) {
 		t.Fatal("pending bleibt")
 	}
 }
+
+func TestGuardPendingGoneAtDeadlineReturnsWithoutRollback(t *testing.T) {
+	withFastPoll(t)
+	root, marker := pendingRoot(t)
+	var n atomic.Int32
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		os.Remove(filepath.Join(appDir(root), "pending"))
+	}()
+	if err := Guard(context.Background(), root, marker, 120*time.Millisecond, rollbackFn(root, &n)); err != nil {
+		t.Fatal(err)
+	}
+	if n.Load() != 0 || link(t, root, "current") != "1.1.0" {
+		t.Fatalf("n=%d", n.Load())
+	}
+}
+
+func TestGuardPendingChangedStartsNewWait(t *testing.T) {
+	withFastPoll(t)
+	root, marker := pendingRoot(t)
+	mkVersion(t, root, "1.2.0")
+	var n atomic.Int32
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		os.WriteFile(filepath.Join(appDir(root), "pending"), []byte("1.2.0"), 0o644)
+		time.Sleep(160 * time.Millisecond) // nach der ersten Frist (150 ms)
+		os.WriteFile(marker, []byte("1.2.0"), 0o644)
+	}()
+	if err := Guard(context.Background(), root, marker, 150*time.Millisecond, rollbackFn(root, &n)); err != nil {
+		t.Fatal(err)
+	}
+	if n.Load() != 0 {
+		t.Fatal("Rückfall trotz neuer Aktivierung")
+	}
+	if _, err := os.Stat(filepath.Join(appDir(root), "pending")); err == nil {
+		t.Fatal("pending bleibt")
+	}
+}

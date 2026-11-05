@@ -44,7 +44,7 @@ func TestUpdateGuardTimeoutRollsBackAndRestarts(t *testing.T) {
 	if err := runGuard(context.Background(), root, marker, 100*time.Millisecond, recorder(&calls)); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(calls, []string{"systemctl restart hmi-kiosk.service"}) {
+	if !reflect.DeepEqual(calls, []string{"systemctl reset-failed hmi-kiosk.service", "systemctl restart hmi-kiosk.service"}) {
 		t.Fatalf("calls %v", calls)
 	}
 	cur, _ := os.Readlink(filepath.Join(root, "app", "current"))

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,8 +55,14 @@ func Install(root string, p *Package) (version string, err error) {
 	}
 	dest := filepath.Join(app, p.Version)
 	if _, statErr := os.Lstat(dest); statErr == nil {
-		cur, _ := readLink(root, currentLink)
-		prev, _ := readLink(root, previousLink)
+		cur, err := readLink(root, currentLink)
+		if err != nil {
+			return "", err
+		}
+		prev, err := readLink(root, previousLink)
+		if err != nil {
+			return "", err
+		}
 		if p.Version == cur || p.Version == prev {
 			return "", fmt.Errorf("Version %s ist bereits installiert", p.Version)
 		}
@@ -164,6 +171,9 @@ func (in *Installer) Install(ctx context.Context, blob []byte) (string, error) {
 	if free == nil {
 		free = FreeBytes
 	}
+	if err := Prune(in.Root); err != nil {
+		log.Printf("Aufräumen alter Versionen: %v", err)
+	}
 	avail, err := free(app)
 	if err != nil {
 		return "", fmt.Errorf("Speicherplatz nicht prüfbar: %v", err)
@@ -186,6 +196,5 @@ func (in *Installer) Install(ctx context.Context, blob []byte) (string, error) {
 		}
 		return "", err
 	}
-	Prune(in.Root)
 	return version, nil
 }

@@ -299,7 +299,7 @@ func (a *admin) handleUpdate(w http.ResponseWriter, r *http.Request, s sessionRe
 		a.renderSystem(w, s, http.StatusUnprocessableEntity, "Update fehlgeschlagen: "+err.Error(), systemExtras{})
 		return
 	}
-	a.done(w, r, s, "/admin/system", "Update installiert: Version "+version+".")
+	a.done(w, r, s, "/admin/system", "Update installiert: Version "+version+". Der Dienst startet jetzt neu, die Verbindung kann kurz abbrechen.")
 }
 
 func uploadError(w http.ResponseWriter, err error) {

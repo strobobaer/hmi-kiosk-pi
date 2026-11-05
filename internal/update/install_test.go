@@ -234,7 +234,7 @@ func TestOldVersionsPrunedKeepingCurrentAndPrevious(t *testing.T) {
 		names = append(names, e.Name())
 	}
 	got := strings.Join(names, ",")
-	want := "1.1.0,1.2.0,current,pending,previous"
+	want := "1.0.0,1.1.0,1.2.0,current,pending,previous"
 	if got != want {
 		t.Fatalf("got %s want %s", got, want)
 	}
@@ -372,5 +372,87 @@ func TestFreeBytesReal(t *testing.T) {
 	n, err := FreeBytes(t.TempDir())
 	if err != nil || n == 0 {
 		t.Fatalf("%d %v", n, err)
+	}
+}
+
+func dirNames(t *testing.T, root string) string {
+	t.Helper()
+	ents, _ := os.ReadDir(appDir(root))
+	var names []string
+	for _, e := range ents {
+		names = append(names, e.Name())
+	}
+	return strings.Join(names, ",")
+}
+
+// Prune läuft zu Beginn von Install (vor der Platzprüfung), damit der Platz
+// alter Versionen für die neue frei wird.
+func TestInstallPrunesBeforeFreeSpaceCheck(t *testing.T) {
+	pub, priv := newKeys(t)
+	root := t.TempDir()
+	for _, v := range []string{"0.9.0", "1.0.0", "1.1.0"} {
+		mkVersion(t, root, v)
+	}
+	os.Symlink("1.0.0", filepath.Join(appDir(root), "previous"))
+	os.Symlink("1.1.0", filepath.Join(appDir(root), "current"))
+	in := newInstaller(root, pub)
+	seen := ""
+	in.FreeBytes = func(string) (uint64, error) {
+		seen = dirNames(t, root)
+		return 0, nil // Platz reicht nicht: Install scheitert, Prune war trotzdem schon dran
+	}
+	if _, err := in.Install(context.Background(), goodBlob(t, priv, "1.2.0")); err == nil {
+		t.Fatal("zu wenig Platz angenommen")
+	}
+	if seen != "1.0.0,1.1.0,current,previous" {
+		t.Fatalf("bei der Platzprüfung: %s", seen)
+	}
+}
+
+func TestPackageInstallPlantedTempFilesDoNotFollowSymlinks(t *testing.T) {
+	root := t.TempDir()
+	mkVersion(t, root, "1.0.0")
+	mkVersion(t, root, "1.1.0")
+	victim := filepath.Join(t.TempDir(), "victim")
+	os.WriteFile(victim, []byte("unberührt"), 0o644)
+	for _, n := range []string{"pending.tmp", ".pending.tmp", ".link-current", ".link-previous", ".tmp-pending"} {
+		os.Symlink(victim, filepath.Join(appDir(root), n))
+	}
+	if err := Activate(root, "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Activate(root, "1.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rollback(root); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(victim)
+	if string(b) != "unberührt" {
+		t.Fatalf("Ziel verändert: %q", b)
+	}
+	if c := link(t, root, "current"); c != "1.0.0" {
+		t.Fatalf("current=%s", c)
+	}
+}
+
+func TestInstallFailsOnBrokenLinkInsteadOfReplacingDest(t *testing.T) {
+	pub, priv := newKeys(t)
+	root := t.TempDir()
+	mkVersion(t, root, "1.4.0")
+	os.Symlink("../../etc", filepath.Join(appDir(root), "current"))
+	p, err := Verify(goodBlob(t, priv, "1.4.0"), pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(root, p); err == nil {
+		t.Fatal("kaputter Verweis ignoriert")
+	}
+	b, _ := os.ReadFile(filepath.Join(appDir(root), "1.4.0", BinaryName))
+	if string(b) != "bin 1.4.0" {
+		t.Fatalf("Zielordner ersetzt: %q", b)
+	}
+	if dirNames(t, root) != "1.4.0,current" {
+		t.Fatalf("Reste: %s", dirNames(t, root))
 	}
 }

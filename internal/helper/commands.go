@@ -226,9 +226,9 @@ const (
 )
 
 // updateActivate entfernt zuerst die alte Gesundmarke, damit sie die neue Version
-// nicht fälschlich bestätigt, schaltet um, startet den Dienst neu und löst den
-// Wächter aus. Der Wächter wird auch nach einem fehlgeschlagenen Neustart gestartet:
-// Er schaltet zurück, wenn die Marke ausbleibt.
+// nicht fälschlich bestätigt, schaltet um, startet den Wächter und danach den
+// Dienst neu (beides ohne zu warten). Scheitert der Wächterstart, gibt es keinen
+// Neustart: Ohne Wächter gäbe es keinen Rückfall.
 func (s *Server) updateActivate(ctx context.Context, arg string) error {
 	if len(arg) > maxVersionLen || !versionRe.MatchString(arg) {
 		return errors.New("Versionsangabe ungültig")
@@ -239,12 +239,11 @@ func (s *Server) updateActivate(ctx context.Context, arg string) error {
 	if err := s.upd.Activate(arg); err != nil {
 		return err
 	}
-	restartErr := s.run(ctx, "systemctl", "restart", serviceUnit)
-	guardErr := s.run(ctx, "systemctl", "start", "--no-block", guardUnit)
-	if restartErr != nil {
-		return restartErr
+	// Beide Aufrufe blockieren nicht: ein hängender Neustart darf den Wächter nie verhindern.
+	if err := s.run(ctx, "systemctl", "start", "--no-block", guardUnit); err != nil {
+		return err
 	}
-	return guardErr
+	return s.run(ctx, "systemctl", "restart", "--no-block", serviceUnit)
 }
 
 func (s *Server) updateRollback(ctx context.Context, _ string) error {

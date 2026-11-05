@@ -9,9 +9,11 @@ import (
 )
 
 var updateSeq = []string{
-	"systemctl restart hmi-kiosk.service",
 	"systemctl start --no-block hmi-kiosk-update-guard.service",
+	"systemctl restart --no-block hmi-kiosk.service",
 }
+
+var rollbackSeq = []string{"systemctl restart hmi-kiosk.service"}
 
 func TestUpdateActivateSequenceRemovesMarkerFirst(t *testing.T) {
 	e := newEnv(t, "")
@@ -55,17 +57,6 @@ func TestUpdateActivateFailureSkipsRestart(t *testing.T) {
 	}
 }
 
-func TestUpdateActivateRestartFailureStillStartsGuard(t *testing.T) {
-	e := newEnv(t, "")
-	e.fx.fail["systemctl restart hmi-kiosk.service"] = errors.New("boom")
-	if err := e.srv.Dispatch(context.Background(), CmdUpdateActivate, "1.2.0"); err == nil {
-		t.Fatal("Fehler verschluckt")
-	}
-	if got := e.fx.got(); !reflect.DeepEqual(got, updateSeq) {
-		t.Fatalf("got %v", got)
-	}
-}
-
 func TestUpdateRollbackSequence(t *testing.T) {
 	e := newEnv(t, "")
 	if err := e.srv.Dispatch(context.Background(), CmdUpdateRollback, ""); err != nil {
@@ -74,7 +65,7 @@ func TestUpdateRollbackSequence(t *testing.T) {
 	if e.upd.rollbacks != 1 {
 		t.Fatal("Rollback nicht aufgerufen")
 	}
-	if got := e.fx.got(); !reflect.DeepEqual(got, updateSeq[:1]) {
+	if got := e.fx.got(); !reflect.DeepEqual(got, rollbackSeq) {
 		t.Fatalf("got %v", got)
 	}
 	e = newEnv(t, "")
@@ -88,5 +79,42 @@ func TestDefaultHealthyMarkerPath(t *testing.T) {
 	s := NewServer("s", 1, nil, "c", nil)
 	if s.HealthyMarker != "/run/hmi-kiosk/healthy" {
 		t.Fatal(s.HealthyMarker)
+	}
+}
+
+func TestUpdateActivateGuardStartFailureSkipsRestart(t *testing.T) {
+	e := newEnv(t, "")
+	e.fx.fail[updateSeq[0]] = errors.New("boom")
+	if err := e.srv.Dispatch(context.Background(), CmdUpdateActivate, "1.2.0"); err == nil {
+		t.Fatal("Fehler verschluckt")
+	}
+	if got := e.fx.got(); !reflect.DeepEqual(got, updateSeq[:1]) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestUpdateActivateRestartFailureReported(t *testing.T) {
+	e := newEnv(t, "")
+	e.fx.fail[updateSeq[1]] = errors.New("boom")
+	if err := e.srv.Dispatch(context.Background(), CmdUpdateActivate, "1.2.0"); err == nil {
+		t.Fatal("Fehler verschluckt")
+	}
+}
+
+// Ein abgelaufener Kontext darf den Wächterstart nicht stillschweigend übergehen.
+func TestUpdateActivateExpiredContextFailsAtGuardStart(t *testing.T) {
+	e := newEnv(t, "")
+	var calls []string
+	e.srv.exec = func(ctx context.Context, name string, args ...string) error {
+		calls = append(calls, name+" "+args[0])
+		return ctx.Err()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := e.srv.Dispatch(ctx, CmdUpdateActivate, "1.2.0"); err == nil {
+		t.Fatal("Fehler verschluckt")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls %v", calls)
 	}
 }
