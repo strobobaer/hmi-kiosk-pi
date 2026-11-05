@@ -25,6 +25,8 @@ var touchRescanInterval = 5 * time.Second
 
 // WatchTouch liest alle devDir/event* nur lesend (ohne EVIOCGRAB) und ruft
 // activity bei EV_KEY und EV_ABS auf. Fehlende Geräte sind kein Fehler.
+// activity kann nebenläufig aus mehreren Geräte-Goroutinen und kurz nach der
+// Rückkehr noch aufgerufen werden; der Aufrufer muss darauf ausgelegt sein.
 func WatchTouch(ctx context.Context, devDir string, activity func()) error {
 	var mu sync.Mutex
 	open := map[string]*os.File{}
