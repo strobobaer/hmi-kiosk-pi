@@ -2,8 +2,7 @@ package web
 
 import "embed"
 
-// assets enthält die Seiten der Kachelseite und der Leiste. Aufgabe 12
-// ergänzt assets/admin.
+// assets enthält die Kachelseite, die Leiste und unter assets/admin die Admin-Seite.
 //
 //go:embed assets/*
 var assets embed.FS

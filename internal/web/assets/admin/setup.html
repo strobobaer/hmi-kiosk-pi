@@ -1,0 +1,13 @@
+{{define "content"}}
+<p class="hint">Dieses Terminal hat noch kein Admin-Passwort. Bitte jetzt eines festlegen, mindestens 10 Zeichen.</p>
+<form method="post" action="/admin/setup" class="panel stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Neues Passwort
+    <input type="password" name="password" autocomplete="new-password" minlength="10" required autofocus>
+  </label>
+  <label>Passwort wiederholen
+    <input type="password" name="password2" autocomplete="new-password" minlength="10" required>
+  </label>
+  <button type="submit" class="btn primary">Passwort festlegen</button>
+</form>
+{{end}}

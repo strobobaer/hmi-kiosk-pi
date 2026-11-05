@@ -1,0 +1,31 @@
+{{define "content"}}
+{{with .Body}}
+<form method="post" action="/admin/client" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Profil
+    <select name="profile">
+      <option value="remmina"{{if eq .Profile "remmina"}} selected{{end}}>Remmina</option>
+      <option value="tigervnc"{{if eq .Profile "tigervnc"}} selected{{end}}>TigerVNC</option>
+    </select>
+  </label>
+  <label>Qualität
+    <select name="quality">
+      <option value="0"{{if eq .Quality "0"}} selected{{end}}>Niedrig</option>
+      <option value="1"{{if eq .Quality "1"}} selected{{end}}>Mittel</option>
+      <option value="2"{{if eq .Quality "2"}} selected{{end}}>Gut</option>
+      <option value="9"{{if eq .Quality "9"}} selected{{end}}>Beste</option>
+    </select>
+  </label>
+  <label>Farbtiefe
+    <select name="color_depth">
+      <option value="8"{{if eq .ColorDepth "8"}} selected{{end}}>8 Bit</option>
+      <option value="16"{{if eq .ColorDepth "16"}} selected{{end}}>16 Bit</option>
+      <option value="24"{{if eq .ColorDepth "24"}} selected{{end}}>24 Bit</option>
+      <option value="32"{{if eq .ColorDepth "32"}} selected{{end}}>32 Bit</option>
+    </select>
+  </label>
+  <label class="check"><input type="checkbox" name="scale"{{if .Scale}} checked{{end}}> Bild skalieren</label>
+  <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+</form>
+{{end}}
+{{end}}

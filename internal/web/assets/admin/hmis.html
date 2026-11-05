@@ -1,0 +1,43 @@
+{{define "content"}}
+{{$csrf := .CSRF}}
+<p><a class="btn primary" href="/admin/hmis/new">HMI anlegen</a></p>
+{{if not .Body.HMIs}}<p class="hint">Noch keine HMIs eingerichtet.</p>{{end}}
+<div class="cards">
+{{range .Body.HMIs}}
+  <article class="panel card {{color .Color}}">
+    <div class="card-head">
+      <span class="card-icon">{{icon .Icon}}</span>
+      <div class="card-title">
+        <h2>{{.Name}}</h2>
+        <p class="sub">{{.Host}}:{{.Port}}</p>
+      </div>
+    </div>
+    <p class="tags">
+      <span class="tag">Reihenfolge {{.Order}}</span>
+      {{if .ViewOnly}}<span class="tag">Nur ansehen</span>{{end}}
+      {{if .HasPassword}}<span class="tag">Passwort gesetzt</span>{{else}}<span class="tag">Ohne Passwort</span>{{end}}
+    </p>
+    {{with .Probe}}
+    <dl class="probe" aria-label="Ergebnis der Verbindungsprüfung">
+      <dt>Erreichbar</dt><dd>{{if .Reachable}}ja{{else}}nicht erreichbar{{end}}</dd>
+      <dt>Anmeldung</dt><dd>{{if .AuthOK}}erfolgreich{{else if .AuthRejected}}abgelehnt{{else}}nicht geprüft{{end}}</dd>
+      {{if .Width}}<dt>Auflösung</dt><dd>{{.Width}}×{{.Height}}</dd>{{end}}
+      {{if .Name}}<dt>Name</dt><dd>{{.Name}}</dd>{{end}}
+      {{if .Err}}<dt>Meldung</dt><dd>{{.Err}}</dd>{{end}}
+    </dl>
+    {{end}}
+    <div class="actions">
+      <a class="btn" href="/admin/hmis/{{.ID}}">Bearbeiten</a>
+      <form method="post" action="/admin/hmis/{{.ID}}/probe">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <button type="submit" class="btn">Verbindung prüfen</button>
+      </form>
+      <form method="post" action="/admin/hmis/{{.ID}}/delete" data-confirm="Dieses HMI wirklich löschen?">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <button type="submit" class="btn danger">Löschen</button>
+      </form>
+    </div>
+  </article>
+{{end}}
+</div>
+{{end}}

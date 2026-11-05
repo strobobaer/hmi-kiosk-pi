@@ -1,0 +1,26 @@
+{{define "content"}}
+{{with .Body}}
+<form method="post" action="/admin/kiosk" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Rückkehr zu den Kacheln bei Inaktivität (Minuten, 0 = nie)
+    <input type="text" name="inactivity" value="{{.Inactivity}}" inputmode="numeric" required>
+  </label>
+  <label>Kachel-Layout
+    <select name="layout">
+      <option value="auto"{{if or (eq .Layout "auto") (eq .Layout "")}} selected{{end}}>Automatisch</option>
+      <option value="2"{{if eq .Layout "2"}} selected{{end}}>2 Spalten</option>
+      <option value="3"{{if eq .Layout "3"}} selected{{end}}>3 Spalten</option>
+      <option value="4"{{if eq .Layout "4"}} selected{{end}}>4 Spalten</option>
+    </select>
+  </label>
+  <label>Daueranzeige (festes HMI)
+    <select name="permanent">
+      <option value="">Keine</option>
+      {{$v := .Permanent}}{{range .HMIs}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+  </label>
+  <label class="check"><input type="checkbox" name="hide_bar"{{if .HideBar}} checked{{end}}> Leiste ausblenden</label>
+  <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+</form>
+{{end}}
+{{end}}

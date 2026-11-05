@@ -1,0 +1,60 @@
+{{define "content"}}
+{{with .Body}}
+<form method="post" action="/admin/hmis/{{if .IsNew}}new{{else}}{{.ID}}{{end}}" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Name
+    <input type="text" name="name" value="{{.Name}}" maxlength="120" required>
+  </label>
+  <div class="row">
+    <label class="grow">Adresse
+      <input type="text" name="host" value="{{.Host}}" autocapitalize="off" spellcheck="false" required>
+    </label>
+    <label class="short">Port
+      <input type="text" name="port" value="{{.Port}}" inputmode="numeric" required>
+    </label>
+  </div>
+  <label>VNC-Passwort
+    <input type="password" name="password" autocomplete="new-password" placeholder="{{if .HasPassword}}gesetzt – leer lassen zum Beibehalten{{else}}keines gesetzt{{end}}">
+  </label>
+  {{if .HasPassword}}
+  <label class="check"><input type="checkbox" name="remove_password"> Passwort entfernen</label>
+  {{end}}
+  <div class="row">
+    <label class="grow">Symbol
+      <select name="icon">
+        {{$v := .Icon}}{{range .Icons}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label class="grow">Farbe
+      <select name="color">
+        {{$v := .Color}}{{range .Colors}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label class="short">Reihenfolge
+      <input type="text" name="order" value="{{.Order}}" inputmode="numeric">
+    </label>
+  </div>
+  <div class="row">
+    <label class="grow">Modus
+      <select name="mode">
+        <option value=""{{if eq .Mode ""}} selected{{end}}>Wie global eingestellt</option>
+        <option value="takeover"{{if eq .Mode "takeover"}} selected{{end}}>Übernahme</option>
+        <option value="lock"{{if eq .Mode "lock"}} selected{{end}}>Sperre</option>
+      </select>
+    </label>
+    <label class="grow">Art der Übernahme
+      <select name="takeover">
+        <option value="confirm"{{if eq .Takeover "confirm"}} selected{{end}}>Mit Rückfrage</option>
+        <option value="immediate"{{if eq .Takeover "immediate"}} selected{{end}}>Sofort</option>
+      </select>
+    </label>
+  </div>
+  <label class="check"><input type="checkbox" name="view_only"{{if .ViewOnly}} checked{{end}}> Nur ansehen</label>
+  <label class="check"><input type="checkbox" name="allow_watch"{{if .AllowWatch}} checked{{end}}> Mitschauen erlauben</label>
+  <div class="actions">
+    <button type="submit" class="btn primary">Speichern</button>
+    <a class="btn" href="/admin/hmis">Abbrechen</a>
+  </div>
+</form>
+{{end}}
+{{end}}

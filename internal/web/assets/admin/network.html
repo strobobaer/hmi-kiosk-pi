@@ -1,0 +1,43 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <h2>WLAN</h2>
+  <p>Eingestellt: {{if .WifiOff}}dauerhaft aus{{else}}an{{end}}</p>
+  <p class="hint">Das Abschalten wird verweigert, wenn diese Sitzung über WLAN läuft oder Ethernet keinen Link hat.</p>
+  {{if .WifiOff}}
+  <form method="post" action="/admin/network/wifi-on">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn">WLAN einschalten</button>
+  </form>
+  {{else}}
+  <form method="post" action="/admin/network/wifi-off" data-confirm="WLAN dauerhaft abschalten?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn danger">WLAN dauerhaft abschalten</button>
+  </form>
+  {{end}}
+</section>
+<section class="panel stack">
+  <h2>Bluetooth</h2>
+  <p>Eingestellt: {{if .BluetoothOff}}dauerhaft aus{{else}}an{{end}}</p>
+  {{if .BluetoothOff}}
+  <form method="post" action="/admin/network/bt-on">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn">Bluetooth einschalten</button>
+  </form>
+  {{else}}
+  <form method="post" action="/admin/network/bt-off" data-confirm="Bluetooth dauerhaft abschalten?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn danger">Bluetooth dauerhaft abschalten</button>
+  </form>
+  {{end}}
+</section>
+<form method="post" action="/admin/network/ntp" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Zeitserver</h2>
+  <label>NTP-Server
+    <input type="text" name="ntp" value="{{.NTP}}" autocapitalize="off" spellcheck="false" required>
+  </label>
+  <div class="actions"><button type="submit" class="btn primary">Setzen</button></div>
+</form>
+{{end}}
+{{end}}

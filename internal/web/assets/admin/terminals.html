@@ -1,0 +1,61 @@
+{{define "content"}}
+{{with .Body}}
+<form method="post" action="/admin/terminals" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Dieses Terminal</h2>
+  <p class="sub">Kennung: <code>{{.ID}}</code></p>
+  <label>Name
+    <input type="text" name="name" value="{{.Name}}" maxlength="120" required>
+  </label>
+  <div class="row">
+    <label class="grow">Rolle
+      <select name="role">
+        <option value="normal"{{if eq .Role "normal"}} selected{{end}}>Normal</option>
+        <option value="primary"{{if eq .Role "primary"}} selected{{end}}>Primär</option>
+      </select>
+    </label>
+    <label class="grow">Modus global
+      <select name="mode">
+        <option value="takeover"{{if eq .Mode "takeover"}} selected{{end}}>Übernahme</option>
+        <option value="lock"{{if eq .Mode "lock"}} selected{{end}}>Sperre</option>
+      </select>
+    </label>
+  </div>
+  <h2>Andere Terminals</h2>
+  <p class="hint">Leere Zeilen werden ignoriert. Nach dem Speichern stehen wieder freie Zeilen bereit.</p>
+  {{range .Peers}}
+  <div class="row">
+    <label class="grow">Name
+      <input type="text" name="peer_name" value="{{.Name}}" maxlength="120">
+    </label>
+    <label class="grow">Adresse
+      <input type="text" name="peer_address" value="{{.Address}}" autocapitalize="off" spellcheck="false">
+    </label>
+  </div>
+  {{end}}
+  <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+</form>
+
+<section class="panel stack">
+  <h2>Gemeinsamer Schlüssel</h2>
+  <p>Status: {{if .KeySet}}gesetzt{{else}}nicht gesetzt{{end}}</p>
+  {{if .GeneratedKey}}
+  <div class="msg ok">
+    <p>Neuer Schlüssel. Er wird nur dieses eine Mal angezeigt; bitte jetzt auf die anderen Terminals übertragen:</p>
+    <p class="key">{{.GeneratedKey}}</p>
+  </div>
+  {{end}}
+  <form method="post" action="/admin/terminals/generate-key" data-confirm="Einen neuen Schlüssel erzeugen? Bis er auf den anderen Terminals eingetragen ist, schlägt die Abstimmung fehl.">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn">Schlüssel erzeugen</button>
+  </form>
+  <form method="post" action="/admin/terminals/key" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Schlüssel von Hand eintragen
+      <input type="password" name="shared_key" autocomplete="off" spellcheck="false" required>
+    </label>
+    <div class="actions"><button type="submit" class="btn">Schlüssel speichern</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}

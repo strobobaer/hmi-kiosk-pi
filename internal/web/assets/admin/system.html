@@ -1,0 +1,135 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <h2>Status</h2>
+  <dl class="facts">
+    <dt>Version</dt><dd>{{.Status.Version}}</dd>
+    <dt>Schreibschutz</dt><dd>{{if .Status.OverlayActive}}aktiv{{else}}nicht aktiv{{end}}</dd>
+    <dt>Datenpartition</dt><dd>{{bytes .Status.DataFreeBytes}} frei von {{bytes .Status.DataTotalBytes}}</dd>
+    <dt>Anzeige</dt><dd>{{.Status.Display}}</dd>
+    <dt>Uhrzeit</dt><dd>{{.Now}}</dd>
+  </dl>
+  {{range .Status.Warnings}}<p class="msg warn">{{.}}</p>{{end}}
+</section>
+
+<section class="panel stack">
+  <h2>Selbstprüfung</h2>
+  {{if .Selftest}}
+  <ul class="steps">
+    {{range .Selftest}}<li class="{{if .OK}}pass{{else}}fail{{end}}"><strong>{{if .OK}}OK{{else}}Fehler{{end}}: {{.Name}}</strong>{{if .Detail}}<span>{{.Detail}}</span>{{end}}</li>{{end}}
+  </ul>
+  {{end}}
+  <form method="post" action="/admin/system/selftest">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="btn">Selbstprüfung starten</button>
+  </form>
+</section>
+
+<form method="post" action="/admin/system/display" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Anzeige</h2>
+  <div class="row">
+    <label class="grow">Breite (leer = automatisch)
+      <input type="text" name="override_w" value="{{.Display.OverrideW}}" inputmode="numeric">
+    </label>
+    <label class="grow">Höhe (leer = automatisch)
+      <input type="text" name="override_h" value="{{.Display.OverrideH}}" inputmode="numeric">
+    </label>
+  </div>
+  <label>Grafikprofil
+    <select name="graphics">
+      <option value="labwc"{{if eq .Display.Graphics "labwc"}} selected{{end}}>labwc (Wayland)</option>
+      <option value="x11"{{if eq .Display.Graphics "x11"}} selected{{end}}>X11 (openbox)</option>
+    </select>
+  </label>
+  <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+</form>
+
+<form method="post" action="/admin/system/time" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Uhrzeit setzen</h2>
+  <label>Datum und Uhrzeit
+    <input type="datetime-local" name="time" value="{{.Time}}" required>
+  </label>
+  <div class="actions"><button type="submit" class="btn">Uhrzeit setzen</button></div>
+</form>
+
+<section class="panel stack">
+  <h2>Protokoll</h2>
+  {{if .HasLog}}
+  <pre class="log" tabindex="0">{{.LogLines}}</pre>
+  <p><a class="btn" href="/admin/system/log">Protokoll herunterladen</a></p>
+  {{else}}
+  <p class="hint">Noch kein Protokoll vorhanden.</p>
+  {{end}}
+</section>
+
+<form method="post" action="/admin/system/update" enctype="multipart/form-data" class="panel stack" data-confirm="Dieses Update jetzt installieren?">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Update hochladen</h2>
+  <label>Update-Datei (höchstens 200 MB)
+    <input type="file" name="file" required>
+  </label>
+  <div class="actions"><button type="submit" class="btn">Installieren</button></div>
+</form>
+
+<form method="post" action="/admin/system/export" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Konfiguration sichern</h2>
+  <p class="hint">Die Datei enthält VNC-Passwörter und den gemeinsamen Schlüssel und wird mit einem eigenen Passwort verschlüsselt, mindestens 10 Zeichen. Ohne dieses Passwort ist sie nicht wiederherstellbar. Das Admin-Passwort ist nicht enthalten.</p>
+  <div class="row">
+    <label class="grow">Passwort für die Datei
+      <input type="password" name="password" autocomplete="new-password" minlength="10" required>
+    </label>
+    <label class="grow">Passwort wiederholen
+      <input type="password" name="password2" autocomplete="new-password" minlength="10" required>
+    </label>
+  </div>
+  <div class="actions"><button type="submit" class="btn">Exportieren</button></div>
+</form>
+
+<form method="post" action="/admin/system/import" enctype="multipart/form-data" class="panel stack" data-confirm="Die aktuellen Einstellungen durch die Datei ersetzen?">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Konfiguration wiederherstellen</h2>
+  <p class="hint">Name, Kennung und Rolle dieses Terminals, das Admin-Passwort und die Netzwerk-Einstellungen bleiben erhalten.</p>
+  <label>Passwort der Datei
+    <input type="password" name="password" autocomplete="off" required>
+  </label>
+  <label>Exportdatei (.hkx)
+    <input type="file" name="file" accept=".hkx" required>
+  </label>
+  <div class="actions"><button type="submit" class="btn">Importieren</button></div>
+</form>
+
+<form method="post" action="/admin/system/password" class="panel stack">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Admin-Passwort ändern</h2>
+  <label>Aktuelles Passwort
+    <input type="password" name="current" autocomplete="current-password" required>
+  </label>
+  <div class="row">
+    <label class="grow">Neues Passwort
+      <input type="password" name="password" autocomplete="new-password" minlength="10" required>
+    </label>
+    <label class="grow">Passwort wiederholen
+      <input type="password" name="password2" autocomplete="new-password" minlength="10" required>
+    </label>
+  </div>
+  <div class="actions"><button type="submit" class="btn">Passwort ändern</button></div>
+</form>
+
+<section class="panel stack">
+  <h2>Neustart</h2>
+  <form method="post" action="/admin/system/restart-service" class="stack" data-confirm="Den Dienst neu starten?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required> Laufende Sitzungen werden beendet</label>
+    <div class="actions"><button type="submit" class="btn danger">Dienst neu starten</button></div>
+  </form>
+  <form method="post" action="/admin/system/reboot" class="stack" data-confirm="Das Terminal neu starten?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das Terminal ist währenddessen nicht bedienbar</label>
+    <div class="actions"><button type="submit" class="btn danger">Terminal neu starten</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}
