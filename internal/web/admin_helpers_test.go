@@ -87,6 +87,7 @@ type adminEnv struct {
 	eth      bool
 	probe    func(context.Context, config.HMI) rfb.ProbeResult
 	selftest func(context.Context) []SelftestStep
+	soak     *fakeSoak
 	mu       sync.Mutex
 	applied  []config.Config
 	a        *admin
@@ -111,7 +112,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 	}
 	e := &adminEnv{
 		t: t, dir: dir, store: config.Open(dir), box: box,
-		helper: &fakeHelper{}, update: &fakeUpdate{},
+		helper: &fakeHelper{}, update: &fakeUpdate{}, soak: &fakeSoak{},
 		clock: &fakeClock{t: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)},
 		eth:   true, logDir: t.TempDir(),
 	}
@@ -136,6 +137,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		RemoteIsWifi: func(*http.Request) bool { return e.wifi },
 		EthernetLink: func() bool { return e.eth },
 		Update:       e.update,
+		Soak:         e.soak,
 		Selftest: func(ctx context.Context) []SelftestStep {
 			if e.selftest != nil {
 				return e.selftest(ctx)

@@ -27,6 +27,48 @@
   </form>
 </section>
 
+{{if .HasSoak}}
+<section class="panel stack">
+  <h2>Dauerprüfung</h2>
+  <p class="hint">Startet und beendet im Wechsel einen Client gegen den eingebauten Test-Server und misst den Speicher von Dienst und Client. Das Terminal ist währenddessen nicht bedienbar. Sie läuft nur ohne Sitzung, ohne Daueranzeige und ohne Selbstprüfung und endet von selbst nach der gewählten Dauer.</p>
+  {{with .Soak}}
+  <dl class="facts">
+    <dt>Stand</dt><dd>{{.State}}{{if .Since}} {{.Since}}{{end}}</dd>
+    {{if not .Never}}
+    <dt>Durchgänge</dt><dd>{{.Cycles}}</dd>
+    <dt>Fehler</dt><dd>{{.Failures}}</dd>
+    <dt>Speicher (Dienst und Client)</dt><dd>{{bytes .RSSBytes}}</dd>
+    <dt>Leck</dt><dd>{{.Leak}}</dd>
+    {{if .LastError}}<dt>Letzter Fehler</dt><dd>{{.LastError}}</dd>{{end}}
+    {{end}}
+  </dl>
+  {{if .Running}}
+  <form method="post" action="/admin/system/soak/stop" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="actions"><button type="submit" class="btn danger">Dauerprüfung stoppen</button></div>
+  </form>
+  {{else}}
+  <form method="post" action="/admin/system/soak/start" class="stack" data-confirm="Die Dauerprüfung jetzt starten?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Dauer
+      <select name="hours">
+        <option value="1">1 Stunde</option>
+        <option value="8">8 Stunden</option>
+        <option value="24" selected>24 Stunden</option>
+        <option value="72">72 Stunden</option>
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das Terminal ist währenddessen nicht bedienbar</label>
+    <div class="actions"><button type="submit" class="btn">Dauerprüfung starten</button></div>
+  </form>
+  {{end}}
+  {{if not .Never}}
+  <p><a class="btn" href="/admin/system/soak.jsonl">Messwerte herunterladen</a> <a class="btn" href="/admin/system/soak.txt">Zusammenfassung herunterladen</a></p>
+  {{end}}
+  {{end}}
+</section>
+{{end}}
+
 <form method="post" action="/admin/system/display" class="panel stack">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <h2>Anzeige</h2>

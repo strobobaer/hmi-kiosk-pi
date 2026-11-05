@@ -78,6 +78,9 @@ type service struct {
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
 
 	selftestMu   sync.Mutex
+	soak         *soakJob
+	ctxMu        sync.Mutex
+	ctx          context.Context // Lebensdauer des Dienstes, ab serve
 	selftestPage selftestPage
 	touch        *selftest.TouchBoard
 
@@ -133,6 +136,7 @@ func newService(opts Options) (*service, error) {
 	if err := os.MkdirAll(opts.RunDir, 0o755); err != nil {
 		s.warn(fmt.Sprintf("Laufzeitordner nicht verfügbar: %v", err))
 	}
+	s.soak = newSoakJob(s)
 	s.cleanupStartup()
 	s.loadConfig()
 	s.openBox()
@@ -223,6 +227,7 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		Screen:   s.screen,
 		Probe:    s.sessionProbe,
 		OnEnd:    s.onSessionEnd,
+		Blocked:  s.soakBlocked,
 	})
 	s.reach = newReachability(
 		func() []config.HMI { return s.config().HMIs },
@@ -237,6 +242,9 @@ func (s *service) serve(parent context.Context) error {
 	defer s.close()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	s.ctxMu.Lock()
+	s.ctx = ctx
+	s.ctxMu.Unlock()
 
 	var wg sync.WaitGroup
 	background := func(f func()) {
@@ -271,6 +279,7 @@ func (s *service) serve(parent context.Context) error {
 		}
 	}
 	cancel()
+	s.soak.wait()
 	if serr := s.notify.send("STOPPING=1"); serr != nil {
 		log.Printf("Abmeldung bei systemd: %v", serr)
 	}
@@ -382,4 +391,10 @@ func (s *service) feedBrowser(ctx context.Context, sup *browser.Supervisor) {
 		}
 		sup.Show(s.browserTarget(last))
 	}
+}
+
+func (s *service) rootCtx() context.Context {
+	s.ctxMu.Lock()
+	defer s.ctxMu.Unlock()
+	return s.ctx
 }

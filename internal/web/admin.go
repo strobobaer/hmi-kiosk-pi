@@ -82,6 +82,7 @@ type AdminDeps struct {
 	EthernetLink func() bool
 	Update       UpdateAPI
 	Selftest     func(ctx context.Context) []SelftestStep
+	Soak         SoakAPI
 	Clock        coord.Clock
 }
 
@@ -221,6 +222,10 @@ func (a *admin) routes() []route {
 		post("/admin/system/reboot", a.handleReboot),
 		post("/admin/system/restart-service", a.handleRestartService),
 		post("/admin/system/selftest", a.handleSelftest),
+		post("/admin/system/soak/start", a.handleSoakStart),
+		post("/admin/system/soak/stop", a.handleSoakStop),
+		get("/admin/system/soak.jsonl", a.handleSoakLog),
+		get("/admin/system/soak.txt", a.handleSoakSummary),
 		post("/admin/system/password", a.handleChangePassword),
 		post("/admin/system/export", a.handleExport),
 		upload("/admin/system/update", updateBodyLimit, a.handleUpdate),

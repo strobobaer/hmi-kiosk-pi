@@ -247,6 +247,7 @@ type harness struct {
 	cleanups    int
 	cancelRun   context.CancelFunc
 	onEnd       func(Ended)
+	blocked     atomic.Pointer[string]
 	runDone     chan struct{}
 }
 
@@ -310,6 +311,12 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 		},
 		Screen: func() (int, int) { return 1920, 1080 },
 		OnEnd:  h.onEnd,
+		Blocked: func() string {
+			if s := h.blocked.Load(); s != nil {
+				return *s
+			}
+			return ""
+		},
 		Probe: func(context.Context, config.HMI, string) rfb.ProbeResult {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -1598,4 +1605,24 @@ func TestSnapshotReportsViewOnly(t *testing.T) {
 	if s := h3.waitState(StateStarting); s.ViewOnly {
 		t.Fatal("ViewOnly ohne Grund gesetzt")
 	}
+}
+
+func TestOpenIsRefusedWhileBlocked(t *testing.T) {
+	h := newHarness(t, nil)
+	msg := "Dauerprüfung läuft"
+	h.blocked.Store(&msg)
+	err := h.m.Open("a")
+	if err == nil || err.Error() != msg {
+		t.Fatalf("Fehler: %v", err)
+	}
+	s := h.m.Snapshot()
+	if s.State != StateTiles || s.Notice != msg {
+		t.Fatalf("Zustand %s, Hinweis %q", s.State, s.Notice)
+	}
+	if h.runner.count() != 0 {
+		t.Fatal("es darf kein Client starten")
+	}
+	h.blocked.Store(nil)
+	h.open("a")
+	h.waitState(StateStarting)
 }

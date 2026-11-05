@@ -43,6 +43,8 @@ type Deps struct {
 	// OnEnd meldet jedes Ende einer Sitzung mit gestartetem Client; nil heißt niemand.
 	// Läuft in der Zustands-Goroutine und darf nicht blockieren.
 	OnEnd func(Ended)
+	// Blocked liefert eine Meldung, solange kein Sitzungsstart erlaubt ist (Dauerprüfung); nil heißt immer erlaubt.
+	Blocked func() string
 }
 
 // attempt ist ein Sitzungsversuch vom Touch bis zum Aufräumen. Ein laufender
@@ -183,6 +185,12 @@ func (m *Manager) Open(hmiID string) error {
 	return m.do(func() error {
 		if m.state != StateTiles {
 			return nil
+		}
+		if m.d.Blocked != nil {
+			if msg := m.d.Blocked(); msg != "" {
+				m.notice = msg
+				return errors.New(msg)
+			}
 		}
 		cfg := m.d.Config()
 		h, ok := findHMI(cfg, hmiID)

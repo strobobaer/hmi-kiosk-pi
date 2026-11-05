@@ -47,6 +47,14 @@ func (p *selftestPage) get() string {
 
 // busyMessage nennt, warum die Prüfung jetzt nicht laufen darf; leer heißt: frei.
 func (s *service) busyMessage() string {
+	if s.soak.running() {
+		return "Eine Dauerprüfung läuft. Bitte zuerst in der Admin-Seite unter System stoppen."
+	}
+	return s.sessionBusyMessage()
+}
+
+// sessionBusyMessage nennt Sitzung oder Daueranzeige als Grund.
+func (s *service) sessionBusyMessage() string {
 	// Eine Daueranzeige startet nach jedem Ende von selbst neu, auch zwischen zwei Schritten.
 	if s.config().Kiosk.PermanentHMI != "" {
 		return "Eine Daueranzeige ist eingestellt und läuft oder würde während der Prüfung wieder starten. " +
@@ -140,6 +148,9 @@ func (s *service) browserTarget(snap session.Snapshot) browser.Target {
 // runSelftest führt die Prüfung aus; es läuft höchstens eine zugleich.
 func (s *service) runSelftest(ctx context.Context) []selftest.StepResult {
 	if !s.selftestMu.TryLock() {
+		if s.soak.running() {
+			return []selftest.StepResult{{Name: selftest.StepPrecondition, Detail: s.busyMessage()}}
+		}
 		return []selftest.StepResult{{Name: selftest.StepPrecondition, Detail: "Die Selbstprüfung läuft bereits."}}
 	}
 	defer s.selftestMu.Unlock()
