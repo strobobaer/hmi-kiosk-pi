@@ -19,6 +19,7 @@ const (
 	TargetNone Target = iota
 	TargetTiles
 	TargetBar
+	TargetTouchTest // Touch-Seite der Selbstprüfung
 )
 
 const (
@@ -118,6 +119,9 @@ func (s *Supervisor) args(t Target) []string {
 	case TargetTiles:
 		a = append(a, "--kiosk", "--touch-events=enabled",
 			"--user-data-dir="+s.ramDir+"/profile-tiles", baseURL)
+	case TargetTouchTest:
+		a = append(a, "--kiosk", "--touch-events=enabled",
+			"--user-data-dir="+s.ramDir+"/profile-tiles", baseURL+"selftest/touch")
 	case TargetBar:
 		a = append(a, "--app="+baseURL+"bar", "--window-position=0,0",
 			fmt.Sprintf("--window-size=%d,%d", s.screenW(), barHeight),

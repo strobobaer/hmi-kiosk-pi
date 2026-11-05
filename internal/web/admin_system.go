@@ -21,7 +21,7 @@ const (
 	logViewLines    = 200
 	logViewBytes    = 1 << 20
 	logDownloadSize = 5 << 20
-	selftestLimit   = 2 * time.Minute
+	selftestLimit   = 8 * time.Minute
 	uploadDeadline  = 15 * time.Minute
 )
 
@@ -37,13 +37,14 @@ type displayFormData struct {
 }
 
 type systemData struct {
-	Status   SystemStatus
-	LogLines string
-	HasLog   bool
-	Now      string
-	Time     string
-	Display  displayFormData
-	Selftest []SelftestStep
+	Status          SystemStatus
+	LogLines        string
+	HasLog          bool
+	HasSelftestFile bool
+	Now             string
+	Time            string
+	Display         displayFormData
+	Selftest        []SelftestStep
 }
 
 func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, errMsg string, ex systemExtras) {
@@ -65,6 +66,9 @@ func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, er
 		d.Display = *ex.Display
 	}
 	d.LogLines, d.HasLog = logTailLines(a.d.LogDir)
+	a.lastMu.Lock()
+	d.HasSelftestFile = len(a.lastSelf) > 0
+	a.lastMu.Unlock()
 	a.page(w, s, status, "system.html", "system", "System", errMsg, d)
 }
 
@@ -105,6 +109,10 @@ func newestLog(dir string) (string, bool) {
 	var bestTime time.Time
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
+			continue
+		}
+		// soak.jsonl der Dauerprüfung ist kein Dienstprotokoll.
+		if strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
 		info, err := e.Info()
@@ -266,9 +274,40 @@ func (a *admin) handleSelftest(w http.ResponseWriter, r *http.Request, s session
 		return
 	}
 	defer a.selftestMu.Unlock()
+	// Die Prüfung wartet auf Menschen und dauert länger als die Schreibfrist des Servers.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(selftestLimit + time.Minute))
 	ctx, cancel := context.WithTimeout(r.Context(), selftestLimit)
 	defer cancel()
-	a.renderSystem(w, s, http.StatusOK, "", systemExtras{Selftest: a.d.Selftest(ctx)})
+	steps := a.d.Selftest(ctx)
+	a.lastMu.Lock()
+	a.lastSelf, a.lastSelfAt = steps, a.d.Clock.Now()
+	a.lastMu.Unlock()
+	a.renderSystem(w, s, http.StatusOK, "", systemExtras{Selftest: steps})
+}
+
+// handleSelftestDownload liefert das Ergebnis der letzten Selbstprüfung als Text,
+// damit es an den Menschen geht, der die markierten Punkte bestätigt.
+func (a *admin) handleSelftestDownload(w http.ResponseWriter, _ *http.Request, _ sessionRef) {
+	a.lastMu.Lock()
+	steps, at := a.lastSelf, a.lastSelfAt
+	a.lastMu.Unlock()
+	if len(steps) == 0 {
+		http.Error(w, "Noch keine Selbstprüfung gelaufen", http.StatusNotFound)
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Selbstprüfung vom %s\n\n", at.Local().Format("02.01.2006 15:04:05"))
+	for _, st := range steps {
+		fmt.Fprintf(&b, "[%s] %s", strings.ToUpper(st.Label()), st.Name)
+		if st.Detail != "" {
+			fmt.Fprintf(&b, ": %s", st.Detail)
+		}
+		b.WriteString("\n")
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": "selbstpruefung.txt"}))
+	_, _ = io.WriteString(w, b.String())
 }
 
 // --- Update ---

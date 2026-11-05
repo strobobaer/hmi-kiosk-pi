@@ -21,6 +21,7 @@ import (
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/rfb"
 	"hmikiosk/internal/secrets"
+	"hmikiosk/internal/selftest"
 	"hmikiosk/internal/session"
 	"hmikiosk/internal/web"
 )
@@ -76,6 +77,10 @@ type service struct {
 	lookPath func(string) (string, error)
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
 
+	selftestMu   sync.Mutex
+	selftestPage selftestPage
+	touch        *selftest.TouchBoard
+
 	markGood bool // der geladene Stand kommt unverändert aus config.json
 
 	mu       sync.RWMutex
@@ -117,6 +122,7 @@ func newService(opts Options) (*service, error) {
 		notify:  notifierFromEnv(),
 		helper:  helperapi.New(opts.HelperSocket),
 		browser: make(chan struct{}, 1),
+		touch:   selftest.NewTouchBoard(),
 	}
 	journal, err := NewJournal(filepath.Join(opts.DataDir, logDirName), MaxLogBytes)
 	s.journal = journal
@@ -374,6 +380,6 @@ func (s *service) feedBrowser(ctx context.Context, sup *browser.Supervisor) {
 		case <-s.browser:
 			sup.SetProfile(s.config().Display.GraphicsProfile)
 		}
-		sup.Show(browser.TargetFor(last, s.config().Kiosk.HideBar))
+		sup.Show(s.browserTarget(last))
 	}
 }

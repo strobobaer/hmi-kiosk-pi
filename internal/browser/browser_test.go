@@ -296,3 +296,13 @@ func TestTargetForMapping(t *testing.T) {
 		}
 	}
 }
+
+func TestTouchTestTargetOpensSelftestPage(t *testing.T) {
+	g := newRig(t)
+	g.run(t)
+	g.s.Show(TargetTouchTest)
+	c := g.nextStart(t)
+	if !slices.Contains(c.Args, "--kiosk") || !slices.Contains(c.Args, "http://127.0.0.1:8080/selftest/touch") {
+		t.Fatalf("Argumente: %v", c.Args)
+	}
+}

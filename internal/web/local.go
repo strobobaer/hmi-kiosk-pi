@@ -53,9 +53,20 @@ type local struct {
 	static fs.FS
 }
 
+// LocalExtras sind die optionalen Teile der Selbstprüfung auf der lokalen Seite.
+type LocalExtras struct {
+	// TouchHit nimmt den Treffer eines Ziels der Touch-Seite an; false lehnt ihn ab.
+	TouchHit func(target int) bool
+}
+
 // NewLocal baut den Handler der Kachelseite. layout liefert "auto" oder die
 // Spaltenzahl "2", "3", "4".
 func NewLocal(s SessionAPI, tiles func() []TileView, layout func() string) http.Handler {
+	return NewLocalWith(s, tiles, layout, LocalExtras{})
+}
+
+// NewLocalWith ergänzt NewLocal um die Touch-Seite der Selbstprüfung.
+func NewLocalWith(s SessionAPI, tiles func() []TileView, layout func() string, ex LocalExtras) http.Handler {
 	sub, err := fs.Sub(assets, "assets")
 	if err != nil {
 		panic(err)
@@ -71,6 +82,9 @@ func NewLocal(s SessionAPI, tiles func() []TileView, layout func() string) http.
 	mux.HandleFunc("GET /bar", l.handleBar)
 	mux.HandleFunc("GET /kiosk.css", l.asset("kiosk.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET /kiosk.js", l.asset("kiosk.js", "text/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /selftest/touch", l.asset("selftest.html", "text/html; charset=utf-8"))
+	mux.HandleFunc("GET /selftest.js", l.asset("selftest.js", "text/javascript; charset=utf-8"))
+	mux.HandleFunc("POST /api/selftest/touch", touchHit(ex.TouchHit))
 	mux.HandleFunc("GET /api/events", l.handleEvents)
 	mux.HandleFunc("POST /api/hmi/{id}/open", l.handleOpen)
 	mux.HandleFunc("POST /api/confirm", l.handleConfirm)
@@ -78,6 +92,9 @@ func NewLocal(s SessionAPI, tiles func() []TileView, layout func() string) http.
 	mux.HandleFunc("POST /api/back", func(w http.ResponseWriter, _ *http.Request) { l.s.Back(); noContent(w) })
 	return secure(mux)
 }
+
+// SecureLocal setzt Host- und Origin-Prüfung der lokalen Seite vor weitere lokale Routen.
+func SecureLocal(next http.Handler) http.Handler { return secure(next) }
 
 func secure(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -278,4 +295,26 @@ func iconSVG(name string) template.HTML {
 		body = icons["monitor"]
 	}
 	return template.HTML(`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`)
+}
+
+// touchHit nimmt {"target": n} an. Ohne Selbstprüfung gibt es die Route nicht.
+func touchHit(hit func(int) bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if hit == nil {
+			writeError(w, http.StatusNotFound, "Keine Selbstprüfung aktiv")
+			return
+		}
+		var in struct {
+			Target *int `json:"target"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&in); err != nil || in.Target == nil {
+			writeError(w, http.StatusBadRequest, "Ungültige Anfrage")
+			return
+		}
+		if !hit(*in.Target) {
+			writeError(w, http.StatusBadRequest, "Unbekanntes Ziel")
+			return
+		}
+		noContent(w)
+	}
 }

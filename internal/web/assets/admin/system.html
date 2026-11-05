@@ -16,9 +16,11 @@
   <h2>Selbstprüfung</h2>
   {{if .Selftest}}
   <ul class="steps">
-    {{range .Selftest}}<li class="{{if .OK}}pass{{else}}fail{{end}}"><strong>{{if .OK}}OK{{else}}Fehler{{end}}: {{.Name}}</strong>{{if .Detail}}<span>{{.Detail}}</span>{{end}}</li>{{end}}
+    {{range .Selftest}}<li class="{{.Class}}"><strong>{{.Label}}: {{.Name}}</strong>{{if .Detail}}<span>{{.Detail}}</span>{{end}}</li>{{end}}
   </ul>
   {{end}}
+  {{if .HasSelftestFile}}<p><a class="btn" href="/admin/system/selftest.txt">Ergebnis herunterladen</a></p>{{end}}
+  <p class="hint">Die Prüfung läuft am Gerät und dauert einige Minuten. Das Terminal muss dafür in der Kachelansicht stehen. Währenddessen am Bildschirm: erst alle fünf Ziele der Touch-Seite antippen, dann eine orange Markierung auf dem Testbild. «Prüfen» bedeutet, dass eine Person etwas bestätigen muss (Bild, Fensterplatz, Funkmodule); «Fehler» ist ein gemessener Fehler oder eine nicht mögliche Messung.</p>
   <form method="post" action="/admin/system/selftest">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button type="submit" class="btn">Selbstprüfung starten</button>

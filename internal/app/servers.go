@@ -48,7 +48,7 @@ func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, 
 		return nil, nil, nil, bound, fmt.Errorf("Kachelseite: %w", err)
 	}
 	bound.Local = l.Addr().String()
-	local = newLocalServer(ctx, web.NewLocal(s.mgr, s.tiles, func() string { return s.config().Kiosk.Layout }))
+	local = newLocalServer(ctx, s.localHandler())
 	errs := make(chan error, 1)
 	wg.Add(1)
 	go func() {
@@ -130,7 +130,7 @@ func (s *service) adminHandler() http.Handler {
 				return s.helper.Call(ctx, "update-activate", version)
 			},
 		},
-		Selftest: s.selftest,
+		Selftest: s.adminSelftest,
 	})
 }
 

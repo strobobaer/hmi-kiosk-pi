@@ -73,9 +73,10 @@ type TestServer struct {
 	password string
 	rgb      []byte // w*h*3
 
-	mu       sync.Mutex
-	conns    map[net.Conn]struct{}
-	pointers []image.Point
+	mu         sync.Mutex
+	conns      map[net.Conn]struct{}
+	pointers   []image.Point
+	fullFrames int
 }
 
 // NewTestServer erzeugt einen Server; mit leerem Passwort gilt Sicherheitsverfahren "keine".
@@ -152,6 +153,14 @@ func (s *TestServer) DropClients() {
 	for c := range s.conns {
 		c.Close()
 	}
+}
+
+// FullFrames zählt die Bilder, die das ganze Testbild enthielten: Der Client hat
+// also die volle Größe angefordert.
+func (s *TestServer) FullFrames() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fullFrames
 }
 
 // Pointers liefert eine Kopie der Zeigerpositionen, bei denen eine Taste gedrückt war.
@@ -381,6 +390,11 @@ func (s *TestServer) fullUpdate(r updateRequest, p pixelFormat) []byte {
 	w, h := x1-x0, y1-y0
 	if w <= 0 || h <= 0 {
 		return []byte{0, 0, 0, 0}
+	}
+	if w == s.w && h == s.h {
+		s.mu.Lock()
+		s.fullFrames++
+		s.mu.Unlock()
 	}
 	bytesPP := p.bpp / 8
 	msg := make([]byte, 4, 16+w*h*bytesPP)

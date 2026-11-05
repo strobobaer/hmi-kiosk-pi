@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"os"
@@ -80,22 +79,4 @@ func overlayActive(root string) bool {
 		}
 	}
 	return active
-}
-
-// selftest prüft den Dienst selbst; die Prüfung am Gerät ergänzt das später.
-func (s *service) selftest(context.Context) []web.SelftestStep {
-	st := s.Status()
-	steps := []web.SelftestStep{
-		{Name: "Datenpartition beschreibbar", OK: true},
-		{Name: "Schreibschutz aktiv", OK: st.OverlayActive},
-		{Name: "Watchdog aktiv", OK: os.Getenv("WATCHDOG_USEC") != ""},
-	}
-	f, err := os.CreateTemp(s.opts.DataDir, ".selbsttest-*")
-	if err != nil {
-		steps[0].OK, steps[0].Detail = false, err.Error()
-	} else {
-		f.Close()
-		os.Remove(f.Name())
-	}
-	return steps
 }

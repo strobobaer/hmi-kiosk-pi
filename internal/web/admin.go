@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
@@ -37,11 +38,35 @@ type SystemStatus struct {
 	Warnings                      []string
 }
 
-// SelftestStep ist ein Ergebnis der Selbstprüfung.
+// SelftestStep ist ein Ergebnis der Selbstprüfung. OK mit NeedsHuman heißt: nichts
+// Falsches gemessen, ein Mensch muss etwas bestätigen.
 type SelftestStep struct {
-	Name   string
-	OK     bool
-	Detail string
+	Name       string
+	OK         bool
+	Detail     string
+	NeedsHuman bool
+}
+
+// Label ist die Kennzeichnung auf der Seite und im Download.
+func (s SelftestStep) Label() string {
+	switch {
+	case !s.OK:
+		return "Fehler"
+	case s.NeedsHuman:
+		return "Prüfen"
+	}
+	return "OK"
+}
+
+// Class ist die Stilklasse zum Ergebnis.
+func (s SelftestStep) Class() string {
+	switch {
+	case !s.OK:
+		return "fail"
+	case s.NeedsHuman:
+		return "check"
+	}
+	return "pass"
 }
 
 // AdminDeps sind die Abhängigkeiten der Admin-Seite.
@@ -103,6 +128,9 @@ type admin struct {
 	cfgMu      sync.Mutex
 	updateMu   sync.Mutex
 	selftestMu sync.Mutex
+	lastMu     sync.Mutex
+	lastSelf   []SelftestStep
+	lastSelfAt time.Time
 	pages      map[string]*template.Template
 	static     fs.FS
 	h          http.Handler
@@ -187,6 +215,7 @@ func (a *admin) routes() []route {
 
 		get("/admin/system", a.handleSystemPage),
 		get("/admin/system/log", a.handleLogDownload),
+		get("/admin/system/selftest.txt", a.handleSelftestDownload),
 		post("/admin/system/display", a.handleDisplay),
 		post("/admin/system/time", a.handleSetTime),
 		post("/admin/system/reboot", a.handleReboot),

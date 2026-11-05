@@ -170,3 +170,4 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 
 code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+.steps li.check { border-color: var(--amber); }

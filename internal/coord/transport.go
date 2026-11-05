@@ -119,7 +119,7 @@ func (t *httpTransport) post(ctx context.Context, url string, headers map[string
 	case resp.StatusCode == http.StatusUnauthorized:
 		return ErrBadKey
 	case resp.StatusCode != http.StatusOK:
-		return fmt.Errorf("Terminal antwortet mit Status %d", resp.StatusCode)
+		return &StatusError{Code: resp.StatusCode}
 	case out == nil:
 		return nil
 	}
@@ -132,4 +132,38 @@ func peerBaseURL(address string) string {
 	}
 	host := strings.TrimSuffix(strings.TrimPrefix(address, "["), "]")
 	return "https://" + net.JoinHostPort(host, defaultPeerPort)
+}
+
+// PeerState ist das Ergebnis von CheckPeer. KeyOK gilt nur bei Reachable.
+type PeerState struct {
+	Reachable, KeyOK bool
+	Err              error
+}
+
+// StatusError ist eine Antwort mit anderem Status als 200.
+type StatusError struct{ Code int }
+
+func (e *StatusError) Error() string { return fmt.Sprintf("Terminal antwortet mit Status %d", e.Code) }
+
+// CheckPeer prüft ein anderes Terminal ohne Nebenwirkung: erst die Zufallszahl
+// (erreichbar), dann ein signierter Herzschlag mit leerer HMI-Kennung. Der
+// Empfänger prüft die Signatur vor dem Inhalt und lehnt den leeren Inhalt mit 400
+// ab, ohne etwas zu ändern. 401 heißt falscher Schlüssel, 400 richtiger.
+func CheckPeer(ctx context.Context, key func() []byte, client *http.Client, peer config.Peer) PeerState {
+	t := NewHTTPTransportFunc(key, client).(*httpTransport)
+	var nonce nonceResp
+	if err := t.post(ctx, peerBaseURL(peer.Address)+pathNonce, nil, nil, &nonce); err != nil {
+		return PeerState{Err: err}
+	}
+	err := t.Heartbeat(ctx, peer, "", Holder{})
+	var se *StatusError
+	switch {
+	case errors.Is(err, ErrBadKey):
+		return PeerState{Reachable: true}
+	case errors.As(err, &se) && se.Code == http.StatusBadRequest:
+		return PeerState{Reachable: true, KeyOK: true}
+	case err == nil:
+		return PeerState{Reachable: true, KeyOK: true}
+	}
+	return PeerState{Reachable: true, Err: err}
 }

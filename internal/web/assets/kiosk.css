@@ -154,3 +154,16 @@ button { font: inherit; color: inherit; cursor: default; }
   border-radius: 0;
 }
 .bar-back:active { background: #1a5fc4; }
+
+/* Touch-Seite der Selbstprüfung */
+.page-selftest { margin: 0; background: #0f141b; color: #e6edf3; font-family: system-ui, sans-serif; }
+.st-board { position: fixed; inset: 0; }
+.st-text { position: absolute; left: 0; right: 0; top: 38%; text-align: center; font-size: 28px; margin: 0; padding: 0 160px; }
+.st-count { position: absolute; left: 0; right: 0; top: 52%; text-align: center; font-size: 40px; margin: 0; }
+.st-target { position: absolute; width: 140px; height: 140px; border-radius: 16px; border: 4px solid #f2b01e; background: #2a2210; color: #f2b01e; font-size: 40px; touch-action: manipulation; }
+.st-target.hit { border-color: #2ea043; background: #12261a; color: #2ea043; }
+.st-t0 { left: 12px; top: 12px; }
+.st-t1 { right: 12px; top: 12px; }
+.st-t2 { left: calc(50% - 70px); top: calc(75% - 70px); }
+.st-t3 { left: 12px; bottom: 12px; }
+.st-t4 { right: 12px; bottom: 12px; }
