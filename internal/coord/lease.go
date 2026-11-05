@@ -49,6 +49,22 @@ func (t *Table) Holder(hmi string) (Holder, bool) {
 	return l.holder, true
 }
 
+// Snapshot liefert alle nicht abgelaufenen Belegungen.
+func (t *Table) Snapshot() map[string]Holder {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.clock.Now()
+	out := make(map[string]Holder, len(t.leases))
+	for hmi, l := range t.leases {
+		if now.Sub(l.seen) >= LeaseTTL {
+			delete(t.leases, hmi)
+			continue
+		}
+		out[hmi] = l.holder
+	}
+	return out
+}
+
 // Drop entfernt die Belegung nur, wenn sie diesem Terminal gehört.
 func (t *Table) Drop(hmi, terminal string) {
 	t.mu.Lock()
