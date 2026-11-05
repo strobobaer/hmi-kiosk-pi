@@ -116,7 +116,7 @@ func TestRemminaProfileHasExpectedFields(t *testing.T) {
 		"[remmina]\n", "protocol=VNC\n", "server=10.0.0.5:5900\n", "password=" + enc + "\n",
 		"viewonly=1\n", "quality=2\n", "colordepth=32\n", "disableclipboard=1\n",
 		"closeonfailure=1\n", "disablepasswordstoring=0\n",
-		remminaKeyScale + "=1\n", remminaKeyViewMode + "=1\n",
+		"scale=1\n", "viewmode=1\n",
 	} {
 		if !strings.Contains(prof, want) {
 			t.Errorf("profile lacks %q:\n%s", want, prof)
@@ -130,7 +130,7 @@ func TestRemminaProfileHasExpectedFields(t *testing.T) {
 	s.Host, s.ViewOnly, s.Scale = "::1", false, false
 	dir, _ = prepareRemmina(t, s)
 	prof = readFile(t, filepath.Join(dir, "session.remmina"))
-	for _, want := range []string{"server=[::1]:5900\n", "viewonly=0\n", remminaKeyScale + "=0\n"} {
+	for _, want := range []string{"server=[::1]:5900\n", "viewonly=0\n", "scale=0\n"} {
 		if !strings.Contains(prof, want) {
 			t.Errorf("profile lacks %q:\n%s", want, prof)
 		}

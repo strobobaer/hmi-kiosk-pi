@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <theme><keepBorder>no</keepBorder></theme>
+  <applications>
+    <!-- Entspricht der labwc-Regel aus Spec Abschnitt 6: ohne Rahmen bei 0,48 in Breite x (Höhe - 48). -->
+    <application class="*" type="normal">
+      <decor>no</decor>
+      <position force="yes"><x>0</x><y>48</y></position>
+      <size><width>1280</width><height>752</height></size>
+    </application>
+  </applications>
+</openbox_config>

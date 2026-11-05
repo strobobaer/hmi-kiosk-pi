@@ -146,7 +146,7 @@ Aufruf je Sitzung, ohne `--kiosk` und ohne `--enable-fullscreen`:
 remmina --gapplication-app-id=de.hmikiosk.session<N> -c <RAM>/session.remmina --disable-toolbar --enable-extra-hardening --no-tray-icon
 ```
 
-Geprüft im Remmina-Quellcode (Stand `master`, gegen die Trixie-Version noch abzugleichen):
+Geprüft im Remmina-Quellcode (Stand `master`, Abgleich mit der Trixie-Version in Abschnitt 14):
 
 | Punkt | Befund | Folge |
 |---|---|---|
@@ -159,8 +159,8 @@ Geprüft im Remmina-Quellcode (Stand `master`, gegen die Trixie-Version noch abz
 Erzeugte Profilfelder: `protocol=VNC`, `server`, `password`, `quality`, `colordepth`, `viewonly`,
 `disableclipboard=1`, `closeonfailure=1`, `disablepasswordstoring=0`, `scale`, `viewmode`.
 
-Die Felder `scale` und `viewmode` gehören nicht zum VNC-Plugin selbst. Ihre genauen Werte werden beim
-Bau des Abbilds aus der Trixie-Version ermittelt und getestet.
+Die Felder `scale` und `viewmode` gehören nicht zum VNC-Plugin selbst. Gegen die Trixie-Version
+bestätigte Werte: `scale=1` (an) oder `scale=0` (aus), `viewmode=1` (Abschnitt 14).
 
 **Fenster:** Eine labwc-Fensterregel platziert Remmina ohne Rahmen bei `0,48` in der Größe
 `Breite × (Höhe − 48)`. Die Leiste ist ein eigenes kleines Chromium-Fenster. Während der Sitzung läuft
@@ -252,7 +252,7 @@ sind in die Binärdatei eingebettet. Es gibt keine Abrufe aus dem Internet.
 |---|---|
 | Client stürzt ab | Rückkehr zur Kachelseite mit Hinweis; Daueranzeige verbindet neu |
 | HMI nicht erreichbar | Kachel zeigt das durch eine TCP-Prüfung alle 10 Sekunden |
-| Falsches VNC-Passwort | `closeonfailure=1`, Hinweis auf der Kachel |
+| Falsches VNC-Passwort | Remmina zeigt trotz `closeonfailure=1` einen Passwortdialog und endet nicht (Abschnitt 14). Die Verbindung des Clients fehlt; der Dienst beendet ihn wie in Abschnitt 4 und zeigt den Hinweis auf der Kachel |
 | Chromium stürzt ab | Neustart durch den Dienst mit wachsender Wartezeit; VNC-Sitzung läuft weiter |
 | Dienst stürzt ab | systemd startet ihn neu, beim Start werden Kindprozesse aufgeräumt |
 | System hängt | Hardware-Watchdog startet neu |
@@ -321,8 +321,34 @@ Diese Punkte sind nicht bestätigt und werden an den genannten Stellen entschied
 | Debian-Version der Raspis | Beim Bau, Annahme Trixie | Abbild ersetzt das System ohnehin |
 | Display-Auflösung und Touch-Eingabe am iiyama | Selbstprüfung | Admin-Einstellung |
 | HMI-Auflösung, Schärfe der Skalierung | Selbstprüfung und Betrieb | Qualität oder TigerVNC |
-| Remmina-Verhalten in der Trixie-Version (Prozessende, Flags, Passwort, Felder `scale`/`viewmode`) | Beim Bau des Abbilds | TCP-Prüfung; TigerVNC-Profil |
 | Remmina VNC-Plugin unter Wayland/labwc | Selbstprüfung | X11-Profil |
 | labwc-Regeln für Platzierung und Größe | Selbstprüfung | X11-Profil mit openbox |
 | Geteilter Zugriff bei „Mitschauen“ und bei parallelem Zugriff über PDH | Selbstprüfung am HMI | Option aus lassen |
 | VNC-Server der HMIs, Verhalten bei mehreren Clients | Inbetriebnahme | – |
+
+### Bestätigt: Remmina in der Trixie-Version
+
+Remmina 1.4.39 (`1.4.39+dfsg-1+deb13u1`, mit `remmina-plugin-vnc`, ohne `remmina-plugin-secret` und
+`gnome-keyring`), geprüft am 2026-11-05 mit `packaging/remmina-check` in `debian:trixie` unter
+linux/arm64 (Emulation), Xvfb und openbox.
+
+| Punkt | Ergebnis |
+|---|---|
+| Flags | Alle Flags aus Abschnitt 6 werden angenommen |
+| Erzeugtes Passwort | Wird mit 5, 8 und 12 Zeichen und mit Umlauten angenommen; `secret` bleibt unverändert, kein Klartext im Sitzungsordner |
+| Trennung durch das HMI | Prozess endet nach unter 1 s |
+| SIGTERM | Prozess endet sofort, auch aus dem Passwortdialog |
+| Zwei App-IDs | Zwei getrennte Prozesse und Verbindungen; das Ende der einen lässt die andere bestehen |
+| Gleiche App-ID | Der zweite Aufruf endet und übergibt die Verbindung an die erste Instanz; eigene IDs sind also nötig |
+| Ohne Sitzungsbus | Verbindung, zwei Sitzungen und Prozessende funktionieren auch ohne D-Bus und ohne Desktop-Sitzung |
+| HMI nicht erreichbar | Mit `closeonfailure=1` endet der Prozess nach etwa 3 s ohne Dialog |
+| **Falsches Passwort (Abweichung)** | `closeonfailure=1` greift nicht: Remmina bleibt mit dem Dialog „Enter VNC password“ offen, ohne TCP-Verbindung zum HMI und ohne Prozessende (nach 40 s beobachtet). Kein Profilfeld verhindert das; der Dienst muss den Client beenden |
+| `scale` | `1` skaliert clientseitig und behält das Seitenverhältnis; `0` zeigt das Bild mittig in Originalgröße |
+| Seitenverhältnis | Passt das HMI-Format nicht zur Fläche, entstehen Balken (800×600 in 1280×752: Maßstab 1,25, Ursprung bei x=138). `scaler_expand=1` würde verzerrt füllen und wird nicht gesetzt |
+| `viewmode` | `1` und `2`: normales Fenster, die Fensterregel gilt. `0`: maximiert. `3` und `4`: Vollbild. Fest eingestellt ist `1` |
+| Eingaben | Klicks kommen bei `scale=1` an der richtigen Serverposition an, auch mit Balken (Abweichung höchstens 1 Pixel); bei `viewonly=1` kommen keine an |
+| Toolbar und Fenster | Keine Toolbar im Bild, genau ein Fenster mit dem Titel aus dem Feld `name`; `WM_CLASS` ist unabhängig von der App-ID `org.remmina.Remmina` |
+
+Nur unter Wayland/labwc auf der Hardware zu bestätigen: die Fensterregel, die dort gemeldete App-ID und
+das Fehlen von Rahmen. Die Platzierung ist bisher nur mit einer gleichwertigen openbox-Regel unter X11
+bestätigt. Bildschirmfotos liegen in `docs/remmina-check/`.

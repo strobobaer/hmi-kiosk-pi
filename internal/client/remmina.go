@@ -12,7 +12,10 @@ import (
 	"strings"
 )
 
-// Schlüssel und Werte der Skalierung sind vorläufig; Task 7 prüft sie gegen das echte Remmina.
+// Bestätigt gegen Remmina 1.4.39 aus Trixie (Spec Abschnitt 14): scale=1 skaliert mit festem
+// Seitenverhältnis, viewmode=1 ist das normale Fenster, das die Fensterregel platzieren kann.
+// closeonfailure=1 wirkt nur bei Verbindungsfehlern; bei falschem Passwort bleibt Remminas
+// Passwortdialog offen, und nur der Dienst kann den Prozess beenden.
 const (
 	remminaKeyScale    = "scale"
 	remminaKeyViewMode = "viewmode"
