@@ -135,13 +135,12 @@ button { font: inherit; color: inherit; cursor: default; }
   gap: 16px;
   padding-left: 16px;
   background: #10151c;
-  border-bottom: 2px solid #2a3340;
 }
 .bar-name { font-size: 28px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
-.badge { font-size: 22px; font-weight: 700; padding: 2px 14px; border-radius: 999px; border: 2px solid; white-space: nowrap; }
+.badge { font-size: 28px; line-height: 1.1; font-weight: 700; padding: 2px 14px; border-radius: 999px; border: 2px solid; white-space: nowrap; }
 .badge.operate { color: var(--green); border-color: var(--green); }
 .badge.view { color: var(--amber); border-color: var(--amber); }
-.bar-notice { flex: 1; min-width: 0; font-size: 26px; font-weight: 700; color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bar-notice { flex: 1; min-width: 0; font-size: 28px; font-weight: 700; color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar-back {
   margin-left: auto;
   height: 48px;

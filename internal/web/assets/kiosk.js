@@ -71,7 +71,7 @@
     fetch("/").then(function (r) { return r.text(); }).then(function (html) {
       var doc = new DOMParser().parseFromString(html, "text/html");
       var g = doc.getElementById("grid");
-      if (g) { $("grid").innerHTML = g.innerHTML; }
+      if (g && g.innerHTML !== $("grid").innerHTML) { $("grid").innerHTML = g.innerHTML; }
     }).catch(function () {});
   }
 

@@ -65,7 +65,10 @@ func serve(t *testing.T, s SessionAPI, tiles []TileView, layout string) *httptes
 
 func get(t *testing.T, url string) (string, *http.Response) {
 	t.Helper()
-	resp, err := http.Get(url)
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Host = "127.0.0.1:8080"
+	resp, err := http.DefaultClient.Do(req)
+	req.Host = "127.0.0.1:8080"
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +84,7 @@ func get(t *testing.T, url string) (string, *http.Response) {
 func post(t *testing.T, url string, hdr map[string]string) *http.Response {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, url, nil)
+	req.Host = "127.0.0.1:8080"
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
@@ -174,6 +178,7 @@ func TestOpenErrorIsConflictWithGermanJSON(t *testing.T) {
 	fs.openErr = errors.New("HMI \"x\" ist nicht bekannt")
 	srv := serve(t, fs, nil, "auto")
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/hmi/x/open", nil)
+	req.Host = "127.0.0.1:8080"
 	req.Header.Set("Origin", "http://127.0.0.1:8080")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -225,6 +230,7 @@ func TestEventsStreamsSnapshot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/events", nil)
+	req.Host = "127.0.0.1:8080"
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -253,6 +259,7 @@ func TestEventsHeartbeat(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/events", nil)
+	req.Host = "127.0.0.1:8080"
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +280,7 @@ func TestEventsEndWithContext(t *testing.T) {
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx))
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/api/events", nil).WithContext(ctx))
 		close(done)
 	}()
 	cancel()
@@ -350,5 +357,35 @@ func TestAssetsHaveNoInlineScriptOrStyle(t *testing.T) {
 		if regexp.MustCompile(`<script[^>]*>[^<]`).MatchString(s) || strings.Contains(s, " style=") || regexp.MustCompile(` on[a-z]+=`).MatchString(s) {
 			t.Errorf("%s enthält Inline-Skript oder -Stil", name)
 		}
+	}
+}
+
+func TestForeignHostRejectedEverywhere(t *testing.T) {
+	fs := newFakeSession()
+	srv := serve(t, fs, nil, "auto")
+	for _, host := range []string{"evil.example", "evil.example:8080", "127.0.0.1", "127.0.0.1:9999", ""} {
+		for _, c := range []struct{ method, path string }{
+			{http.MethodGet, "/"}, {http.MethodGet, "/bar"}, {http.MethodGet, "/api/events"}, {http.MethodPost, "/api/back"},
+		} {
+			req, _ := http.NewRequest(c.method, srv.URL+c.path, nil)
+			req.Host = host
+			req.Header.Set("Origin", "http://127.0.0.1:8080")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusForbidden {
+				t.Errorf("Host %q %s %s: Status %d", host, c.method, c.path, resp.StatusCode)
+			}
+		}
+	}
+	if got := fs.got(); len(got) != 0 {
+		t.Fatalf("Sitzung aufgerufen: %v", got)
+	}
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	req.Host = "localhost:8080"
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("localhost:8080 abgelehnt: %v", err)
 	}
 }

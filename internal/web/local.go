@@ -36,6 +36,9 @@ type TileView struct {
 
 var heartbeat = 15 * time.Second
 
+// allowedHosts schützt gegen DNS-Rebinding: Nur die lokalen Namen sind gültig.
+var allowedHosts = map[string]bool{"127.0.0.1:8080": true, "localhost:8080": true}
+
 var allowedOrigins = map[string]bool{
 	"http://127.0.0.1:8080": true,
 	"http://localhost:8080": true,
@@ -82,6 +85,10 @@ func secure(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cache-Control", "no-store")
+		if !allowedHosts[r.Host] {
+			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
+			return
+		}
 		if r.Method == http.MethodPost && !originAllowed(r) {
 			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
 			return
