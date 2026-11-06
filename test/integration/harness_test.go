@@ -213,7 +213,7 @@ func freePort(t *testing.T) int {
 func startTerminal(t *testing.T, spec terminalSpec) *terminal {
 	t.Helper()
 	data, run := t.TempDir(), t.TempDir()
-	box, err := secrets.OpenBox(filepath.Join(data, "secrets.key"))
+	box, err := secrets.OpenBox(filepath.Join(data, "secrets.key"), false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -106,7 +106,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 	t.Helper()
 	useFastHash(t)
 	dir := t.TempDir()
-	box, err := secrets.OpenBox(dir + "/secrets.key")
+	box, err := secrets.OpenBox(dir + "/secrets.key", false)
 	if err != nil {
 		t.Fatal(err)
 	}

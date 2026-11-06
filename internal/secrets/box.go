@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 const keySize = 32
@@ -18,28 +19,79 @@ type Box struct {
 	aead cipher.AEAD
 }
 
-// OpenBox lädt den Schlüssel aus path oder erzeugt ihn mit Modus 0600.
-func OpenBox(path string) (*Box, error) {
+// OpenBox lädt den Schlüssel aus path oder erzeugt ihn mit Modus 0600. Eine leere
+// oder zu kurze Datei stammt von einem abgebrochenen ersten Schreiben; sie gilt nur
+// als fehlend, solange sealedInUse falsch ist (die Konfiguration enthält noch keine
+// verschlüsselten Werte). Sonst wären diese Werte mit einem neuen Schlüssel verloren.
+func OpenBox(path string, sealedInUse bool) (*Box, error) {
 	key, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		key = make([]byte, keySize)
-		if _, err := rand.Read(key); err != nil {
-			return nil, fmt.Errorf("Schlüssel erzeugen: %w", err)
-		}
-		if err := os.WriteFile(path, key, 0o600); err != nil {
-			return nil, fmt.Errorf("Schlüssel speichern: %w", err)
-		}
-	} else if err != nil {
-		return nil, fmt.Errorf("Schlüssel lesen: %w", err)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		key, err = createKey(path)
+	case err != nil:
+		return nil, fmt.Errorf("Schlüsseldatei %s nicht lesbar: %w", path, err)
+	case len(key) < keySize && !sealedInUse:
+		key, err = createKey(path)
+	case len(key) != keySize:
+		return nil, fmt.Errorf("Schlüsseldatei %s ist beschädigt (%d statt %d Byte); gespeicherte VNC-Passwörter "+
+			"und der gemeinsame Schlüssel sind damit nicht lesbar", path, len(key), keySize)
 	}
-	if len(key) != keySize {
-		return nil, fmt.Errorf("Schlüsseldatei %s hat ungültige Länge %d", path, len(key))
+	if err != nil {
+		return nil, err
 	}
 	aead, err := newGCM(key)
 	if err != nil {
 		return nil, err
 	}
 	return &Box{aead: aead}, nil
+}
+
+// createKey schreibt einen neuen Schlüssel atomar: Ein Stromausfall hinterlässt
+// entweder keine oder eine vollständige Datei.
+func createKey(path string) ([]byte, error) {
+	key := make([]byte, keySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("Schlüssel erzeugen: %w", err)
+	}
+	if err := writeFileAtomic(path, key, 0o600); err != nil {
+		return nil, fmt.Errorf("Schlüssel speichern: %w", err)
+	}
+	return key, nil
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) (err error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+	}()
+	if err = tmp.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err = tmp.Write(data); err != nil {
+		return err
+	}
+	if err = tmp.Sync(); err != nil {
+		return err
+	}
+	if err = tmp.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 func newGCM(key []byte) (cipher.AEAD, error) {

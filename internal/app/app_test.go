@@ -96,7 +96,7 @@ func newFixture(t *testing.T) *fixture {
 
 func (f *fixture) seal(s string) string {
 	f.t.Helper()
-	b, err := secrets.OpenBox(filepath.Join(f.data, "secrets.key"))
+	b, err := secrets.OpenBox(filepath.Join(f.data, "secrets.key"), false)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -505,5 +505,40 @@ func TestAdminPortBusyKeepsTiles(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTruncatedKeyFileIsReplacedOnlyWithoutSealedValues(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	if err := os.WriteFile(filepath.Join(f.data, "secrets.key"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newService(f.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.box == nil {
+		t.Fatalf("leere Schlüsseldatei ohne verschlüsselte Werte nicht ersetzt: %v", s.Status().Warnings)
+	}
+	s.close()
+
+	g := newFixture(t)
+	g.saveConfig(func(c *config.Config) {
+		c.HMIs = []config.HMI{{ID: "a", Name: "Presse", Host: "10.0.0.1", Port: 5900, PasswordEnc: "AAAA"}}
+	})
+	if err := os.WriteFile(filepath.Join(g.data, "secrets.key"), []byte("kurz"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err = newService(g.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if s.box != nil || !strings.Contains(strings.Join(s.Status().Warnings, " "), "beschädigt") {
+		t.Fatalf("beschädigte Schlüsseldatei bei verschlüsselten Werten: box=%v %v", s.box != nil, s.Status().Warnings)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(g.data, "secrets.key")); string(raw) != "kurz" {
+		t.Fatal("beschädigte Schlüsseldatei überschrieben")
 	}
 }

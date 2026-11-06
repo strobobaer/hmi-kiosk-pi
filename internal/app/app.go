@@ -89,6 +89,7 @@ type service struct {
 	touch        *selftest.TouchBoard
 
 	markGood   bool // der geladene Stand kommt unverändert aus config.json
+	loadFailed bool // keine lesbare Konfiguration, es gilt die Grundeinstellung
 
 	mu       sync.RWMutex
 	cfg      config.Config
@@ -178,6 +179,7 @@ func (s *service) loadConfig() {
 	case err != nil:
 		cfg = config.Default()
 		warn = fmt.Sprintf("Konfiguration nicht lesbar, der Dienst läuft mit der Grundeinstellung: %v", err)
+		s.loadFailed = true
 	case info.UsedFallback:
 		warn = fmt.Sprintf("Konfiguration defekt, Rückfall auf den letzten guten Stand: %s", info.Reason)
 	case info.FirstStart:
@@ -201,7 +203,7 @@ func (s *service) loadConfig() {
 func (s *service) openBox() {
 	err := os.MkdirAll(s.opts.DataDir, 0o700)
 	if err == nil {
-		s.box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile))
+		s.box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile), hasSealedValues(s.config()) || s.loadFailed)
 	}
 	if err != nil {
 		s.box = nil
@@ -430,3 +432,16 @@ func closedChan() <-chan struct{} {
 	return c
 }
 
+// hasSealedValues meldet, ob die Konfiguration mit der Schlüsseldatei verschlüsselte
+// Werte enthält; ein neuer Schlüssel machte sie dann unlesbar.
+func hasSealedValues(c config.Config) bool {
+	if c.SharedKeyEnc != "" {
+		return true
+	}
+	for _, h := range c.HMIs {
+		if h.PasswordEnc != "" {
+			return true
+		}
+	}
+	return false
+}
