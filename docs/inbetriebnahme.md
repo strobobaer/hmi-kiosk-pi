@@ -517,7 +517,7 @@ Diese Liste ist die Abnahme am Gerät. Alles andere ist ohne Hardware geprüft (
 14. [ ] Selbstprüfung ohne FEHLER, PRÜFEN-Zeilen einzeln bewertet (Abschnitt 7).
 15. [ ] Chromium während einer Sitzung beenden (zum Beispiel per SSH-Abbild oder nach Abschnitt 8, Alternative): Die Leiste kommt wieder, die VNC-Sitzung bleibt (H17).
 16. [ ] Mitschauen und paralleler Zugriff über das PDH am echten HMI, sonst Option aus lassen (H6, Abschnitt 6.3).
-17. [ ] Optional, falls ein Gerät mit Tastatur zur Verfügung steht: Chromium-Tastenkürzel und Adresseingabe im Kiosk. Ergebnis entscheidet über eine URL-Sperre per Richtlinie (H16).
+17. [ ] Optional, falls ein Gerät mit Tastatur zur Verfügung steht: Chromium-Tastenkürzel und Adresseingabe im Kiosk. Die URL-Sperre per Richtlinie ist im Abbild; geprüft wird, dass Adresseingaben ins Leere laufen und die Kachelseite weiter lädt (H16).
 
 **Netzwerk und Zeit (Abschnitt 6.6, 6.7)**
 

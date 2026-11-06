@@ -122,7 +122,7 @@ Auslegung: Fordert ein primäres Terminal ein HMI an, das ein anderes Terminal a
 | 11.5 | Einmalige Zufallszahl vor ändernden Befehlen | `c/httpapi_test.go` TestNonceIs32RandomBytes, TestHandlerRejectsReusedNonce, TestHandlerRejectsUnknownNonce, TestNonceExpiresAfter30s, TestNonceStoreBoundedOldestEvicted | abgedeckt |
 | 11.6 | Kachelseite nur auf `127.0.0.1`, zeigt nie Adressen oder Passwörter | Bindung `a/app.go` (`DefaultLocalAddr`), `a/app_test.go` TestLocalPortBusyIsAnError; `w/local_test.go` TestTilesNeverContainHostOrPassword, TestForeignHostRejectedEverywhere, TestPostRejectedWithForeignOrigin | abgedeckt |
 | 11.7 | Chromium: kein Menü, keine Tastenkürzel | `--kiosk`/`--app` (`internal/browser/browser_test.go` TestTilesArgsIncludeKioskAndRAMProfile); labwc-Bindungen ersetzt (`rc.xml`); Chromium-eigene Tastenkürzel gelten bei angeschlossener Tastatur weiter, das Gerät hat keine | nur Hardware |
-| 11.8 | Chromium: Navigation nur zur lokalen Adresse | Nur mittelbar: Kiosk ohne Adressleiste, Seiten ohne externe Links und mit CSP (`w/local_test.go` TestAssetsHaveNoExternalURLs, TestAssetsServedWithSecurityHeaders). Keine Chromium-Richtlinie (URL-Sperre) im Abbild | nicht abgedeckt (siehe unten) |
+| 11.8 | Chromium: Navigation nur zur lokalen Adresse | Chromium-Richtlinie `packaging/rootfs/etc/chromium/policies/managed/hmi-kiosk.json` (`URLBlocklist` `["*"]`, `URLAllowlist` `http://127.0.0.1:8080` und `http://localhost:8080`) im Abbild (`stage-hmi/01-hmi/00-run.sh`) und in `install.sh`; `verify-image.sh` Prüfung `chromium-richtlinie`; `test/install/check.sh` (Datei, zwei Läufe gleich). Wirkung mit dem Debian-Paket `chromium` 156 (trixie, headless) in einem Container belegt: Kachelseite auf 127.0.0.1:8080 und localhost:8080 lädt, `https://example.com`, ein anderer lokaler Port und 127.0.0.1:8081 liefern ERR_BLOCKED_BY_ADMINISTRATOR, ohne Richtlinie lädt die fremde Seite | abgedeckt (Wirkung am Gerät in H16) |
 | 11.9 | VNC-Verbindung unverschlüsselt im abgeschotteten Netz akzeptiert | Entscheidung, kein Prüfpunkt | abgedeckt |
 
 ## Abschnitt 12: Tests
@@ -147,8 +147,6 @@ Auslegung: Fordert ein primäres Terminal ein HMI an, das ein anderes Terminal a
 
 ## Nicht abgedeckt
 
-Eine Zeile: **11.8** (Chromium: Navigation nur zur lokalen Adresse).
-
-Erklärung: Der Kiosk-Modus hat keine Adressleiste, die Seiten enthalten keine Links nach außen und erlauben per CSP nur eigene Quellen. Eine harte Sperre durch eine Chromium-Richtlinie (`URLBlocklist` mit `*`, `URLAllowlist` für `127.0.0.1:8080`) gibt es nicht. Sie wurde in dieser Prüfung nicht ergänzt, weil sie sich ohne das Gerät nicht erproben lässt und eine falsche Liste die Kachelseite sperren würde. Der Punkt steht in Spezifikation Abschnitt 14 als offen und in der Hardwareliste. Praktisch relevant wird er nur mit angeschlossener Tastatur oder durch eine Weiterleitung in einer Seite, die der Dienst selbst ausliefert.
+Keine Zeile. Die frühere Lücke 11.8 (Navigation nur zur lokalen Adresse) ist durch die Chromium-Richtlinie geschlossen, siehe die Zeile oben; am Gerät bleibt nur die Sichtprüfung (H16).
 
 Alle übrigen Zeilen sind abgedeckt oder stehen in der Hardwareliste.

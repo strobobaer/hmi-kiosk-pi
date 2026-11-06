@@ -256,6 +256,17 @@ else
 	bad rc-openbox "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/openbox/rc.xml"
 fi
 
+# Navigationssperre: Chromium-Richtlinie sperrt alles außer der Kachelseite auf dem lokalen Port
+pol="$R/etc/chromium/policies/managed/hmi-kiosk.json"
+pf=$(flat "$pol" 2>/dev/null || true)
+if printf '%s' "$pf" | grep -Fq '"URLBlocklist": ["*"]' &&
+	printf '%s' "$pf" | grep -Fq '"URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080"]' &&
+	[ "$(stat -c %u:%g:%a "$pol")" = 0:0:644 ]; then
+	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1:8080 und localhost:8080, root 644"
+else
+	bad chromium-richtlinie "/etc/chromium/policies/managed/hmi-kiosk.json fehlt oder weicht ab (URLBlocklist [\"*\"], URLAllowlist nur lokale Kachelseite)"
+fi
+
 # Dienste
 msg=""
 for u in $UNITS; do

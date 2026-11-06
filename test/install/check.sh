@@ -60,7 +60,7 @@ sum_before=$(sha256sum $DATA/config.json | cut -d' ' -f1)
 
 state() {
 	(cd / && sha256sum etc/systemd/system/hmi-kiosk*.service etc/systemd/system/hmi-kiosk*.d/10-install.conf \
-		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session etc/xdg/labwc/rc.xml "${DATA#/}/app/$V/hmi-kiosk")
+		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session etc/xdg/labwc/rc.xml etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/hmi-kiosk")
 	find $DATA -printf '%p %l %u %m\n' | sort
 }
 

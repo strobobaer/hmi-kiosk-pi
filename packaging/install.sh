@@ -210,6 +210,7 @@ install_system_files() {
 	put 644 "$HERE/rootfs/etc/xdg/labwc/rc.xml" /etc/xdg/labwc/rc.xml
 	put 644 "$HERE/rootfs/etc/xdg/labwc/environment" /etc/xdg/labwc/environment
 	put 644 "$HERE/rootfs/etc/xdg/openbox/rc.xml" /etc/xdg/openbox/rc.xml
+	put 644 "$HERE/rootfs/etc/chromium/policies/managed/hmi-kiosk.json" /etc/chromium/policies/managed/hmi-kiosk.json
 	put 644 "$HERE/rootfs/etc/pam.d/hmi-kiosk-session" /etc/pam.d/hmi-kiosk-session
 	put 755 "$HERE/rootfs/usr/local/bin/hmi-kiosk-session" /usr/local/bin/hmi-kiosk-session
 	put 755 "$HERE/bin/hmi-kiosk-helper" /usr/local/bin/hmi-kiosk-helper

@@ -371,7 +371,7 @@ Diese Punkte sind nicht bestätigt. Jeder hat eine Nummer, die in der Liste in `
 | H13 | Mauszeiger bleibt unter labwc über Chromium und Remmina unsichtbar | Sichtprüfung | Cursor-Thema im Abbild |
 | H14 | `timedatectl` und Uhrzeit setzen um die Sommerzeit-Umstellung (lokale Zeit, mehrdeutige Stunde) | Am Gerät | NTP statt Hand-Uhrzeit |
 | H15 | Dauerprüfung in der Admin-Seite verliert ihren Stand bei Neustart des Dienstes (Messwerte bleiben in `soak.jsonl`) | Bei der 24-Stunden-Prüfung | Prüfung neu starten |
-| H16 | Chromium: Navigation nur zur lokalen Adresse ist nicht per Richtlinie erzwungen (Abgleich 11.8); Tastenkürzel bei angeschlossener Tastatur | Am Gerät mit Tastatur | Richtlinie (`URLBlocklist`) nachrüsten |
+| H16 | Chromium-Navigationssperre (Richtlinie `URLBlocklist` `*`, `URLAllowlist` nur 127.0.0.1:8080 und localhost:8080) wirkt am Gerät; Tastenkürzel bei angeschlossener Tastatur (Abgleich 11.8; Richtlinie im Container mit Chromium 156 belegt) | Am Gerät mit Tastatur: Adresse eintippen, Kachelseite lädt weiter | Richtlinie anpassen oder entfernen |
 | H17 | Chromium-Absturz während einer Sitzung: Leiste kehrt zurück, VNC läuft weiter (nur aus dem Aufbau abgeleitet) | Am Gerät, Prozess beenden | – |
 | H18 | Echte Stromausfälle, auch während einer Sitzung und während der Ersteinrichtung (Rückfall `.good`, 500 „Konfiguration nicht lesbar“) | Inbetriebnahme | Karte tauschen |
 | H19 | Hardware-Watchdog: Einstellung wird gemeldet, ein echter Aussetzer wird nicht erzeugt | Am Gerät | – |
