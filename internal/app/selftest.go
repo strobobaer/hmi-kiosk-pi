@@ -132,17 +132,14 @@ func (s *service) showSelftestPage(page string) {
 
 // browserTarget wählt, was Chromium zeigt: während der Selbstprüfung deren Seiten.
 func (s *service) browserTarget(snap session.Snapshot) browser.Target {
-	hideBar := s.config().Kiosk.HideBar
+	// Die Prüfsitzungen sind nie eine Daueranzeige, also immer mit Leiste.
 	switch s.selftestPage.get() {
 	case "touch":
 		return browser.TargetTouchTest
 	case "bar":
-		if hideBar {
-			return browser.TargetNone
-		}
 		return browser.TargetBar
 	}
-	return browser.TargetFor(snap, hideBar)
+	return browser.TargetFor(snap)
 }
 
 // runSelftest führt die Prüfung aus; es läuft höchstens eine zugleich.

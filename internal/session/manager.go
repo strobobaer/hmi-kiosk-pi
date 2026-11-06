@@ -55,6 +55,7 @@ type attempt struct {
 	checked   bool // Passwort ist gelesen, a.password also gültig
 	permanent bool
 	auto      bool // ohne Touch gestartet, es kann also niemand rückfragen
+	barHidden bool // beim Start festgelegt: automatische Daueranzeige mit ausgeblendeter Leiste
 	confirmed bool // Rückfrage ist bejaht, nicht erneut fragen
 	watch     bool
 	decision  coord.Decision
@@ -311,6 +312,7 @@ func (m *Manager) buildSnapshot() Snapshot {
 	case m.cur != nil:
 		s.HMI, s.HMIName = m.cur.hmi.ID, m.cur.hmi.Name
 		s.ViewOnly = m.cur.hmi.ViewOnly || m.cur.watch
+		s.HideBar = m.cur.barHidden
 		if m.state == StateConfirming && m.cur.decision.Holder != nil {
 			h := *m.cur.decision.Holder
 			s.Confirm = &h

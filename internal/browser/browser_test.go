@@ -291,7 +291,7 @@ func TestTargetForMapping(t *testing.T) {
 		{session.StateTiles, true, TargetTiles},
 	}
 	for _, c := range cases {
-		if got := TargetFor(session.Snapshot{State: c.st}, c.hide); got != c.want {
+		if got := TargetFor(session.Snapshot{State: c.st, HideBar: c.hide}); got != c.want {
 			t.Errorf("%s hide=%v: %v, erwartet %v", c.st, c.hide, got, c.want)
 		}
 	}

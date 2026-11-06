@@ -636,22 +636,39 @@ func TestSessionNumberIncrementsPerStart(t *testing.T) {
 	}
 }
 
-func TestGeometryWithAndWithoutBar(t *testing.T) {
+func TestGeometryKeepsBarForTouchSessionsEvenWithHideBar(t *testing.T) {
 	h := newHarness(t, nil)
 	h.open("a")
-	h.waitState(StateStarting)
-	s := h.profile.last()
-	if s.X != 0 || s.Y != 48 || s.W != 1920 || s.H != 1080-48 {
-		t.Fatalf("mit Leiste %+v", s)
+	s := h.waitState(StateStarting)
+	if p := h.profile.last(); p.X != 0 || p.Y != 48 || p.W != 1920 || p.H != 1080-48 || s.HideBar {
+		t.Fatalf("mit Leiste %+v, Snapshot %+v", p, s)
 	}
 	h.m.Back()
 	h.waitState(StateTiles)
+	// Validate lässt HideBar nur mit Daueranzeige zu; ein anderes HMI per Touch zeigt die Leiste trotzdem.
 	h.setConfig(func(c *config.Config) { c.Kiosk.HideBar = true })
 	h.open("b")
-	h.waitState(StateStarting)
-	s = h.profile.last()
-	if s.X != 0 || s.Y != 0 || s.W != 1920 || s.H != 1080 {
-		t.Fatalf("ohne Leiste %+v", s)
+	s = h.waitState(StateStarting)
+	if p := h.profile.last(); p.Y != 48 || p.H != 1080-48 || s.HideBar {
+		t.Fatalf("Touch-Sitzung bei HideBar ohne Leiste: %+v, Snapshot %+v", p, s)
+	}
+}
+
+func TestGeometryHidesBarOnlyForAutomaticPermanentDisplay(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.cfg.Kiosk.PermanentHMI = "a"
+		h.cfg.Kiosk.HideBar = true
+	})
+	s := h.waitState(StateStarting)
+	if p := h.profile.last(); p.X != 0 || p.Y != 0 || p.W != 1920 || p.H != 1080 || !s.HideBar {
+		t.Fatalf("Daueranzeige ohne Leiste: %+v, Snapshot %+v", p, s)
+	}
+	h.m.Back()
+	h.waitState(StateTiles)
+	h.open("a")
+	s = h.waitState(StateStarting)
+	if p := h.profile.last(); p.Y != 48 || p.H != 1080-48 || s.HideBar {
+		t.Fatalf("Touch auf die Kachel der Daueranzeige ohne Leiste: %+v, Snapshot %+v", p, s)
 	}
 }
 
@@ -1668,6 +1685,7 @@ func TestPermanentReconnectWaitsWhileBlockedWithoutGrowingBackoff(t *testing.T) 
 	h.waitState(StateReconnecting)
 	starts = h.runner.count()
 	h.advance(4*time.Second + 100*time.Millisecond)
+	h.waitState(StateStarting)
 	if h.runner.count() != starts+1 {
 		t.Fatalf("Wartezeit länger als 4 s: %d Starts", h.runner.count()-starts)
 	}

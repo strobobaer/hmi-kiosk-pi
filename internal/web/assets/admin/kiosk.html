@@ -13,13 +13,17 @@
       <option value="4"{{if eq .Layout "4"}} selected{{end}}>4 Spalten</option>
     </select>
   </label>
-  <label>Daueranzeige (festes HMI)
-    <select name="permanent">
-      <option value="">Keine</option>
-      {{$v := .Permanent}}{{range .HMIs}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
-    </select>
-  </label>
-  <label class="check"><input type="checkbox" name="hide_bar"{{if .HideBar}} checked{{end}}> Leiste ausblenden</label>
+  <fieldset class="stack">
+    <legend>Daueranzeige</legend>
+    <label>Festes HMI
+      <select name="permanent">
+        <option value="">Keine</option>
+        {{$v := .Permanent}}{{range .HMIs}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="hide_bar"{{if .HideBar}} checked{{end}}> Leiste bei der Daueranzeige ausblenden</label>
+    <p class="hint">Nur mit festem HMI und nur für dessen automatischen Start. Jede Sitzung, die per Touch auf einer Kachel beginnt, zeigt die Leiste mit „Zurück“.</p>
+  </fieldset>
   <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
 </form>
 {{end}}

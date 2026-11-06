@@ -46,6 +46,7 @@ type Snapshot struct {
 	State        State
 	HMI, HMIName string
 	ViewOnly     bool // nur ansehen: Einstellung des Terminals oder Mitschauen
+	HideBar      bool // Daueranzeige ohne Leiste: das Clientfenster belegt den ganzen Bildschirm
 	Notice       string
 	Confirm      *coord.Holder
 	Unreachable  []string

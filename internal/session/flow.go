@@ -175,7 +175,10 @@ func (m *Manager) buildSpec(a *attempt, cfg config.Config) client.Spec {
 		H:          h,
 		SessionN:   m.sessionN,
 	}
-	if !cfg.Kiosk.HideBar {
+	// Ausblenden gilt nur für die automatisch gestartete Daueranzeige: Wer per
+	// Touch beginnt, braucht „Zurück“ (Spec Abschnitt 4).
+	a.barHidden = cfg.Kiosk.HideBar && a.permanent && a.auto
+	if !a.barHidden {
 		s.Y = barHeight
 		s.H = h - barHeight
 	}

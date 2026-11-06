@@ -31,11 +31,12 @@ const (
 	baseURL     = "http://127.0.0.1:8080/"
 )
 
-// TargetFor: Die Kachelseite endet erst, wenn die Verbindung steht.
-func TargetFor(s session.Snapshot, hideBar bool) Target {
+// TargetFor: Die Kachelseite endet erst, wenn die Verbindung steht. Ohne Leiste
+// läuft nur die Daueranzeige, für die der Sitzungsautomat das festgelegt hat.
+func TargetFor(s session.Snapshot) Target {
 	switch s.State {
 	case session.StateConnected, session.StateWarned, session.StateStopping:
-		if hideBar {
+		if s.HideBar {
 			return TargetNone
 		}
 		return TargetBar

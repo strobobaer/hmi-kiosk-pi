@@ -49,6 +49,9 @@ func checkKiosk(k config.KioskCfg) error {
 	if k.InactivityMinutes < 0 || k.InactivityMinutes > maxInactivityMin {
 		return fmt.Errorf("Rückkehr bei Inaktivität muss zwischen 0 und %d Minuten liegen.", maxInactivityMin)
 	}
+	if k.HideBar && k.PermanentHMI == "" {
+		return errors.New(config.ErrHideBarWithoutPermanent)
+	}
 	switch k.Layout {
 	case "", "auto", "2", "3", "4":
 		return nil

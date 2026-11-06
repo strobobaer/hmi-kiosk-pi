@@ -386,3 +386,21 @@ func TestSharedKeyByHand(t *testing.T) {
 		t.Errorf("zu kurz: %d", r.Code)
 	}
 }
+
+func TestKioskHideBarNeedsPermanentDisplay(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.addHMI("x", "Presse", "")
+	r := b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "hide_bar": {"on"}})
+	if r.Code != http.StatusUnprocessableEntity || !strings.Contains(r.Body.String(), "nur bei einer Daueranzeige") {
+		t.Fatalf("ohne Daueranzeige: %d %s", r.Code, r.Body.String())
+	}
+	if e.cfg().Kiosk.HideBar {
+		t.Fatal("HideBar ohne Daueranzeige gespeichert")
+	}
+	r = b.get("/admin/kiosk")
+	body := r.Body.String()
+	if i, j := strings.Index(body, `name="permanent"`), strings.Index(body, `name="hide_bar"`); i < 0 || j < i ||
+		!strings.Contains(body, "Leiste bei der Daueranzeige ausblenden") {
+		t.Fatalf("Formular zeigt die Einstellung nicht bei der Daueranzeige: %s", body)
+	}
+}
