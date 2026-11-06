@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -47,20 +48,31 @@ func TestTigerVNCPasswordTruncatesTo8AndUsesFixedKey(t *testing.T) {
 	}
 }
 
-func TestTigerVNCArgs(t *testing.T) {
+func TestTigerVNCArgsPlaceWindowBelowBar(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "s")
-	cmd, err := (tigervnc{}).Prepare(dir, testSpec())
+	s := testSpec()
+	s.X, s.Y, s.W, s.H = 0, 48, 1920, 1032
+	cmd, err := (tigervnc{}).Prepare(dir, s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-FullScreen", "-PasswordFile=" + filepath.Join(dir, "passwd"), "-ViewOnly=1", "10.0.0.5::5900"}
+	want := []string{"-geometry=1920x1032+0+48", "-PasswordFile=" + filepath.Join(dir, "passwd"), "-ViewOnly=1", "10.0.0.5::5900"}
 	if cmd.Path != "vncviewer" || strings.Join(cmd.Args, "|") != strings.Join(want, "|") {
 		t.Fatalf("cmd = %+v", cmd)
 	}
-	s := testSpec()
+	if slices.Contains(cmd.Args, "-FullScreen") {
+		t.Fatal("-FullScreen verdeckt die Leiste")
+	}
 	s.ViewOnly = false
+	s.Y, s.H = 0, 1080
 	cmd, _ = (tigervnc{}).Prepare(dir, s)
-	if cmd.Args[2] != "-ViewOnly=0" {
+	if cmd.Args[0] != "-geometry=1920x1080+0+0" || cmd.Args[2] != "-ViewOnly=0" {
 		t.Fatalf("args %v", cmd.Args)
+	}
+}
+
+func TestTigerVNCClassMatchesWindowRules(t *testing.T) {
+	if TigerVNCClass != "Vncviewer" {
+		t.Fatalf("Klasse %q", TigerVNCClass)
 	}
 }

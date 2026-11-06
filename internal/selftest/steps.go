@@ -127,10 +127,7 @@ func (r *rig) start(password string, viewOnly bool) (*tracked, error) {
 	spec := client.Spec{
 		Host: "127.0.0.1", Port: r.port, Password: password, ViewOnly: viewOnly,
 		Quality: cfg.Client.Quality, ColorDepth: cfg.Client.ColorDepth, Scale: cfg.Client.Scale,
-		W: w, H: h, SessionN: sessionBase + r.n,
-	}
-	if !cfg.Kiosk.HideBar {
-		spec.Y, spec.H = barHeight, h-barHeight
+		X: 0, Y: barHeight, W: w, H: h - barHeight, SessionN: sessionBase + r.n,
 	}
 	r.n++
 	dir, cleanup, err := r.d.RAMDir()
@@ -313,12 +310,24 @@ var geometryRe = regexp.MustCompile(`(\d+)x(\d+)\+(-?\d+)\+(-?\d+)\s+\+(-?\d+)\+
 
 type windowGeom struct{ w, h, x, y int }
 
+// windowMarker nennt, woran das Clientfenster in "xwininfo -root -tree" zu erkennen ist:
+// Remmina am Titel, TigerVNC an der Fensterklasse.
+func windowMarker(profile string) (marker, label string) {
+	switch profile {
+	case "remmina":
+		return `"` + client.RemminaTitlePrefix, "mit dem Titel „" + client.RemminaTitlePrefix + "“"
+	case "tigervnc":
+		return `"` + client.TigerVNCClass + `")`, "der Klasse „" + client.TigerVNCClass + "“"
+	}
+	return "", ""
+}
+
 // parseWindows liest aus der Ausgabe von "xwininfo -root -tree" die Fenster, deren
-// Titel mit prefix beginnt: Größe und absolute Lage.
-func parseWindows(out, prefix string) []windowGeom {
+// Zeile marker enthält: Größe und absolute Lage.
+func parseWindows(out, marker string) []windowGeom {
 	var ws []windowGeom
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.Contains(line, `"`+prefix) {
+		if !strings.Contains(line, marker) {
 			continue
 		}
 		m := geometryRe.FindStringSubmatch(line)
@@ -350,15 +359,13 @@ func windowAndBar(ctx context.Context, d Deps) StepResult {
 	}
 	sw, sh := d.Screen()
 	want := windowGeom{w: sw, h: sh - barHeight, x: 0, y: barHeight}
-	if cfg.Kiosk.HideBar {
-		want = windowGeom{w: sw, h: sh}
-	}
 	check := fmt.Sprintf("Bitte prüfen: Die Leiste (Name, Modus, Zurück) liegt oben, das Bild darunter füllt die Fläche %d×%d ab y=%d, "+
 		"das Clientfenster hat keinen Rahmen und keine Titelleiste.", want.w, want.h, want.y)
 
-	if cfg.Display.GraphicsProfile != "x11" || d.Profile().Name() != "remmina" {
-		return StepResult{OK: true, NeedsHuman: true, Detail: "Nicht automatisch gemessen (unter labwc fehlt ein Werkzeug zum Auslesen der Fenster, " +
-			"und der Client läuft nicht als Fenster im X11-Profil). Der Client ist verbunden. " + check}
+	marker, label := windowMarker(d.Profile().Name())
+	if cfg.Display.GraphicsProfile != "x11" || marker == "" {
+		return StepResult{OK: true, NeedsHuman: true, Detail: "Nicht automatisch gemessen (unter labwc fehlt ein Werkzeug zum Auslesen der Fenster). " +
+			"Der Client ist verbunden. " + check}
 	}
 	if d.Exec == nil {
 		return StepResult{NeedsHuman: true, Detail: "Fensterlage nicht messbar: kein Programmaufruf angebunden. " + check}
@@ -370,7 +377,7 @@ func windowAndBar(ctx context.Context, d Deps) StepResult {
 		if err != nil {
 			return StepResult{NeedsHuman: true, Detail: fmt.Sprintf("Fensterlage nicht messbar: xwininfo fehlt oder schlug fehl (%v). %s", err, check)}
 		}
-		found = parseWindows(out, client.RemminaTitlePrefix)
+		found = parseWindows(out, marker)
 		if len(found) > 0 || time.Now().After(deadline) {
 			break
 		}
@@ -379,7 +386,7 @@ func windowAndBar(ctx context.Context, d Deps) StepResult {
 		}
 	}
 	if len(found) == 0 {
-		return StepResult{NeedsHuman: true, Detail: "Kein Fenster mit dem Titel „" + client.RemminaTitlePrefix + "“ gefunden, obwohl der Client verbunden ist. " + check}
+		return StepResult{NeedsHuman: true, Detail: "Kein Fenster " + label + " gefunden, obwohl der Client verbunden ist. " + check}
 	}
 	for _, g := range found {
 		if g == want {

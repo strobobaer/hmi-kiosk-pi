@@ -3,6 +3,7 @@ package client
 import (
 	"crypto/des"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,6 +11,10 @@ import (
 
 // Fester Schlüssel des VNC-Passwortdateiformats (für Standard-DES).
 const tigervncKeyHex = "e84ad660c4721ae0"
+
+// TigerVNCClass ist die Fensterklasse (WM_CLASS) von vncviewer; die Fensterregeln
+// von labwc und openbox und die Selbstprüfung erkennen das Fenster daran.
+const TigerVNCClass = "Vncviewer"
 
 type tigervnc struct{}
 
@@ -46,7 +51,8 @@ func (tigervnc) Prepare(dir string, s Spec) (Command, error) {
 	return Command{
 		Path: "vncviewer",
 		Args: []string{
-			"-FullScreen",
+			// Kein -FullScreen: Das Fenster läge sonst über der Leiste (Spec Abschnitt 6).
+			fmt.Sprintf("-geometry=%dx%d+%d+%d", s.W, s.H, s.X, s.Y),
 			"-PasswordFile=" + pf,
 			"-ViewOnly=" + boolStr(s.ViewOnly),
 			s.Host + "::" + strconv.Itoa(s.Port),

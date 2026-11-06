@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
 )
@@ -451,5 +452,36 @@ func TestWaitDisconnectedGraceIsTwoSecondsRegardlessOfPoll(t *testing.T) {
 	}
 	if el := time.Since(begin); el < 1900*time.Millisecond || el > 3500*time.Millisecond {
 		t.Fatalf("Wartezeit %v statt etwa 2 s", el)
+	}
+}
+
+func TestWindowStepMeasuresTigerVNCOnX11(t *testing.T) {
+	const tree = `
+     2 children:
+     0x600004 "TestDesktop - TigerVNC": ("vncviewer" "Vncviewer")  1280x752+0+48  +0+48
+     0x400001 "Sitzungsleiste": ("127.0.0.1__bar" "hmi-kiosk-bar")  1280x48+0+0  +0+0
+`
+	for _, tc := range []struct {
+		name, out string
+		ok        bool
+	}{
+		{"richtig", tree, true},
+		{"Vollbild über der Leiste", strings.Replace(tree, "1280x752+0+48  +0+48", "1280x800+0+0  +0+0", 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.cfg.Display.GraphicsProfile = "x11"
+			f.d.Profile = func() client.Profile { return fakeProfile{name: "tigervnc"} }
+			f.d.Exec = func(_ context.Context, name string, args ...string) (string, error) {
+				if name == "xwininfo" {
+					return tc.out, nil
+				}
+				return "", errors.New("nicht vorhanden")
+			}
+			r := byName(t, Run(context.Background(), f.d))["fenster-leiste"]
+			if r.OK != tc.ok || !strings.Contains(r.Detail, "1280") {
+				t.Fatalf("OK=%v: %+v", r.OK, r)
+			}
+		})
 	}
 }

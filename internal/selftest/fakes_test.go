@@ -27,9 +27,14 @@ import (
 )
 
 // fakeProfile reicht Host, Port und Passwort an den gefälschten Client weiter.
-type fakeProfile struct{}
+type fakeProfile struct{ name string }
 
-func (fakeProfile) Name() string { return "remmina" }
+func (p fakeProfile) Name() string {
+	if p.name == "" {
+		return "remmina"
+	}
+	return p.name
+}
 func (fakeProfile) Prepare(dir string, s client.Spec) (client.Command, error) {
 	return client.Command{Path: "fake", Args: []string{s.Host, strconv.Itoa(s.Port), s.Password, strconv.FormatBool(s.ViewOnly)}}, nil
 }
