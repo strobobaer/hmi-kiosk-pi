@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
 	"hmikiosk/internal/session"
 )
@@ -387,5 +388,21 @@ func TestForeignHostRejectedEverywhere(t *testing.T) {
 	req.Host = "localhost:8080"
 	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 {
 		t.Fatalf("localhost:8080 abgelehnt: %v", err)
+	}
+}
+
+func TestTileSymbolsAndColorsMatchConfigSets(t *testing.T) {
+	if len(icons) != len(config.HMIIcons) || len(colors) != len(config.HMIColors) {
+		t.Fatalf("Mengen verschieden: %d/%d Symbole, %d/%d Farben", len(icons), len(config.HMIIcons), len(colors), len(config.HMIColors))
+	}
+	for _, n := range config.HMIIcons {
+		if _, ok := icons[n]; !ok {
+			t.Errorf("Symbol %q ohne Bild", n)
+		}
+	}
+	for _, n := range config.HMIColors {
+		if !colors[n] {
+			t.Errorf("Farbe %q ohne Klasse", n)
+		}
 	}
 }

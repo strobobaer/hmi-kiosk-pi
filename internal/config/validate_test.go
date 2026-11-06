@@ -95,3 +95,130 @@ func TestValidateRejectsPermanentHMIUnknown(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestValidateRejectsClientValuesOutsideTheClosedSets(t *testing.T) {
+	for _, d := range []int{0, 24, 1} {
+		c := sample()
+		c.Client.ColorDepth = d
+		if Validate(c) == nil {
+			t.Errorf("color depth %d accepted", d)
+		}
+	}
+	for _, q := range []int{-1, 3, 8, 10} {
+		c := sample()
+		c.Client.Quality = q
+		if Validate(c) == nil {
+			t.Errorf("quality %d accepted", q)
+		}
+	}
+	for _, p := range []string{"", "vinagre", "Remmina"} {
+		c := sample()
+		c.Client.Profile = p
+		if Validate(c) == nil {
+			t.Errorf("profile %q accepted", p)
+		}
+	}
+	for _, d := range []int{8, 16, 32} {
+		for _, q := range []int{0, 1, 2, 9} {
+			for _, p := range []string{"remmina", "tigervnc"} {
+				c := sample()
+				c.Client.ColorDepth, c.Client.Quality, c.Client.Profile = d, q, p
+				if err := Validate(c); err != nil {
+					t.Errorf("depth %d quality %d profile %s rejected: %v", d, q, p, err)
+				}
+			}
+		}
+	}
+}
+
+func TestValidateRejectsNegativeInactivity(t *testing.T) {
+	c := sample()
+	c.Kiosk.InactivityMinutes = -1
+	if Validate(c) == nil {
+		t.Error("negative inactivity accepted")
+	}
+	c.Kiosk.InactivityMinutes = 0
+	if err := Validate(c); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestValidateDisplayOverrideIsAPair(t *testing.T) {
+	for _, wh := range [][2]int{{1280, 0}, {0, 800}, {-1, 800}, {1280, -5}, {-1, -1}} {
+		c := sample()
+		c.Display.OverrideW, c.Display.OverrideH = wh[0], wh[1]
+		if Validate(c) == nil {
+			t.Errorf("override %v accepted", wh)
+		}
+	}
+	for _, wh := range [][2]int{{0, 0}, {1280, 800}} {
+		c := sample()
+		c.Display.OverrideW, c.Display.OverrideH = wh[0], wh[1]
+		if err := Validate(c); err != nil {
+			t.Errorf("override %v rejected: %v", wh, err)
+		}
+	}
+}
+
+func TestValidateRestrictsIconAndColor(t *testing.T) {
+	for _, icon := range []string{"skull", "Monitor", "<svg>"} {
+		c := sample()
+		c.HMIs[0].Icon = icon
+		if Validate(c) == nil {
+			t.Errorf("icon %q accepted", icon)
+		}
+	}
+	for _, color := range []string{"pink", "Blue", "#fff"} {
+		c := sample()
+		c.HMIs[0].Color = color
+		if Validate(c) == nil {
+			t.Errorf("color %q accepted", color)
+		}
+	}
+	for _, icon := range append([]string{""}, HMIIcons...) {
+		c := sample()
+		c.HMIs[0].Icon = icon
+		if err := Validate(c); err != nil {
+			t.Errorf("icon %q rejected: %v", icon, err)
+		}
+	}
+	for _, color := range append([]string{""}, HMIColors...) {
+		c := sample()
+		c.HMIs[0].Color = color
+		if err := Validate(c); err != nil {
+			t.Errorf("color %q rejected: %v", color, err)
+		}
+	}
+}
+
+func TestValidateRejectsDuplicatePeerNames(t *testing.T) {
+	c := sample()
+	c.Peers = []Peer{{Name: "Halle 2", Address: "10.0.0.9"}, {Name: "Halle 2", Address: "10.0.0.10"}}
+	if Validate(c) == nil {
+		t.Error("duplicate peer names accepted")
+	}
+}
+
+func TestValidateRejectsUnknownSchemaVersion(t *testing.T) {
+	for _, v := range []int{0, SchemaVersion + 1, -1} {
+		c := sample()
+		c.SchemaVersion = v
+		if Validate(c) == nil {
+			t.Errorf("schema version %d accepted", v)
+		}
+	}
+}
+
+func TestValidateRejectsHideBarWithoutPermanentHMI(t *testing.T) {
+	c := sample()
+	c.Kiosk.PermanentHMI = ""
+	c.Kiosk.HideBar = true
+	err := Validate(c)
+	if err == nil || !strings.Contains(err.Error(), "Daueranzeige") {
+		t.Fatalf("hide bar without permanent HMI: %v", err)
+	}
+	c.Kiosk.PermanentHMI = "h1"
+	if err := Validate(c); err != nil {
+		t.Error(err)
+	}
+}

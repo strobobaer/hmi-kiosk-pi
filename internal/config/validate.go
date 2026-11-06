@@ -1,8 +1,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"unicode"
 	"unicode/utf8"
 )
@@ -44,6 +46,9 @@ func validMode(m Mode) bool { return m == ModeTakeover || m == ModeLock }
 // Validate checks a configuration for values that would be unsafe or
 // unusable downstream (shell/ini injection, duplicate IDs, dangling refs).
 func Validate(c Config) error {
+	if c.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("Unbekannte Schemaversion %d (erwartet %d)", c.SchemaVersion, SchemaVersion)
+	}
 	if err := checkName("Terminalname", c.Terminal.Name); err != nil {
 		return err
 	}
@@ -80,7 +85,14 @@ func Validate(c Config) error {
 		if h.Takeover != "" && h.Takeover != StyleConfirm && h.Takeover != StyleImmediate {
 			return fmt.Errorf("HMI %q: Übernahmeart ungültig: %q", h.ID, h.Takeover)
 		}
+		if h.Icon != "" && !slices.Contains(HMIIcons, h.Icon) {
+			return fmt.Errorf("HMI %q: unbekanntes Symbol %q", h.ID, h.Icon)
+		}
+		if h.Color != "" && !slices.Contains(HMIColors, h.Color) {
+			return fmt.Errorf("HMI %q: unbekannte Farbe %q", h.ID, h.Color)
+		}
 	}
+	peerNames := map[string]bool{}
 	for i, p := range c.Peers {
 		if err := checkName(fmt.Sprintf("Peer %d: Name", i+1), p.Name); err != nil {
 			return err
@@ -91,9 +103,39 @@ func Validate(c Config) error {
 		if err := checkHost(fmt.Sprintf("Peer %q: Adresse", p.Name), p.Address); err != nil {
 			return err
 		}
+		if peerNames[p.Name] {
+			return fmt.Errorf("Terminalname doppelt in der Liste: %q", p.Name)
+		}
+		peerNames[p.Name] = true
 	}
 	if c.Kiosk.PermanentHMI != "" && !ids[c.Kiosk.PermanentHMI] {
 		return fmt.Errorf("Dauer-HMI unbekannt: %q", c.Kiosk.PermanentHMI)
+	}
+	if c.Kiosk.HideBar && c.Kiosk.PermanentHMI == "" {
+		return errors.New(ErrHideBarWithoutPermanent)
+	}
+	if c.Kiosk.InactivityMinutes < 0 {
+		return fmt.Errorf("Rückkehr bei Inaktivität darf nicht negativ sein: %d", c.Kiosk.InactivityMinutes)
+	}
+	return validateClientAndDisplay(c)
+}
+
+// ErrHideBarWithoutPermanent ist auch die Meldung des Kiosk-Formulars.
+const ErrHideBarWithoutPermanent = "Die Leiste lässt sich nur bei einer Daueranzeige ausblenden. Bitte zuerst ein Dauer-HMI wählen."
+
+func validateClientAndDisplay(c Config) error {
+	if c.Client.Profile != "remmina" && c.Client.Profile != "tigervnc" {
+		return fmt.Errorf("Unbekanntes Client-Profil: %q", c.Client.Profile)
+	}
+	if !slices.Contains([]int{0, 1, 2, 9}, c.Client.Quality) {
+		return fmt.Errorf("Unbekannte Qualitätsstufe: %d", c.Client.Quality)
+	}
+	if !slices.Contains([]int{8, 16, 32}, c.Client.ColorDepth) {
+		return fmt.Errorf("Unbekannte Farbtiefe: %d", c.Client.ColorDepth)
+	}
+	w, h := c.Display.OverrideW, c.Display.OverrideH
+	if (w != 0 || h != 0) && (w <= 0 || h <= 0) {
+		return fmt.Errorf("Auflösung unvollständig: %d×%d (beide Werte leer oder beide größer 0)", w, h)
 	}
 	return nil
 }

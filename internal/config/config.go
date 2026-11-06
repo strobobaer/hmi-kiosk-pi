@@ -118,3 +118,10 @@ func newID() string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// HMIIcons und HMIColors sind die geschlossenen Mengen für Symbol und Farbe einer
+// Kachel; leer heißt Standard. Die Kachelseite hat zu jedem Namen ein festes Bild.
+var (
+	HMIIcons  = []string{"monitor", "press", "tank", "conveyor", "gear", "bolt"}
+	HMIColors = []string{"blue", "green", "amber", "red", "gray", "violet"}
+)

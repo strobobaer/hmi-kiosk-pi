@@ -48,8 +48,8 @@ func closedOptions[V any](set map[string]V, labels map[string]string) []option {
 	return out
 }
 
-func validIcon(s string) bool  { _, ok := icons[s]; return ok }
-func validColor(s string) bool { return colors[s] }
+func validIcon(s string) bool  { return slices.Contains(config.HMIIcons, s) }
+func validColor(s string) bool { return slices.Contains(config.HMIColors, s) }
 
 // hmiFormData enthält die Eingaben als Text: Eine ungültige Zahl soll im Formular
 // stehen bleiben. Ein Passwortfeld gibt es hier bewusst nicht.
