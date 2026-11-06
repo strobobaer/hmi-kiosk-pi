@@ -42,11 +42,8 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 pub="${HMI_RELEASE_PUB:-.secrets/release.pub}"
-if [ ! -s "$pub" ]; then
-	die "Öffentlicher Release-Schlüssel fehlt: $pub. Einmalig erzeugen mit: hmi-kiosk-pack keygen -out .secrets (privaten Schlüssel sicher aufbewahren)."
-fi
-key="$(tr -d '\r\n' <"$pub")"
-[[ "$key" =~ ^[0-9a-fA-F]{64}$ ]] || die "$pub enthält keinen Ed25519-Schlüssel (64 Hex-Zeichen)"
+"$(dirname "$0")/check-release-pub.sh" "$pub" || exit 1
+key="$(cat "$pub")"
 
 ssh="${HMI_ENABLE_SSH:-0}"
 case "$ssh" in
