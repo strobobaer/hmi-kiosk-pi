@@ -160,8 +160,19 @@ for u in hmi-kiosk-firstboot.service hmi-kiosk-firstboot-data.service; do
 done
 enabled_in multi-user.target hmi-kiosk-firstboot.service || msg="$msg; hmi-kiosk-firstboot.service nicht aktiviert"
 enabled_in local-fs.target hmi-kiosk-firstboot-data.service || msg="$msg; hmi-kiosk-firstboot-data.service nicht aktiviert"
-grep -qx 'ConditionPathExists=!/data/.hmi-kiosk-firstboot-done' "$S/hmi-kiosk-firstboot.service" 2>/dev/null ||
-	msg="$msg; Erledigt-Marke auf /data fehlt in der Unit"
+grep -qx 'ConditionPathExists=!/etc/hmi-kiosk/firstboot-done' "$S/hmi-kiosk-firstboot.service" 2>/dev/null ||
+	msg="$msg; Erledigt-Marke /etc/hmi-kiosk/firstboot-done fehlt in der Unit"
+grep -qx 'DONE_MARKER=/etc/hmi-kiosk/firstboot-done' "$R/usr/local/sbin/hmi-kiosk-firstboot" 2>/dev/null ||
+	msg="$msg; firstboot schreibt die Erledigt-Marke nicht nach /etc/hmi-kiosk/firstboot-done"
+if [ -e "$R/etc/hmi-kiosk/firstboot-done" ] || [ -L "$R/etc/hmi-kiosk/firstboot-done" ]; then
+	msg="$msg; Erledigt-Marke steht schon im Abbild (der erste Start liefe nie)"
+fi
+if [ "$(stat -c %u:%g:%a "$R/etc/hmi-kiosk" 2>/dev/null)" != 0:0:755 ]; then
+	msg="$msg; /etc/hmi-kiosk nicht root:root 755"
+fi
+# shellcheck disable=SC2016 # gesucht wird der Text im Skript
+grep -q 'safe_dir "$app"' "$R/usr/local/sbin/hmi-kiosk-firstboot" 2>/dev/null ||
+	msg="$msg; firstboot prüft /data/app nicht auf symbolische Links"
 if [ -z "$msg" ]; then ok erster-start "Skript und Units vorhanden und aktiviert"; else bad erster-start "${msg#; }"; fi
 
 # fstab: /data steht nicht im Abbild; firstboot trägt es ohne nofail und mit Geräte-Frist ein.
@@ -174,13 +185,19 @@ fi
 grep '^FSTAB_LINE=' "$fb" 2>/dev/null | grep -q '/data .*ext4 .*x-systemd.device-timeout=30s' ||
 	msg="$msg; firstboot trägt /data nicht mit x-systemd.device-timeout=30s ein"
 if grep '^FSTAB_LINE=' "$fb" 2>/dev/null | grep -q nofail; then msg="$msg; firstboot trägt /data mit nofail ein"; fi
+# Feld 6 (fsck-Pass) 2: /data wird beim Start geprüft; fsck.repair=yes (cmdline) repariert ohne Rückfrage.
+grep '^FSTAB_LINE=' "$fb" 2>/dev/null | grep -Eq '[[:space:]]0[[:space:]]+2"$' ||
+	msg="$msg; firstboot trägt /data nicht mit fsck-Pass 2 ein"
+grep -Eq '(^|[[:space:]])fsck\.repair=yes([[:space:]]|$)' "$B/cmdline.txt" ||
+	msg="$msg; cmdline.txt ohne fsck.repair=yes (ein beschädigtes /data hielte den Start im Notfallmodus an)"
+grep -q '^ensure_fsck_repair' "$fb" 2>/dev/null || msg="$msg; firstboot ergänzt fsck.repair=yes nicht"
 grep -q 'nodiscard,lazy_itable_init=1,lazy_journal_init=1' "$fb" 2>/dev/null || msg="$msg; mkfs ohne nodiscard/lazy_init"
 for l in TimeoutStartSec=15min Conflicts=shutdown.target "Before=local-fs.target shutdown.target" DefaultDependencies=no \
 	"ExecStart=/usr/local/sbin/hmi-kiosk-firstboot prepare-data"; do
 	unit_has hmi-kiosk-firstboot-data.service "$l" || msg="$msg; $(basename "$d") ohne $l"
 done
 [ -d "$R/data" ] || msg="$msg; Einhängepunkt /data fehlt"
-if [ -z "$msg" ]; then ok fstab "kein /data-Eintrag im Abbild, firstboot ergänzt ihn ohne nofail"; else bad fstab "${msg#; }"; fi
+if [ -z "$msg" ]; then ok fstab "kein /data-Eintrag im Abbild, firstboot ergänzt ihn ohne nofail mit fsck-Pass 2, fsck.repair=yes"; else bad fstab "${msg#; }"; fi
 
 # initramfs des Pi-5-Kernels enthält overlayroot (sonst bliebe das Overlay wirkungslos)
 if [ ! -f "$B/initramfs_2712" ]; then

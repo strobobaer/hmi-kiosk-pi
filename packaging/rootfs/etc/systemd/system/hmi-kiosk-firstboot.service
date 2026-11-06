@@ -1,7 +1,8 @@
 [Unit]
 Description=HMI-Kiosk erster Start: /data einrichten, Overlay einschalten, Neustart
 RequiresMountsFor=/data /boot/firmware
-ConditionPathExists=!/data/.hmi-kiosk-firstboot-done
+# Die Marke liegt außerhalb von /data (root, untere Ebene des Overlays): Der Dienst kann sie nicht löschen.
+ConditionPathExists=!/etc/hmi-kiosk/firstboot-done
 Before=hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service
 
 [Service]

@@ -68,6 +68,8 @@ install -d -m 755 -o root -g root "${R}/data"
 CMDLINE="${R}/boot/firmware/cmdline.txt"
 sed -i -E 's/(^| )resize( |$)/\1\2/; s/  +/ /g; s/ +$//' "${CMDLINE}"
 grep -q 'consoleblank=0' "${CMDLINE}" || sed -i 's/$/ consoleblank=0/' "${CMDLINE}"
+# fsck.repair=yes (in pi-gen schon gesetzt): systemd-fsck repariert /data ohne Rückfrage beim Start.
+grep -Eq '(^| )fsck.repair=yes( |$)' "${CMDLINE}" || sed -i 's/$/ fsck.repair=yes/' "${CMDLINE}"
 
 # Unsichtbares Zeigerthema für labwc: ein durchsichtiges Bild 1x1 im Xcursor-Format.
 CURSORS="${R}/usr/share/icons/hmi-blank/cursors"

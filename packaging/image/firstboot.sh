@@ -6,7 +6,11 @@
 #                                     Start vor local-fs.target und endet sofort, wenn alles da ist.
 #   hmi-kiosk-firstboot finish        richtet /data ein, kopiert die erste Programmversion,
 #                                     schaltet Overlay und schreibgeschützte Boot-Partition ein
-#                                     und startet neu. Läuft, bis die Erledigt-Marke auf /data steht.
+#                                     und startet neu. Läuft, bis die Erledigt-Marke steht.
+#
+# Die Erledigt-Marke liegt in /etc/hmi-kiosk (root, untere Ebene des Overlays), nicht auf /data:
+# /data gehört dem Dienst, und eine dort löschbare Marke ließe finish als root erneut in einem
+# Ordner laufen, den der Dienst vorbereitet hat (Symlinks). finish folgt deshalb auch keinem Link.
 #
 # Das Abbild enthält keinen fstab-Eintrag für /data: Ohne nofail müsste die Partition sonst schon
 # innerhalb der Gerätefrist da sein, sonst Notfallmodus. Der Eintrag entsteht erst hier, solange
@@ -18,7 +22,7 @@ set -eu
 
 LABEL=HMIDATA
 DATA=/data
-DONE_MARKER=$DATA/.hmi-kiosk-firstboot-done
+DONE_MARKER=/etc/hmi-kiosk/firstboot-done
 RELEASE_FILE=/etc/hmi-kiosk/image-release
 INITIAL_DIR=/opt/hmi-kiosk/initial
 CMDLINE=/boot/firmware/cmdline.txt
@@ -116,12 +120,22 @@ probe_mount() {
 }
 
 # Entfernt genau die eigene Zeile wieder; die übrige fstab bleibt unverändert (atomar ersetzt).
+# Jeder Fehler wird gemeldet: Bliebe die Zeile stehen, endete der nächste Start im Notfallmodus.
 remove_fstab_entry() {
 	tmp="$FSTAB.hmi-kiosk.$$"
-	grep -vxF "$FSTAB_LINE" "$FSTAB" >"$tmp" || true
+	rc=0
+	grep -vxF "$FSTAB_LINE" "$FSTAB" >"$tmp" || rc=$?
+	# grep endet mit 1, wenn keine Zeile übrig bleibt; erst ab 2 ist es ein Fehler.
+	if [ "$rc" -gt 1 ]; then
+		rm -f "$tmp"
+		fail "$FSTAB nicht lesbar oder Kopie nicht schreibbar; die Zeile für $DATA steht noch in $FSTAB und muss von Hand entfernt werden"
+	fi
 	chmod --reference="$FSTAB" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
 	sync
-	mv -f "$tmp" "$FSTAB"
+	if ! mv -f "$tmp" "$FSTAB"; then
+		rm -f "$tmp"
+		fail "$FSTAB nicht ersetzbar; die Zeile für $DATA steht noch in $FSTAB und muss von Hand entfernt werden"
+	fi
 	sync
 }
 
@@ -156,36 +170,71 @@ image_version() {
 	echo "$v"
 }
 
+# safe_dir <pfad> <besitzer...>: Abbruch, wenn der Pfad ein symbolischer Link ist oder, falls
+# vorhanden, kein Ordner eines der genannten Besitzer. finish läuft als root in /data, das dem
+# Dienst gehört; ein vorbereiteter Link darf nie verfolgt werden (chown, install, printf).
+safe_dir() {
+	p=$1
+	shift
+	[ ! -L "$p" ] || fail "$p ist ein symbolischer Link; Erststart abgebrochen, es wird nichts verändert"
+	[ -e "$p" ] || return 0
+	[ -d "$p" ] || fail "$p ist kein Ordner; Erststart abgebrochen"
+	o=$(stat -c %U "$p")
+	for want in "$@"; do
+		[ "$o" != "$want" ] || return 0
+	done
+	fail "$p gehört $o statt $*; Erststart abgebrochen"
+}
+
 install_initial_version() {
 	v=$(image_version)
 	src=$INITIAL_DIR/$v
 	app=$DATA/app
 	[ -x "$src/hmi-kiosk" ] || fail "Erste Programmversion fehlt: $src/hmi-kiosk"
-	install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 "$app"
-	if [ -x "$app/$v/hmi-kiosk" ] && cmp -s "$src/hmi-kiosk" "$app/$v/hmi-kiosk"; then
+	safe_dir "$app" "$KIOSK_USER"
+	[ -d "$app" ] || install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 "$app"
+	safe_dir "$app" "$KIOSK_USER"
+	safe_dir "$app/$v" "$KIOSK_USER"
+	if [ -x "$app/$v/hmi-kiosk" ] && [ ! -L "$app/$v/hmi-kiosk" ] && cmp -s "$src/hmi-kiosk" "$app/$v/hmi-kiosk"; then
 		log "Version $v liegt schon in $app"
 	else
 		tmp=$app/.tmp-firstboot-$v
+		safe_dir "$tmp" root "$KIOSK_USER"
 		rm -rf "$tmp"
-		install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 "$tmp"
-		install -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 "$src/hmi-kiosk" "$tmp/hmi-kiosk"
+		# Erst als root befüllen, dann übergeben: Solange root hineinschreibt, gehört der
+		# Ordner nicht dem Dienst. chown -h ändert nur den Eintrag selbst.
+		install -d -o root -g root -m 0755 "$tmp"
+		safe_dir "$tmp" root
+		install -o root -g root -m 0755 "$src/hmi-kiosk" "$tmp/hmi-kiosk"
 		printf '%s\n' "$v" >"$tmp/VERSION"
-		chown "$KIOSK_USER:$KIOSK_USER" "$tmp/VERSION"
 		chmod 0644 "$tmp/VERSION"
+		chown -h "$KIOSK_USER:$KIOSK_USER" "$tmp/hmi-kiosk" "$tmp/VERSION" "$tmp"
 		sync
 		rm -rf "${app:?}/$v"
-		mv "$tmp" "$app/$v"
+		mv -T "$tmp" "$app/$v"
 		log "Version $v nach $app/$v kopiert"
 	fi
 	if [ -L "$app/current" ]; then
 		log "current zeigt schon auf $(readlink "$app/current"), bleibt so"
 	else
+		[ ! -e "$app/current" ] || fail "$app/current ist kein symbolischer Link; Erststart abgebrochen"
 		ln -sfn "$v" "$app/.current-firstboot"
 		chown -h "$KIOSK_USER:$KIOSK_USER" "$app/.current-firstboot"
 		mv -T "$app/.current-firstboot" "$app/current"
 		log "current zeigt auf $v"
 	fi
 	sync
+}
+
+# fsck.repair=yes: systemd-fsck repariert /data (Pass 2) beim Start ohne Rückfrage; ohne diese
+# Angabe bliebe ein beschädigtes Dateisystem im Notfallmodus stehen, an den niemand herankommt.
+ensure_fsck_repair() {
+	if grep -Eq '(^|[[:space:]])fsck\.repair=yes([[:space:]]|$)' "$CMDLINE"; then
+		return 0
+	fi
+	sed -i 's/[[:space:]]*fsck\.repair=[^[:space:]]*//g; s/$/ fsck.repair=yes/' "$CMDLINE"
+	grep -Eq '(^|[[:space:]])fsck\.repair=yes([[:space:]]|$)' "$CMDLINE" || fail "fsck.repair=yes fehlt in $CMDLINE"
+	log "fsck.repair=yes in $CMDLINE ergänzt"
 }
 
 enable_overlay() {
@@ -217,13 +266,21 @@ finish() {
 		return 0
 	fi
 	log "Erster Start: richte $DATA ein (Abbild $(image_version))"
+	[ ! -L "$DATA" ] || fail "$DATA ist ein symbolischer Link; Erststart abgebrochen"
 	chown "$KIOSK_USER:$KIOSK_USER" "$DATA"
 	chmod 0750 "$DATA"
 	# Der Helfer schreibt hier den NTP-Stand; der Dienst darf ihn nicht ändern.
-	install -d -o root -g root -m 0755 "$DATA/system"
+	safe_dir "$DATA/system" root
+	[ -d "$DATA/system" ] || install -d -o root -g root -m 0755 "$DATA/system"
+	safe_dir "$DATA/system" root
 	install_initial_version
+	ensure_fsck_repair
 	enable_overlay
-	date '+%Y-%m-%d %H:%M:%S' >"$DONE_MARKER"
+	# Die Marke entsteht in der unteren Ebene, solange die Wurzel noch beschreibbar ist; mit
+	# dem Overlay ab dem nächsten Start kann sie niemand mehr dauerhaft löschen.
+	install -d -o root -g root -m 0755 "$(dirname "$DONE_MARKER")"
+	date '+%Y-%m-%d %H:%M:%S' >"$DONE_MARKER.tmp"
+	mv -f "$DONE_MARKER.tmp" "$DONE_MARKER"
 	sync
 	log "Erster Start erledigt, Neustart mit Overlay"
 	systemctl --no-block reboot

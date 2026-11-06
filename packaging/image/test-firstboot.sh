@@ -8,7 +8,8 @@
 # Prüft: Datenpartition im freien Rest bei eingehängter Wurzel, fstab-Eintrag einmalig und
 # Einhängen über data.mount, Wiederholbarkeit, keine
 # Formatierung fremder Dateisysteme, Kopie der ersten Version, current, Rechte, Overlay mit
-# recurse=0, Boot schreibgeschützt in fstab, Erledigt-Marke und Neustart.
+# recurse=0, fsck.repair=yes, Boot schreibgeschützt in fstab, Erledigt-Marke in /etc/hmi-kiosk und Neustart,
+# gemeldetes Scheitern beim Zurücksetzen der fstab und Abbruch ohne Wirkung bei Links unter /data.
 set -eu
 
 raspi_config=${1:?Aufruf: test-firstboot.sh <raspi-config-Datei>}
@@ -61,7 +62,7 @@ printf '#!/bin/sh\necho "systemctl $*" >>%s/systemctl.log\nif [ "$1" = start ] &
 chmod 755 "$work/bin/systemctl"
 export PATH="$work/bin:$PATH"
 cp /etc/fstab "$work/fstab.orig"
-data_lines() { grep -c '^LABEL=HMIDATA  /data .*ext4 .*x-systemd.device-timeout=30s' /etc/fstab || true; }
+data_lines() { grep -Ec '^LABEL=HMIDATA  /data .*ext4 .*x-systemd.device-timeout=30s +0 +2$' /etc/fstab || true; }
 
 echo "== prepare-data, Probe-Einhängen scheitert"
 printf '#!/bin/sh\necho "mount $*" >>%s/mount.log\nexit 32\n' "$work" >"$work/bin/mount"
@@ -85,6 +86,23 @@ elif cmp -s /etc/fstab "$work/fstab.orig" &&
 else
 	bad "nach gescheitertem data.mount: $(cat /etc/fstab "$work/systemctl.log")"
 fi
+
+echo "== prepare-data, data.mount scheitert und die fstab lässt sich nicht zurücksetzen"
+# mv scheitert nur beim Ersetzen der fstab; die Meldung muss im Protokoll stehen.
+# shellcheck disable=SC2016 # $1, $2 und $@ gehören in das erzeugte Skript
+printf '#!/bin/sh\nif [ "$1" = -f ] && [ "$3" = /etc/fstab ]; then exit 1; fi\nexec /bin/mv "$@"\n' >"$work/bin/mv"
+chmod 755 "$work/bin/mv"
+: >"$work/systemctl.log"
+: >"$work/firstboot.log"
+if sh "$FB" prepare-data >/dev/null 2>&1; then
+	bad "fstab nicht zurückgesetzt, trotzdem Exit 0"
+elif grep -q 'muss von Hand entfernt werden' "$work/firstboot.log" && ! ls /etc/fstab.hmi-kiosk.* >/dev/null 2>&1; then
+	ok "gescheitertes Zurücksetzen der fstab wird gemeldet, keine Reste"
+else
+	bad "gescheitertes Zurücksetzen ohne Meldung: $(cat "$work/firstboot.log")"
+fi
+rm -f "$work/bin/mv"
+cp "$work/fstab.orig" /etc/fstab
 rm -f "$work/fail-start"
 : >"$work/systemctl.log"
 : >"$work/firstboot.log"
@@ -159,7 +177,7 @@ mkdir -p /data /boot/firmware /etc/hmi-kiosk "/opt/hmi-kiosk/initial/$V"
 mount "${loop}p1" /boot/firmware
 mount "${loop}p3" /data
 : >/boot/firmware/config.txt # raspi-config erkennt /boot/firmware daran
-echo 'console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootfstype=ext4 fsck.repair=yes rootwait consoleblank=0' >/boot/firmware/cmdline.txt
+echo 'console=serial0,115200 console=tty1 root=PARTUUID=abcd-02 rootfstype=ext4 rootwait consoleblank=0' >/boot/firmware/cmdline.txt
 printf 'version=%s\n' "$V" >/etc/hmi-kiosk/image-release
 printf '#!/bin/sh\necho kiosk\n' >"/opt/hmi-kiosk/initial/$V/hmi-kiosk"
 chmod 755 "/opt/hmi-kiosk/initial/$V/hmi-kiosk"
@@ -197,6 +215,11 @@ if grep -q '^overlayroot=tmpfs:recurse=0 console=' /boot/firmware/cmdline.txt; t
 else
 	bad "cmdline: $(cat /boot/firmware/cmdline.txt)"
 fi
+if [ "$(grep -o 'fsck\.repair=[^ ]*' /boot/firmware/cmdline.txt)" = fsck.repair=yes ]; then
+	ok "fsck.repair=yes ergänzt"
+else
+	bad "fsck.repair: $(cat /boot/firmware/cmdline.txt)"
+fi
 if grep -q '^PARTUUID=abcd-01  /boot/firmware  vfat    defaults,ro ' /etc/fstab; then
 	ok "Boot schreibgeschützt in fstab"
 else
@@ -207,8 +230,8 @@ if [ "$(data_lines)" = 1 ]; then
 else
 	bad "fstab /data verändert"
 fi
-if [ -f /data/.hmi-kiosk-firstboot-done ]; then
-	ok "Erledigt-Marke gesetzt"
+if [ -f /etc/hmi-kiosk/firstboot-done ] && [ "$(stat -c '%U:%G' /etc/hmi-kiosk/firstboot-done)" = root:root ] && [ ! -e /data/.hmi-kiosk-firstboot-done ]; then
+	ok "Erledigt-Marke in /etc/hmi-kiosk (root), nicht auf /data"
 else
 	bad "Erledigt-Marke fehlt"
 fi
@@ -230,13 +253,70 @@ if sh "$FB" finish | grep -q 'schon erledigt' && [ ! -s "$work/systemctl.log" ];
 else
 	bad "zweiter Lauf nicht ruhig"
 fi
-rm /data/.hmi-kiosk-firstboot-done
+rm /etc/hmi-kiosk/firstboot-done
 sh "$FB" finish >/dev/null
-if [ "$(grep -o 'overlayroot=[^ ]*' /boot/firmware/cmdline.txt | wc -l)" = 1 ] && [ "$(grep -c 'defaults,ro' /etc/fstab)" = 1 ]; then
+if [ "$(grep -o 'overlayroot=[^ ]*' /boot/firmware/cmdline.txt | wc -l)" = 1 ] && [ "$(grep -c 'defaults,ro' /etc/fstab)" = 1 ] &&
+	[ "$(grep -o 'fsck\.repair=[^ ]*' /boot/firmware/cmdline.txt | wc -l)" = 1 ]; then
 	ok "abgebrochener Lauf wiederholt ohne doppelte Einträge"
 else
 	bad "Einträge doppelt: $(cat /boot/firmware/cmdline.txt)"
 fi
+
+# Ein Angreifer mit den Rechten des Dienstes (hmikiosk) ersetzt Ordner unter /data durch Links
+# auf Systemordner. finish darf als root keinem davon folgen und bricht ab.
+victim=/opt/hmi-victim
+planted() { # planted <beschreibung> <pfad>: <pfad> ist schon ein Link auf $victim
+	rm -f /etc/hmi-kiosk/firstboot-done
+	: >"$work/systemctl.log"
+	: >"$work/firstboot.log"
+	if sh "$FB" finish >/dev/null 2>&1; then
+		bad "$1: finish endete mit Exit 0"
+	elif [ "$(stat -c '%U:%G %a' "$victim" "$victim/datei" | tr '\n' ' ')" = "root:root 700 root:root 600 " ] &&
+		[ "$(cat "$victim/datei")" = unberührt ] && [ "$(find "$victim" | wc -l)" = 2 ] &&
+		[ ! -e /etc/hmi-kiosk/firstboot-done ] && ! grep -q reboot "$work/systemctl.log" &&
+		grep -q 'symbolischer Link' "$work/firstboot.log"; then
+		ok "$1: Ziel unberührt, keine Marke, kein Neustart, Meldung im Protokoll"
+	else
+		bad "$1: $(stat -c '%U:%G %a %n' "$victim" "$victim"/* 2>&1 | tr '\n' ' ') $(cat "$work/firstboot.log")"
+	fi
+}
+mkdir -m 700 "$victim"
+echo unberührt >"$victim/datei"
+chmod 600 "$victim/datei"
+mv /data/app /data/app.echt
+ln -s "$victim" /data/app
+chown -h hmikiosk:hmikiosk /data/app
+planted "/data/app als Link" /data/app
+rm /data/app
+mv /data/app.echt /data/app
+
+mv "/data/app/$V" "/data/app/$V.echt"
+ln -s "$victim" "/data/app/$V"
+chown -h hmikiosk:hmikiosk "/data/app/$V"
+planted "/data/app/$V als Link" "/data/app/$V"
+rm "/data/app/$V"
+
+ln -s "$victim" "/data/app/.tmp-firstboot-$V"
+chown -h hmikiosk:hmikiosk "/data/app/.tmp-firstboot-$V"
+planted "Arbeitsordner als Link" "/data/app/.tmp-firstboot-$V"
+rm "/data/app/.tmp-firstboot-$V"
+
+mv /data/system /data/system.echt
+ln -s "$victim" /data/system
+planted "/data/system als Link" /data/system
+rm /data/system
+mv /data/system.echt /data/system
+
+mkdir "/data/app/$V"
+chown hmikiosk:hmikiosk "/data/app/$V"
+rm -f /etc/hmi-kiosk/firstboot-done
+if sh "$FB" finish >/dev/null 2>&1 && cmp -s "/opt/hmi-kiosk/initial/$V/hmi-kiosk" "/data/app/$V/hmi-kiosk" &&
+	[ -f /etc/hmi-kiosk/firstboot-done ]; then
+	ok "nach Entfernen der Links läuft finish wieder durch"
+else
+	bad "finish nach Entfernen der Links: $(cat "$work/firstboot.log")"
+fi
+rm -rf "/data/app/$V.echt"
 
 if [ "$fails" -gt 0 ]; then
 	echo "$fails Prüfung(en) gescheitert"
