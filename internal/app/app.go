@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,17 +40,20 @@ const (
 	tlsDirName    = "tls"
 	shutdownLimit = 5 * time.Second
 
-	DefaultLocalAddr    = "127.0.0.1:8080"
-	DefaultAdminAddr    = ":8443"
-	DefaultHelperSocket = "/run/hmi-kiosk-helper/helper.sock"
+	DefaultLocalAddr      = "127.0.0.1:8080"
+	DefaultAdminAddr      = ":8443"
+	DefaultHelperSocket   = "/run/hmi-kiosk-helper/helper.sock"
+	DefaultSessionProfile = "/run/hmi-kiosk-session/profile"
 )
 
 // Options sind die Startwerte des Dienstes. Adressen dürfen Port 0 nennen.
 type Options struct {
 	DataDir, RunDir, LocalAddr, AdminAddr string
 	HelperSocket                          string
-	Runner                                client.Runner
-	ChromiumEnabled                       bool
+	// SessionProfileFile nennt das Grafikprofil der laufenden Sitzung (hmi-kiosk-session prepare).
+	SessionProfileFile string
+	Runner             client.Runner
+	ChromiumEnabled    bool
 	// Ready wird gerufen, wenn der Dienst läuft (für Tests).
 	Ready func(Bound)
 }
@@ -84,7 +88,7 @@ type service struct {
 	selftestPage selftestPage
 	touch        *selftest.TouchBoard
 
-	markGood bool // der geladene Stand kommt unverändert aus config.json
+	markGood   bool // der geladene Stand kommt unverändert aus config.json
 
 	mu       sync.RWMutex
 	cfg      config.Config
@@ -118,6 +122,9 @@ func newService(opts Options) (*service, error) {
 	}
 	if opts.HelperSocket == "" {
 		opts.HelperSocket = DefaultHelperSocket
+	}
+	if opts.SessionProfileFile == "" {
+		opts.SessionProfileFile = DefaultSessionProfile
 	}
 	s := &service{
 		opts:    opts,
@@ -266,10 +273,12 @@ func (s *service) serve(parent context.Context) error {
 			log.Printf("Touch-Überwachung beendet: %v", err)
 		}
 	})
-	browserDone := s.startBrowser(ctx)
-
+	// Chromium erst, wenn die Kachelseite angenommen wird: Seine Fehlerseite
+	// lädt sonst nie von selbst nach.
 	local, admin, localErr, bound, err := s.startServers(ctx, &wg)
+	browserDone := closedChan()
 	if err == nil {
+		browserDone = s.startBrowser(ctx)
 		err = s.announce(ctx, bound, background)
 	}
 	if err == nil {
@@ -353,7 +362,7 @@ func (s *service) startBrowser(ctx context.Context) <-chan struct{} {
 		w, _ := s.screen()
 		return w
 	})
-	sup.SetProfile(s.config().Display.GraphicsProfile)
+	sup.SetProfile(s.sessionProfile())
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -387,7 +396,7 @@ func (s *service) feedBrowser(ctx context.Context, sup *browser.Supervisor) {
 			}
 			last = snap
 		case <-s.browser:
-			sup.SetProfile(s.config().Display.GraphicsProfile)
+			sup.SetProfile(s.sessionProfile())
 		}
 		sup.Show(s.browserTarget(last))
 	}
@@ -398,3 +407,26 @@ func (s *service) rootCtx() context.Context {
 	defer s.ctxMu.Unlock()
 	return s.ctx
 }
+
+// sessionProfile liefert das Grafikprofil der laufenden Sitzung. Die Einstellung
+// wechselt die Sitzung erst beim Neustart; Chromium muss zur laufenden passen, sonst
+// fehlt ihm die Anzeige. Ohne Datei (Start außerhalb des Abbilds) gilt die Einstellung.
+func (s *service) sessionProfile() string {
+	b, err := os.ReadFile(s.opts.SessionProfileFile)
+	if err == nil {
+		switch p := strings.TrimSpace(string(b)); p {
+		case "labwc", "x11":
+			return p
+		default:
+			log.Printf("Unbekanntes Grafikprofil %q in %s, verwende die Einstellung", p, s.opts.SessionProfileFile)
+		}
+	}
+	return s.config().Display.GraphicsProfile
+}
+
+func closedChan() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}
+

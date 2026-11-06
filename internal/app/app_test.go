@@ -57,9 +57,14 @@ func (p *fakeProc) Stop(time.Duration) error {
 type fakeRunner struct {
 	mu   sync.Mutex
 	cmds []client.Command
+	// onStart läuft vor dem Eintrag, außerhalb der Sperre.
+	onStart func(client.Command)
 }
 
 func (r *fakeRunner) Start(c client.Command) (client.Process, error) {
+	if r.onStart != nil {
+		r.onStart(c)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cmds = append(r.cmds, c)
@@ -119,8 +124,9 @@ func (f *fixture) options() Options {
 	return Options{
 		DataDir: f.data, RunDir: f.run,
 		LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0",
-		HelperSocket: filepath.Join(f.run, "kein-helfer.sock"),
-		Runner:       f.runner,
+		HelperSocket:       filepath.Join(f.run, "kein-helfer.sock"),
+		SessionProfileFile: filepath.Join(f.run, "keine-sitzung", "profile"),
+		Runner:             f.runner,
 	}
 }
 

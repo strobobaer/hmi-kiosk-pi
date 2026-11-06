@@ -350,3 +350,23 @@ func itoa(i int) string {
 	}
 	return s
 }
+
+func TestDisplayGraphicsChangeSaysRestart(t *testing.T) {
+	e, b := newLoggedIn(t)
+	cur := e.cfg().Display.GraphicsProfile
+	other := "x11"
+	if cur == "x11" {
+		other = "labwc"
+	}
+	r := b.post("/admin/system/display", url.Values{"override_w": {""}, "override_h": {""}, "graphics": {other}})
+	if r.Code != http.StatusSeeOther {
+		t.Fatalf("Status %d %s", r.Code, r.Body.String())
+	}
+	if page := b.follow(r); !strings.Contains(page, "wirkt nach dem nächsten Neustart") {
+		t.Fatalf("Kein Hinweis auf den Neustart: %s", page)
+	}
+	r = b.post("/admin/system/display", url.Values{"override_w": {"1280"}, "override_h": {"800"}, "graphics": {other}})
+	if page := b.follow(r); strings.Contains(page, "wirkt nach dem nächsten Neustart") {
+		t.Fatalf("Hinweis ohne geändertes Grafikprofil: %s", page)
+	}
+}

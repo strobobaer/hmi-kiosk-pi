@@ -188,6 +188,7 @@ func (a *admin) handleLogDownload(w http.ResponseWriter, r *http.Request, _ sess
 func (a *admin) handleDisplay(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	v := r.PostForm
 	f := displayFormData{OverrideW: strings.TrimSpace(v.Get("override_w")), OverrideH: strings.TrimSpace(v.Get("override_h")), Graphics: v.Get("graphics")}
+	graphicsChanged := false
 	err := a.update(func(c *config.Config) error {
 		ow, err1 := atoiOrZero(f.OverrideW)
 		oh, err2 := atoiOrZero(f.OverrideH)
@@ -198,6 +199,7 @@ func (a *admin) handleDisplay(w http.ResponseWriter, r *http.Request, s sessionR
 		if err := checkDisplay(next); err != nil {
 			return err
 		}
+		graphicsChanged = c.Display.GraphicsProfile != next.GraphicsProfile
 		c.Display = next
 		return nil
 	})
@@ -205,7 +207,12 @@ func (a *admin) handleDisplay(w http.ResponseWriter, r *http.Request, s sessionR
 		a.renderSystem(w, s, formStatus(err), err.Error(), systemExtras{Display: &f})
 		return
 	}
-	a.done(w, r, s, "/admin/system", "Gespeichert.")
+	msg := "Gespeichert."
+	if graphicsChanged {
+		// Grafiksitzung und Chromium wechseln erst gemeinsam mit dem Neustart der Sitzung.
+		msg = "Gespeichert. Das Grafikprofil wirkt nach dem nächsten Neustart."
+	}
+	a.done(w, r, s, "/admin/system", msg)
 }
 
 func atoiOrZero(s string) (int, error) {

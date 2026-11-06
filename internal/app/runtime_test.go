@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
 	"hmikiosk/internal/release"
@@ -403,5 +404,63 @@ func TestStatusReportsOverlayAndVersion(t *testing.T) {
 	st := f.bound.Status()
 	if st.Version != release.Version || st.Display == "" || st.DataTotalBytes <= 0 {
 		t.Fatalf("Status %+v", st)
+	}
+}
+
+// Chromium folgt der laufenden Grafiksitzung, nicht der gespeicherten Einstellung,
+// und startet erst, wenn die Kachelseite antwortet.
+func TestChromiumUsesRunningSessionProfileAndStartsAfterLocalServer(t *testing.T) {
+	g := newFixture(t)
+	g.saveConfig(func(c *config.Config) { c.Display.GraphicsProfile = "x11" })
+	opts := g.options()
+	opts.ChromiumEnabled = true
+	if err := os.MkdirAll(filepath.Dir(opts.SessionProfileFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(opts.SessionProfileFile, []byte("labwc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.LocalAddr = l.Addr().String()
+	l.Close()
+	listening := make(chan bool, 1)
+	g.runner.onStart = func(c client.Command) {
+		if c.Path != "/opt/chromium" {
+			return
+		}
+		conn, err := net.DialTimeout("tcp", opts.LocalAddr, time.Second)
+		if err == nil {
+			conn.Close()
+		}
+		select {
+		case listening <- err == nil:
+		default:
+		}
+	}
+	ready := make(chan Bound, 1)
+	opts.Ready = func(b Bound) { ready <- b }
+	s, err := newService(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.lookPath = func(name string) (string, error) { return "/opt/" + name, nil }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.serve(ctx) }()
+	<-ready
+	eventually(t, "Chromium", func() bool { return len(g.runner.started()) >= 1 })
+	if !<-listening {
+		t.Error("Chromium startete, bevor die Kachelseite erreichbar war")
+	}
+	args := strings.Join(g.runner.started()[0].Args, " ")
+	if !strings.Contains(args, "--ozone-platform=wayland") {
+		t.Errorf("Plattform nicht aus der laufenden Sitzung: %s", args)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
