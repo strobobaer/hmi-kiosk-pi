@@ -4,11 +4,15 @@
 #
 # Hintergrund: Wird die SD-Karte auf ein zweites Gerät übertragen, tragen beide dieselbe
 # /etc/machine-id (daraus bildet der DHCP-Client seine Kennung) und denselben Rechnernamen; zwei
-# Terminals stritten sich im Netz um dieselbe Adresse. Das Overlay auf / hält /etc nur im RAM,
+# Terminals würden sich im Netz um dieselbe Adresse streiten. Das Overlay auf / hält /etc nur im RAM,
 # darum steht die Identität dauerhaft in /data/system/identity (Zeilen serial=, machine_id=, hostname=):
-#   - keine Datei:           Originalgerät, aktuelle Werte festhalten, nichts ändern
+#   - keine Datei (oder eine kaputte, root gehörende, etwa nach Stromausfall):
+#                            Originalgerät, aktuelle Werte festhalten, nichts ändern (der Rechnername
+#                            wird nie angefasst; ist er ungültig, bleibt hostname= in der Datei leer)
 #   - gleiche Seriennummer:  Werte aus der Datei setzen, falls abweichend
 #   - andere Seriennummer:   Klon, neue Maschinen-ID und Rechnername hmi-kiosk-<Ende der Seriennummer>
+# Frühe Verbraucher (PID 1, journald) behalten die alte Maschinen-ID bis zum nächsten Start;
+# der DHCP-Client und die Netzwerkdienste starten erst nach dieser Unit und sehen die neue.
 # Ob das Terminal als Ersatz oder als neues Terminal weiterläuft, entscheidet der Dienst
 # (Wartungsmodus in der Admin-Seite), nicht dieses Skript.
 #
@@ -101,7 +105,8 @@ enter_dir() {
 	fi
 }
 
-# read_identity liest serial, machine_id und hostname aus der Datei. 0: gültig, 1: fehlt, 2: unbrauchbar.
+# read_identity liest serial, machine_id und hostname aus der Datei. 0: gültig, 1: fehlt, 2: unsicher
+# (Verweis, fremder Besitzer, Rechte, Größe: nichts tun), 3: root-eigen, aber Inhalt kaputt (wie fehlend).
 read_identity() {
 	if [ -L "$NAME" ]; then
 		log "$DIR/$NAME ist ein Verweis, nichts getan"
@@ -116,9 +121,9 @@ read_identity() {
 	f_serial=$(sed -n 's/^serial=//p' "$NAME" | head -n 1)
 	f_mid=$(sed -n 's/^machine_id=//p' "$NAME" | head -n 1)
 	f_host=$(sed -n 's/^hostname=//p' "$NAME" | head -n 1)
-	if [ -z "$f_serial" ] || ! valid_machine_id "$f_mid" || ! valid_hostname "$f_host"; then
-		log "$DIR/$NAME ist unvollständig oder ungültig, nichts getan"
-		return 2
+	if [ -z "$f_serial" ] || ! valid_machine_id "$f_mid" || { [ -n "$f_host" ] && ! valid_hostname "$f_host"; }; then
+		log "$DIR/$NAME ist unvollständig oder ungültig, wird wie beim ersten Start neu geschrieben"
+		return 3
 	fi
 	return 0
 }
@@ -130,7 +135,7 @@ write_identity() {
 		umask 022
 		set -C
 		printf 'serial=%s\nmachine_id=%s\nhostname=%s\n' "$1" "$2" "$3" >"$tmp"
-	) && chmod 644 "$tmp" && mv -f "$tmp" "$NAME" || {
+	) && chmod 644 "$tmp" && { sync "$tmp" 2>/dev/null || sync; } && mv -f "$tmp" "$NAME" || {
 		rm -f "$tmp"
 		log "$DIR/$NAME nicht geschrieben"
 		return 1
@@ -152,7 +157,7 @@ apply() {
 			log "$MACHINE_ID_FILE nicht beschreibbar"
 		fi
 	fi
-	if [ "$(head -n 1 "$HOSTNAME_FILE" 2>/dev/null)" != "$2" ]; then
+	if [ -n "$2" ] && [ "$(head -n 1 "$HOSTNAME_FILE" 2>/dev/null)" != "$2" ]; then
 		old=$(current_hostname)
 		if printf '%s\n' "$2" >"$HOSTNAME_FILE" 2>/dev/null; then
 			if [ -n "$old" ] && [ -f "$HOSTS_FILE" ] && ! [ -L "$HOSTS_FILE" ]; then
@@ -162,7 +167,7 @@ apply() {
 			log "$HOSTNAME_FILE nicht beschreibbar"
 		fi
 	fi
-	if [ "$(hostname 2>/dev/null)" != "$2" ]; then
+	if [ -n "$2" ] && [ "$(hostname 2>/dev/null)" != "$2" ]; then
 		hostname "$2" 2>/dev/null || log "Rechnername nicht gesetzt"
 	fi
 	return 0
@@ -177,18 +182,18 @@ main() {
 	read_identity
 	case $? in
 	2) return 0 ;;
-	1)
+	1 | 3)
 		mid=$(head -n 1 "$MACHINE_ID_FILE" 2>/dev/null)
 		if ! valid_machine_id "$mid"; then mid=$(new_machine_id); fi
 		host=$(current_hostname)
-		if ! valid_hostname "$host"; then host=$(clone_hostname "$serial"); fi
+		if ! valid_hostname "$host"; then host=; fi
 		if ! valid_machine_id "$mid"; then
 			log "Keine Maschinen-ID erzeugbar, nichts getan"
 			return 0
 		fi
 		write_identity "$serial" "$mid" "$host" || return 0
-		log "Identität festgehalten ($host)"
-		apply "$mid" "$host"
+		log "Identität festgehalten (${host:-ohne Rechnername})"
+		apply "$mid" ""
 		;;
 	0)
 		if [ "$f_serial" = "$serial" ]; then

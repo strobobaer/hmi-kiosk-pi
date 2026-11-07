@@ -224,7 +224,7 @@ before=$(snapshot)
 run
 if exit0 && [ "$(snapshot)" = "$before" ]; then ok "Datei gehört dem Dienstbenutzer: nichts übernommen"; else bad "Datei mit falschem Besitzer: $(snapshot)"; fi
 
-echo "== kaputte oder feindliche Datei"
+echo "== kaputte oder feindliche Datei (root-eigen): wie ein erster Lauf neu schreiben"
 check_hostile() {
 	reset
 	mkdir -p "$DIR"
@@ -232,10 +232,11 @@ check_hostile() {
 	printf '%s\n' "$1" >"$DIR/identity"
 	before=$(snapshot)
 	run
-	if exit0 && [ "$(snapshot)" = "$before" ] && [ ! -e "$work/pwned" ] && [ "$(cat "$DIR/identity")" = "$1" ]; then
-		ok "Datei abgelehnt, nichts geändert ($2)"
+	if exit0 && [ "$(snapshot)" = "$before" ] && [ ! -e "$work/pwned" ] && [ "$(field serial)" = 10000000abcdef01 ] &&
+		[ "$(field machine_id)" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] && [ "$(field hostname)" = raspberrypi ] && [ ! -L "$DIR/identity" ]; then
+		ok "Datei war kaputt, wie beim ersten Lauf neu geschrieben, System unverändert ($2)"
 	else
-		bad "Datei nicht abgelehnt ($2): rc=$rc $(snapshot)"
+		bad "kaputte Datei nicht neu geschrieben ($2): rc=$rc $(snapshot)"
 	fi
 }
 check_hostile "Müll" "Müll"
@@ -260,6 +261,23 @@ head -c 100000 /dev/zero | tr '\0' 'a' >"$DIR/identity"
 before=$(snapshot)
 run
 if exit0 && [ "$(snapshot)" = "$before" ]; then ok "überlange Datei abgelehnt"; else bad "überlange Datei: $(snapshot)"; fi
+check_hostile "serial=10000000abcdef01
+machine_id=cccccccccccccccccccc" "abgeschnitten"
+
+echo "== erster Lauf: ungültiger Rechnername wird nie geändert"
+reset
+echo 'Bad_Name!' >"$work/hostname"
+echo 'Bad_Name!' >"$work/khost"
+run
+if exit0 && [ "$(hn)" = 'Bad_Name!' ] && [ "$(calls)" = "" ] && [ "$(field serial)" = 10000000abcdef01 ] &&
+	[ -z "$(field hostname)" ] && grep -q '^hostname=$' "$DIR/identity"; then
+	ok "Rechnername unverändert, in der Datei leer"
+else
+	bad "ungültiger Rechnername: $(snapshot) $(cat "$DIR/identity" 2>/dev/null)"
+fi
+before=$(snapshot)
+run
+if exit0 && [ "$(snapshot)" = "$before" ]; then ok "leerer Rechnername in der Datei: nichts zu setzen"; else bad "Folgelauf: $(snapshot)"; fi
 
 echo "== Originalgerät mit uninitialisierter Maschinen-ID"
 reset

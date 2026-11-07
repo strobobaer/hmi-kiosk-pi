@@ -2,7 +2,7 @@
 Description=HMI-Kiosk Netzwerk-Identität an das Gerät binden
 # Bei jedem Start, nach /data und vor dem Netzwerk. Wurde die SD-Karte auf ein anderes Gerät
 # übertragen, bekommt es hier eine eigene Maschinen-ID und einen eigenen Rechnernamen; sonst
-# stritten zwei Geräte im Netz um dieselbe Kennung und Adresse. RequiresMountsFor= ordnet nach
+XX RequiresMountsFor= ordnet nach
 # data.mount ein. Das Skript endet immer mit 0 und nichts hängt von dieser Unit ab.
 DefaultDependencies=no
 Conflicts=shutdown.target
