@@ -168,8 +168,8 @@ func TestTilesShowReachabilityAndOrder(t *testing.T) {
 	f := newFixture(t)
 	f.saveConfig(func(c *config.Config) {
 		c.HMIs = []config.HMI{
-			{ID: "zwei", Name: "Zweite", Host: "127.0.0.1", Port: 1, Order: 2},
-			{ID: "eins", Name: "Erste", Host: "127.0.0.1", Port: port, Order: 1},
+			{ID: "zwei", Name: "Zweite", Host: "127.0.0.1", Port: 1, Order: 2, Reach: config.ReachPort},
+			{ID: "eins", Name: "Erste", Host: "127.0.0.1", Port: port, Order: 1, Reach: config.ReachPort},
 		}
 	})
 	f.start()

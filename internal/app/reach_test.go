@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,7 +16,7 @@ import (
 func hmisN(n int) []config.HMI {
 	out := make([]config.HMI, n)
 	for i := range out {
-		out[i] = config.HMI{ID: "h" + string(rune('a'+i)), Host: "10.0.0.1", Port: 5900 + i}
+		out[i] = config.HMI{ID: "h" + string(rune('a'+i)), Host: "10.0.0.1", Port: 5900 + i, Reach: config.ReachPort}
 	}
 	return out
 }
@@ -184,5 +185,82 @@ func TestHostCacheResolveHonoursLimit(t *testing.T) {
 	c.resolve(context.Background(), "h")
 	if !limited || resolveLimit != 2*time.Second {
 		t.Fatal("Auflösung ohne 2-s-Frist")
+	}
+}
+
+func reachWith(h config.HMI, port func(context.Context, string, int) bool, ping func(context.Context, string) bool) *reachability {
+	r := newReachability(func() []config.HMI { return []config.HMI{h} }, func() string { return "" }, port)
+	r.ping = ping
+	return r
+}
+
+func TestReachabilityDefaultsToPingNotPort(t *testing.T) {
+	for _, mode := range []string{"", config.ReachPing} {
+		var ports, pings atomic.Int32
+		r := reachWith(config.HMI{ID: "x", Host: "hmi.local", Port: 5900, Reach: mode},
+			func(context.Context, string, int) bool { ports.Add(1); return true },
+			func(_ context.Context, host string) bool { pings.Add(1); return host == "hmi.local" })
+		r.round(context.Background())
+		if ports.Load() != 0 || pings.Load() != 1 || !r.reachable("x") {
+			t.Fatalf("Prüfart %q: Port %d, Ping %d, erreichbar %v", mode, ports.Load(), pings.Load(), r.reachable("x"))
+		}
+	}
+}
+
+func TestReachabilityPortModeKeepsTCPCheck(t *testing.T) {
+	var ports, pings atomic.Int32
+	r := reachWith(config.HMI{ID: "x", Host: "h", Port: 5902, Reach: config.ReachPort},
+		func(_ context.Context, _ string, port int) bool { ports.Add(1); return port == 5902 },
+		func(context.Context, string) bool { pings.Add(1); return false })
+	r.round(context.Background())
+	if ports.Load() != 1 || pings.Load() != 0 || !r.reachable("x") {
+		t.Fatalf("Port %d, Ping %d", ports.Load(), pings.Load())
+	}
+}
+
+func TestReachabilityOffNeverChecks(t *testing.T) {
+	var calls atomic.Int32
+	r := reachWith(config.HMI{ID: "x", Host: "h", Port: 5900, Reach: config.ReachOff},
+		func(context.Context, string, int) bool { calls.Add(1); return false },
+		func(context.Context, string) bool { calls.Add(1); return false })
+	r.round(context.Background())
+	if calls.Load() != 0 {
+		t.Fatalf("%d Prüfungen trotz „aus“", calls.Load())
+	}
+	if !r.reachable("x") {
+		t.Fatal("Kachel zeigt einen Erreichbarkeits-Zustand")
+	}
+}
+
+func TestPingerPingsResolvedAddressWithFixedArguments(t *testing.T) {
+	var got [][]string
+	p := &pinger{
+		lookup: func(_ context.Context, host string) ([]net.IP, error) {
+			if host == "weg" {
+				return nil, errors.New("unbekannt")
+			}
+			return []net.IP{net.ParseIP("fe80::1"), net.ParseIP("10.0.0.7")}, nil
+		},
+		run: func(_ context.Context, args []string) error {
+			got = append(got, args)
+			return nil
+		},
+	}
+	if !p.ping(context.Background(), "hmi.local") {
+		t.Fatal("Ping gescheitert")
+	}
+	want := []string{"-n", "-c", "1", "-W", "1", "10.0.0.7"}
+	if len(got) != 1 || !slices.Equal(got[0], want) {
+		t.Fatalf("Argumente %v, erwartet %v", got, want)
+	}
+	if !p.ping(context.Background(), "[2001:db8::5]") || got[1][5] != "2001:db8::5" {
+		t.Fatalf("Literal: %v", got)
+	}
+	if p.ping(context.Background(), "weg") || len(got) != 2 {
+		t.Fatal("unauflösbarer Name wurde gepingt")
+	}
+	p.run = func(context.Context, []string) error { return errors.New("exit status 1") }
+	if p.ping(context.Background(), "10.0.0.7") {
+		t.Fatal("fehlgeschlagener Ping gilt als erreichbar")
 	}
 }

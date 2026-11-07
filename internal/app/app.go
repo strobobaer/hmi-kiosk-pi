@@ -261,6 +261,7 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		s.hmiInSession,
 		rfb.TCPReachable,
 	)
+	s.reach.ping = newPinger().ping
 }
 
 // serve läuft bis ctx endet. Der Automat startet vor den Servern, weil seine
