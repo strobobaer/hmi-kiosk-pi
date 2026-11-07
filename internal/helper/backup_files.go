@@ -170,9 +170,22 @@ func (s *Server) openFiles(ctx context.Context, run *backupRun, tgt filesTarget)
 	if err != nil {
 		return nil, 0, fmt.Errorf("Die Arbeitsdatei der Sicherung ließ sich nicht anlegen: %v", err)
 	}
+	detachFailed := false
 	uw.add(func(context.Context) error {
+		if detachFailed {
+			return fmt.Errorf("Die Arbeitsdatei %s bleibt bestehen, weil ihr Loop-Gerät nicht gelöst werden konnte", path)
+		}
 		if rerr := os.Remove(path); rerr != nil && !errors.Is(rerr, os.ErrNotExist) {
 			return rerr
+		}
+		return nil
+	})
+	// Ein losetup, das nach dem Anhängen scheitert oder beendet wird, liefert den Gerätenamen nicht mehr: die Datei
+	// nennt es. Erst wenn kein Gerät mehr an ihr hängt, darf sie gelöscht werden.
+	uw.add(func(c context.Context) error {
+		if derr := s.detachLoopsOf(c, path); derr != nil {
+			detachFailed = true
+			return derr
 		}
 		return nil
 	})
@@ -311,7 +324,10 @@ func waitNodes(ctx context.Context, nodes ...string) error {
 }
 
 // formatFiles legt FAT und ext4 mit den Beschriftungen und Kennungen der Quelle an: so stimmen
-// LABEL=- und UUID=-Einträge in fstab und cmdline.txt ohne Änderung.
+// LABEL=- und UUID=-Einträge in fstab und cmdline.txt ohne Änderung. Solange das Loop-Gerät besteht, tragen
+// das Abbild und das laufende System dieselbe UUID und Beschriftung; der Helfer spricht darum nur Gerätepfade an
+// (nie LABEL=/UUID=), und das Abbild wird vor dem Ende wieder gelöst.
+// Während des Baus kann udev die Links unter /dev/disk/by-uuid und by-label auf das Loop-Gerät umlegen.
 func (s *Server) formatFiles(ctx context.Context, p *filesPlan, p1, p2 string) error {
 	vfat := []string{"-F", "32"}
 	if p.boot.label != "" {
@@ -347,7 +363,7 @@ func (s *Server) copyFiles(ctx context.Context, bootMnt, rootMnt string) error {
 		sourceDir(s.Backup.bootMount()), sourceDir(bootMnt)); err != nil && !rsyncOK(err) {
 		return fail(err)
 	}
-	args := []string{"-aHAXx", "--numeric-ids", "-q"}
+	args := []string{"-aHAXx", "-S", "--numeric-ids", "-q"}
 	for _, e := range filesExcludes {
 		args = append(args, "--exclude="+e)
 	}
@@ -423,4 +439,26 @@ func (r *filesReader) Close() error {
 		}
 	})
 	return nil
+}
+
+// detachLoopsOf löst alle Loop-Geräte, die an der Datei hängen (losetup -j).
+func (s *Server) detachLoopsOf(ctx context.Context, path string) error {
+	if s.ExecOut == nil {
+		return errors.New("losetup ist nicht verfügbar")
+	}
+	out, err := s.ExecOut(ctx, "losetup", "-j", path)
+	if err != nil {
+		return fmt.Errorf("losetup -j %s: %v", path, err)
+	}
+	var first error
+	for _, line := range strings.Split(out, "\n") {
+		dev, _, ok := strings.Cut(line, ":")
+		if !ok || !loopDevRe.MatchString(dev) {
+			continue
+		}
+		if derr := s.exec(ctx, "losetup", "-d", dev); derr != nil && first == nil {
+			first = fmt.Errorf("losetup -d %s: %v", dev, derr)
+		}
+	}
+	return first
 }

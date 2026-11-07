@@ -35,6 +35,7 @@ mkdir -p "$work/bin" "$work/root"
 PATH="$work/bin:$PATH"
 export HMI_GROW_ROOT_MOUNT="$work/root"
 export HMI_GROW_ROOT_RELEASE="$work/kein-image-release"
+export HMI_GROW_ROOT_DISKS="loop*" # sonst nur mmcblk* und nvme*n*
 
 img=$work/karte.img
 truncate -s 600M "$img"
@@ -68,6 +69,14 @@ if [ "$(table)" = "$before" ] && grep -q 'SD-Abbild' "$work/grow.log"; then
 	ok "SD-Abbild: Tabelle unverändert, Exit 0"
 else
 	bad "SD-Abbild: $(cat "$work/grow.log")"
+fi
+
+echo "== Gerät nicht in der Liste (Standard: mmcblk, nvme): nichts tun"
+before=$(table)
+if env -u HMI_GROW_ROOT_DISKS sh "$GR" >"$work/grow.log" 2>&1 && [ "$(table)" = "$before" ] && grep -q 'nicht unterstützt' "$work/grow.log"; then
+	ok "loop-Gerät mit Standardliste: Tabelle unverändert, Exit 0"
+else
+	bad "Standardliste: $(cat "$work/grow.log")"
 fi
 
 echo "== Wurzel ohne Partition (tmpfs): nichts tun"
@@ -180,10 +189,27 @@ sleep 1
 mkfs.ext4 -q -L rootfs -b 4096 "${loop}p2"
 mount "${loop}p2" "$work/root"
 before=$(table)
-if grow && [ "$(table)" = "$before" ] && grep -q 'nicht die letzte' "$work/grow.log"; then
-	ok "Partition 2 ist nicht die letzte: keine Änderung"
+if grow && [ "$(table)" = "$before" ] && grep -q 'kein Layout mit genau zwei Partitionen' "$work/grow.log"; then
+	ok "weitere Partition dahinter: keine Änderung"
 else
 	bad "weitere Partition: $(cat "$work/grow.log")"
+fi
+
+echo "== Wurzel auf Partition 1 einer Karte mit einer Partition: nichts anfassen"
+umount "$work/root"
+losetup -d "$loop"
+printf 'label: dos
+start=2048, size=131072, type=83
+' | sfdisk -q "$img"
+loop=$(losetup -f --show -P "$img")
+sleep 1
+mkfs.ext4 -q -L rootfs -b 4096 "${loop}p1"
+mount "${loop}p1" "$work/root"
+before=$(table)
+if grow && [ "$(table)" = "$before" ] && grep -q 'Partition 1 statt 2' "$work/grow.log"; then
+	ok "Wurzel auf Partition 1: keine Änderung"
+else
+	bad "Partition 1: $(cat "$work/grow.log")"
 fi
 
 if [ "$fails" -gt 0 ]; then

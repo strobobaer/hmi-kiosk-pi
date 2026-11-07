@@ -407,6 +407,9 @@ setup_services() {
 	fi
 	# shellcheck disable=SC2086
 	systemctl enable $UNITS
+	# Die Netzwerk-Kennung hält beim ersten Lauf nur die Seriennummer und die aktuellen Werte fest (sie ändert nichts):
+	# So trägt auch eine Sicherung gleich nach der Installation die Kennung dieses Geräts.
+	systemctl start hmi-kiosk-identity.service || msg "Hinweis: hmi-kiosk-identity ließ sich nicht starten; es läuft beim nächsten Neustart."
 	if [ -n "$DM_UNIT" ]; then
 		# Der Desktop läuft noch bis zum Neustart; zwei grafische Sitzungen gleichzeitig vermeiden.
 		msg "Dienste aktiviert. Sie starten nach dem Neustart."

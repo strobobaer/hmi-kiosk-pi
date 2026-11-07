@@ -16,22 +16,35 @@ var partuuidRe = regexp.MustCompile(`(?i)PARTUUID=("?)([0-9a-f]{8})-([0-9a-f]{2}
 // rewriteIDs ersetzt PARTUUID=<alt>-NN durch <neu>-NN. Andere Formen (LABEL=, UUID=, Gerätenamen) bleiben.
 // Eine PARTUUID mit fremder Basis lässt sich nicht abbilden; strict meldet sie als Fehler, sonst bleibt sie.
 func rewriteIDs(text string, oldID, newID uint32, strict bool) (out string, n int, err error) {
-	out = partuuidRe.ReplaceAllStringFunc(text, func(m string) string {
-		sub := partuuidRe.FindStringSubmatch(m)
-		base, perr := strconv.ParseUint(sub[2], 16, 32)
-		if perr != nil || uint32(base) != oldID {
-			if err == nil && strict {
-				err = fmt.Errorf("verweist auf die fremde Partitions-Kennung %s", strings.ToLower(sub[2]))
+	var b strings.Builder
+	last := 0
+	for _, m := range partuuidRe.FindAllStringSubmatchIndex(text, -1) {
+		quote, base, suffix := text[m[2]:m[3]], text[m[4]:m[5]], text[m[6]:m[7]]
+		v, perr := strconv.ParseUint(base, 16, 32)
+		if perr != nil || uint32(v) != oldID {
+			if strict {
+				return text, 0, fmt.Errorf("Der Parameter „%s“ verweist auf die fremde Partitions-Kennung %s", paramAt(text, m[0]), strings.ToLower(base))
 			}
-			return m
+			continue
 		}
+		b.WriteString(text[last:m[0]])
+		fmt.Fprintf(&b, "PARTUUID=%s%08x-%s", quote, newID, suffix)
+		last = m[1]
 		n++
-		return fmt.Sprintf("PARTUUID=%s%08x-%s", sub[1], newID, sub[3])
-	})
-	if err != nil {
-		return text, 0, err
 	}
-	return out, n, nil
+	b.WriteString(text[last:])
+	return b.String(), n, nil
+}
+
+// paramAt liefert das durch Leerraum begrenzte Wort, in dem Position i liegt.
+func paramAt(text string, i int) string {
+	const ws = " \t\r\n"
+	start := strings.LastIndexAny(text[:i], ws) + 1
+	end := len(text)
+	if j := strings.IndexAny(text[i:], ws); j >= 0 {
+		end = i + j
+	}
+	return text[start:end]
 }
 
 // rewritePartuuid ersetzt die alte Disk-Kennung in cmdline.txt-artigem Text; eine fremde Kennung ist ein Fehler.
@@ -97,7 +110,7 @@ func adjustReferences(bootDir, rootDir string, oldID, newID uint32) error {
 	}
 	out, n, err := rewritePartuuid(string(b), oldID, newID)
 	if err != nil {
-		return fmt.Errorf("cmdline.txt %v; das Abbild würde nicht starten.", err)
+		return fmt.Errorf("cmdline.txt: %v; das Abbild würde nicht starten.", err)
 	}
 	if n > 0 {
 		if err := replaceFile(cmd, []byte(out)); err != nil {

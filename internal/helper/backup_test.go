@@ -488,7 +488,7 @@ func TestBackupUSBSuccess(t *testing.T) {
 	u.wantNoLeftovers(t)
 	want := []string{
 		"blkid -o value -s TYPE /dev/sda1",
-		"mount -t exfat -o nosuid,nodev,noexec /dev/sda1 " + u.mnt,
+		"mount -t exfat -o nosuid,nodev,noexec,uid=0,gid=0,umask=0077 /dev/sda1 " + u.mnt,
 		"sync",
 		"sync",
 		"umount " + u.mnt,
@@ -501,13 +501,17 @@ func TestBackupUSBSuccess(t *testing.T) {
 func TestBackupUSBFilesystemMapping(t *testing.T) {
 	linuxOnly(t)
 	for fs, kernel := range map[string]string{"ext4": "ext4", "ntfs": "ntfs3"} {
+		opts := "nosuid,nodev,noexec"
+		if kernel == "ntfs3" {
+			opts += ",uid=0,gid=0,umask=0077" // ohne Rechte im Dateisystem: nur root darf lesen
+		}
 		u := newUSBEnv(t, fs)
 		cl := helperapi.New(startServer(t, u.env))
 		if err := cl.BackupUSB(context.Background(), "T"); err != nil {
 			t.Fatalf("%s: %v", fs, err)
 		}
 		waitStopped(t, cl)
-		want := "mount -t " + kernel + " -o nosuid,nodev,noexec /dev/sda1 " + u.mnt
+		want := "mount -t " + kernel + " -o " + opts + " /dev/sda1 " + u.mnt
 		found := false
 		for _, c := range u.fx.got() {
 			found = found || c == want
@@ -576,7 +580,7 @@ func TestBackupUSBTooLittleSpace(t *testing.T) {
 func TestBackupUSBMountFailure(t *testing.T) {
 	linuxOnly(t)
 	u := newUSBEnv(t, "ntfs")
-	u.fx.fail["mount -t ntfs3 -o nosuid,nodev,noexec /dev/sda1 "+u.mnt] = io.ErrUnexpectedEOF
+	u.fx.fail["mount -t ntfs3 -o nosuid,nodev,noexec,uid=0,gid=0,umask=0077 /dev/sda1 "+u.mnt] = io.ErrUnexpectedEOF
 	cl := helperapi.New(startServer(t, u.env))
 	err := cl.BackupUSB(context.Background(), "T")
 	if err == nil || !strings.Contains(err.Error(), "mount fehlgeschlagen") || !strings.Contains(err.Error(), "NTFS") {
@@ -674,5 +678,46 @@ func TestUSBWriteErrorMessages(t *testing.T) {
 	}
 	if got := usbWriteErr(io.ErrClosedPipe); !strings.Contains(got.Error(), "USB-Stick") {
 		t.Fatalf("sonst: %v", got)
+	}
+}
+
+// Der Einhängeort ist nur für root zugänglich, auch ein vorhandener zu offener Ordner wird eingeschränkt.
+func TestBackupUSBMountpointIsPrivate(t *testing.T) {
+	linuxOnly(t)
+	u := newUSBEnv(t, "exfat")
+	mkdirs(t, u.mnt)
+	if err := os.Chmod(u.mnt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cl := helperapi.New(startServer(t, u.env))
+	if err := cl.BackupUSB(context.Background(), "T"); err != nil {
+		t.Fatal(err)
+	}
+	waitStopped(t, cl)
+	if fi, err := os.Lstat(u.mnt); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("Einhängeort: %v %v", fi, err)
+	}
+}
+
+func TestBackupUSBMountpointLinkIsRefused(t *testing.T) {
+	linuxOnly(t)
+	u := newUSBEnv(t, "exfat")
+	symlink(t, t.TempDir(), u.mnt)
+	cl := helperapi.New(startServer(t, u.env))
+	err := cl.BackupUSB(context.Background(), "T")
+	if err == nil || !strings.Contains(err.Error(), "Einhängeort") {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestUSBMountOptions(t *testing.T) {
+	for kernel, want := range map[string]string{
+		"exfat": "nosuid,nodev,noexec,uid=0,gid=0,umask=0077",
+		"ntfs3": "nosuid,nodev,noexec,uid=0,gid=0,umask=0077",
+		"ext4":  "nosuid,nodev,noexec",
+	} {
+		if got := usbMountOptions(kernel); got != want {
+			t.Errorf("%s: %q, erwartet %q", kernel, got, want)
+		}
 	}
 }

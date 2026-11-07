@@ -365,7 +365,7 @@ func TestBackupPageFilesWayShowsNoticeSizesAndDuration(t *testing.T) {
 	wantContains(t, body,
 		"Dieses System hat keinen Schreibschutz. Die Sicherung wird dateiweise erstellt und enthält alle Daten des Systems, auch Benutzerordner, gespeicherte Passwörter und Schlüssel. Vertraulich aufbewahren.",
 		"kann 15 bis 40 Minuten dauern",
-		"Benötigte Größe", "9,0 GB", "9,9 GB", "20,0 GB")
+		"Benötigte Größe", "9,0 GB", "9,9 GB", "20,0 GB", "Rohdatei und die komprimierte Datei zugleich")
 	wantNotContains(t, body, "passt auf jede Karte ab 16 GB", "nur für Systeme aus dem SD-Abbild", "disabled")
 }
 

@@ -4,13 +4,15 @@
 # groß wie die belegten Daten plus Reserve; auf einer größeren Karte wächst die Wurzel hier online.
 #
 # Nur auf Systemen ohne SD-Abbild (ohne /etc/hmi-kiosk/image-release): Das Abbild hat eine eigene Datenpartition
-# und eine schreibgeschützte Wurzel. Die Wurzel muss ext4 auf der letzten Partition der Karte sein. Fehlen mehr
-# als 16 MiB hinter ihrem Ende, wird die Tabelle erweitert (sfdisk, partx); resize2fs läuft immer, damit der
+# und eine schreibgeschützte Wurzel. Wie die Sicherung (Layoutprüfung des Helfers) wirkt es nur auf einer Karte
+# oder SSD (mmcblk*, nvme*n*) mit genau zwei Partitionen, deren zweite die ext4-Wurzel ist. Fehlen mehr als
+# 16 MiB hinter ihrem Ende, wird die Tabelle erweitert (sfdisk, partx); resize2fs läuft immer, damit der
 # nächste Start einen gescheiterten Schritt nachholt. Ist alles groß genug, ändert sich nichts.
 # Das Skript endet immer mit 0: Fehler stehen nur im Protokoll, das Gerät startet trotzdem.
 #
 # Orte überschreibbar für den Test (test-grow-root.sh).
 ROOT=${HMI_GROW_ROOT_MOUNT:-/}
+DISKS=${HMI_GROW_ROOT_DISKS:-"mmcblk* nvme*n*"}
 RELEASE=${HMI_GROW_ROOT_RELEASE:-/etc/hmi-kiosk/image-release}
 
 log() { echo "hmi-kiosk-grow-root: $*"; }
@@ -40,13 +42,27 @@ grow_root() {
 	name=$(basename "$sysdir")
 	parent=$(dirname "$sysdir")
 	disk=$(basename "$parent")
-	for p in "$parent/$disk"*/partition; do
-		[ -f "$p" ] || continue
-		if [ "$(cat "$p")" -gt "$nr" ]; then
-			log "Partition $nr von $disk ist nicht die letzte; keine Vergrößerung"
-			return 0
-		fi
+	supported=0
+	for pat in $DISKS; do
+		# shellcheck disable=SC2254
+		case $disk in $pat) supported=1 ;; esac
 	done
+	if [ "$supported" != 1 ]; then
+		log "$disk wird nicht unterstützt (nur $DISKS); keine Vergrößerung"
+		return 0
+	fi
+	if [ "$nr" != 2 ]; then
+		log "Die Wurzel liegt auf Partition $nr statt 2; keine Vergrößerung"
+		return 0
+	fi
+	count=0
+	for p in "$parent/$disk"*/partition; do
+		[ -f "$p" ] && count=$((count + 1))
+	done
+	if [ "$count" != 2 ]; then
+		log "$disk hat $count Partitionen, das ist kein Layout mit genau zwei Partitionen; keine Vergrößerung"
+		return 0
+	fi
 	dev=/dev/$name
 	diskdev=/dev/$disk
 	total=$(blockdev --getsz "$diskdev") || fail "Größe von $diskdev nicht ermittelbar" || return 1

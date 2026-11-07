@@ -68,6 +68,8 @@ type filesFake struct {
 	dirs   map[string][]string
 	mounts map[string]bool
 	loopUp bool
+	// attachThenFail: losetup hängt die Datei an und meldet trotzdem einen Fehler (z. B. beendet nach dem Anhängen).
+	attachThenFail bool
 }
 
 func (f *filesFake) call(ctx context.Context, name string, args ...string) (string, error) {
@@ -84,11 +86,32 @@ func (f *filesFake) call(ctx context.Context, name string, args ...string) (stri
 		return f.blkid[args[len(args)-1]], nil
 	case "losetup":
 		if len(args) > 0 && args[0] == "-P" {
+			if f.attachThenFail {
+				f.mu.Lock()
+				f.loopUp = true
+				f.mu.Unlock()
+				return "", errors.New("abgebrochen nach dem Anhängen")
+			}
 			dir := f.e.srv.Backup.devDir()
 			for _, n := range []string{"loop7p1", "loop7p2"} {
 				writeFile(f.t, filepath.Join(dir, n), "")
 			}
+			f.mu.Lock()
+			f.loopUp = true
+			f.mu.Unlock()
 			return "/dev/loop7\n", nil
+		}
+		if len(args) > 0 && args[0] == "-d" {
+			f.mu.Lock()
+			f.loopUp = false
+			f.mu.Unlock()
+		}
+		if len(args) > 1 && args[0] == "-j" {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if f.loopUp {
+				return "/dev/loop7: [64768]:12 (" + args[1] + ")\n", nil
+			}
 		}
 	case "mount":
 		f.mu.Lock()
@@ -368,7 +391,7 @@ func TestRewritePartuuid(t *testing.T) {
 		}
 	}
 	// Eine fremde Partitions-Kennung lässt sich nicht abbilden.
-	if _, _, err := rewritePartuuid("root=PARTUUID=aaaaaaaa-02 rootwait", fOldID, 5); err == nil || !strings.Contains(err.Error(), "aaaaaaaa") {
+	if _, _, err := rewritePartuuid("root=PARTUUID=aaaaaaaa-02 rootwait", fOldID, 5); err == nil || !strings.Contains(err.Error(), "aaaaaaaa") || !strings.Contains(err.Error(), "root=PARTUUID=aaaaaaaa-02") {
 		t.Errorf("fremde Kennung: %v", err)
 	}
 }
@@ -530,7 +553,7 @@ func TestFilesBuildSteps(t *testing.T) {
 		"mount -t vfat -o nodev,nosuid,noexec " + loopP1 + " " + bootMnt,
 		"mount -t ext4 -o nodev,nosuid,noexec " + loopP2 + " " + rootMnt,
 		"rsync -rtx --no-owner --no-group --no-perms --omit-dir-times -q " + fe.bootSrc + "/ " + bootMnt + "/",
-		"rsync -aHAXx --numeric-ids -q" + excl + " " + fe.root + "/ " + rootMnt + "/",
+		"rsync -aHAXx -S --numeric-ids -q" + excl + " " + fe.root + "/ " + rootMnt + "/",
 		"sync",
 		"umount " + rootMnt,
 		"umount " + bootMnt,
@@ -662,7 +685,7 @@ func TestFilesBuildFailuresCleanUp(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fe := newFilesEnv(t)
 			fe.ff.failOn = func(n string, args []string) error {
-				if n == fail && !(n == "losetup" && args[0] == "-d") {
+				if n == fail && !(n == "losetup" && (args[0] == "-d" || args[0] == "-j")) {
 					return errors.New("kaputt")
 				}
 				return nil
@@ -725,7 +748,7 @@ func TestFilesRejectsAdjustFailureAndCleansUp(t *testing.T) {
 	}
 	run, _ := fe.srv.backup.begin(context.Background(), "download", "Browser")
 	_, _, err := fe.srv.openFiles(run.ctx, run, filesTarget{dir: fe.cache, name: "hmikiosk-test.img"})
-	if err == nil || !strings.Contains(err.Error(), "aaaaaaaa") {
+	if err == nil || !strings.Contains(err.Error(), "aaaaaaaa") || !strings.Contains(err.Error(), "root=PARTUUID=aaaaaaaa-02") || !strings.Contains(err.Error(), "cmdline.txt") {
 		t.Fatalf("err: %v", err)
 	}
 	fe.wantClean(t)
@@ -751,7 +774,7 @@ func TestFilesDownloadSpaceCheck(t *testing.T) {
 	}
 	fe.srv.Backup.FreeBytes = func(string) (int64, error) { return p.rawSize + 512*mib, nil }
 	info = fe.srv.backupInfo(context.Background())
-	if info.DownloadProblem != "" || info.CardFree != p.rawSize+512*mib || info.NeedCard != p.rawSize+512*mib || info.NeedUSB != p.rawSize+p.rawSize/10 {
+	if info.DownloadProblem != "" || info.CardFree != p.rawSize+512*mib || info.NeedCard != p.rawSize+512*mib || info.NeedUSB != p.usbNeed() {
 		t.Errorf("Info: %+v", info)
 	}
 }
@@ -887,7 +910,7 @@ func TestFilesUSBEndToEnd(t *testing.T) {
 	cl := helperapi.New(startServer(t, fe.env))
 
 	// Zu wenig Platz: Ablehnung vorab mit der nötigen Größe, nichts gebaut.
-	stickFreeAtMount = p.rawSize + p.rawSize/10 - 1
+	stickFreeAtMount = p.usbNeed() - 1
 	err := cl.BackupUSB(context.Background(), "Presse-1")
 	if err == nil || !strings.Contains(err.Error(), "nicht genug Platz") || !strings.Contains(err.Error(), "nötig") {
 		t.Fatalf("zu wenig Platz: %v", err)
@@ -895,7 +918,7 @@ func TestFilesUSBEndToEnd(t *testing.T) {
 	if hasCall(fe.calls(), "losetup") || waitStopped(t, cl).Finished {
 		t.Fatalf("trotz zu wenig Platz gebaut: %v", fe.calls())
 	}
-	stickFreeAtMount = p.rawSize + p.rawSize/10
+	stickFreeAtMount = p.usbNeed()
 	if err := cl.BackupUSB(context.Background(), "Presse-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1064,5 +1087,86 @@ func TestFilesManyInodesGetExplicitCount(t *testing.T) {
 	fe.inodes = 10000
 	if p, _ = fe.srv.planFiles(context.Background()); p.inodes != 0 {
 		t.Errorf("-i genügt, -N nicht nötig: %d", p.inodes)
+	}
+}
+
+// Scheitert losetup, nachdem es die Datei angehängt hat, wird das Loop-Gerät über die Datei gefunden und
+// gelöst, bevor sie gelöscht wird.
+func TestFilesLosetupErrorDetachesLoopOfWorkFile(t *testing.T) {
+	fe := newFilesEnv(t)
+	fe.ff.attachThenFail = true
+	run, _ := fe.srv.backup.begin(context.Background(), "download", "Browser")
+	_, _, err := fe.srv.openFiles(run.ctx, run, filesTarget{dir: fe.cache, name: "hmikiosk-test.img"})
+	run.end(err, "")
+	if err == nil {
+		t.Fatal("kein Fehler")
+	}
+	raw := filepath.Join(fe.cache, "hmikiosk-test.img")
+	calls := fe.calls()
+	if !subsequence(calls, []string{"losetup -P --show -f " + raw, "losetup -j " + raw, "losetup -d /dev/loop7"}) {
+		t.Fatalf("Aufrufe: %v", calls)
+	}
+	fe.wantClean(t)
+}
+
+// Lässt sich das Loop-Gerät nicht lösen, bleibt die Arbeitsdatei bestehen (sie wird nicht unter dem Gerät gelöscht).
+func TestFilesFileIsKeptWhenDetachFails(t *testing.T) {
+	fe := newFilesEnv(t)
+	fe.ff.failOn = func(n string, args []string) error {
+		if n == "rsync" {
+			return errors.New("kaputt")
+		}
+		if n == "losetup" && args[0] == "-d" {
+			return errors.New("busy")
+		}
+		return nil
+	}
+	run, _ := fe.srv.backup.begin(context.Background(), "download", "Browser")
+	_, _, err := fe.srv.openFiles(run.ctx, run, filesTarget{dir: fe.cache, name: "hmikiosk-test.img"})
+	run.end(err, "")
+	if err == nil {
+		t.Fatal("kein Fehler")
+	}
+	if _, serr := os.Lstat(filepath.Join(fe.cache, "hmikiosk-test.img")); serr != nil {
+		t.Errorf("Arbeitsdatei trotz angehängtem Loop-Gerät gelöscht: %v", serr)
+	}
+}
+
+func TestFilesUSBNeedCoversRawAndCompressed(t *testing.T) {
+	p := &filesPlan{rawSize: 10 << 30}
+	// Rohdatei plus komprimierte Datei (bis 70 % der Rohgröße bei vollem System) plus Reserve.
+	if want := int64(10<<30) + 7<<30 + 256*mib; p.usbNeed() != want {
+		t.Errorf("usbNeed %d, erwartet %d", p.usbNeed(), want)
+	}
+}
+
+func TestFilesRsyncUsesSparse(t *testing.T) {
+	fe := newFilesEnv(t)
+	var args []string
+	fe.ff.rsync = func(_ context.Context, a []string) error {
+		if strings.HasSuffix(a[len(a)-1], "/root/") {
+			args = a
+		}
+		dst := a[len(a)-1]
+		if strings.HasSuffix(dst, "/boot/") {
+			writeFile(t, filepath.Join(dst, "cmdline.txt"), piCmdline)
+		} else {
+			writeFile(t, filepath.Join(dst, "etc", "fstab"), piFstab)
+		}
+		return nil
+	}
+	run, _ := fe.srv.backup.begin(context.Background(), "download", "Browser")
+	rc, _, err := fe.srv.openFiles(run.ctx, run, filesTarget{dir: fe.cache, name: "hmikiosk-test.img"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+	run.end(nil, "")
+	found := false
+	for _, a := range args {
+		found = found || a == "-S"
+	}
+	if !found {
+		t.Errorf("rsync ohne -S: %v", args)
 	}
 }

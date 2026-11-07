@@ -43,6 +43,16 @@ func usbFS(typ string) (kernel, label string, err error) {
 	return "", "", fmt.Errorf("Das Dateisystem %s wird nicht unterstützt (erlaubt: exFAT, ext4, NTFS).", typ)
 }
 
+// usbMountOptions: exFAT und NTFS kennen keine Dateirechte; ohne diese Optionen wäre die Rohdatei des Abbilds
+// (mit /etc/shadow und Schlüsseln) während des Baus für jeden Benutzer lesbar. ext4 trägt die Rechte selbst.
+func usbMountOptions(kernel string) string {
+	opts := "nosuid,nodev,noexec"
+	if kernel != "ext4" {
+		opts += ",uid=0,gid=0,umask=0077"
+	}
+	return opts
+}
+
 // usbWriteErr übersetzt Fehler beim Schreiben auf den Stick.
 func usbWriteErr(err error) error {
 	if errors.Is(err, syscall.ENOSPC) {
@@ -89,10 +99,10 @@ func (s *Server) backupUSB(ctx context.Context, name string) (err error) {
 	run.setTarget("USB-Stick (" + label + ")")
 
 	mnt := s.Backup.usbMount()
-	if err := ensureDir(mnt); err != nil {
+	if _, err := ensurePrivateDir(mnt, "Der Einhängeort des USB-Sticks"); err != nil {
 		return fmt.Errorf("Der Einhängeort des USB-Sticks ist nicht nutzbar: %v", err)
 	}
-	if err := s.exec(ctx, "mount", "-t", kernel, "-o", "nosuid,nodev,noexec", dev, mnt); err != nil {
+	if err := s.exec(ctx, "mount", "-t", kernel, "-o", usbMountOptions(kernel), dev, mnt); err != nil {
 		err = fmt.Errorf("mount fehlgeschlagen: %v", err)
 		if kernel == "ntfs3" {
 			err = fmt.Errorf("%v (NTFS braucht den Kerneltreiber ntfs3; sonst den Stick mit exFAT formatieren)", err)
@@ -207,21 +217,6 @@ func (s *Server) umount(mnt string) {
 		// Der Fehler steht nirgends sonst; der nächste Start hängt erneut ein.
 		log.Printf("umount %s: %v", mnt, err)
 	}
-}
-
-// ensureDir legt den Einhängeort an und lehnt Verweise und Dateien ab.
-func ensureDir(p string) error {
-	fi, err := os.Lstat(p)
-	if errors.Is(err, os.ErrNotExist) {
-		return os.MkdirAll(p, 0o700)
-	}
-	if err != nil {
-		return err
-	}
-	if !fi.IsDir() {
-		return errors.New("kein Ordner")
-	}
-	return nil
 }
 
 // copyFromSource baut die Quelle (das kann dauern) und kopiert sie komprimiert nach w.

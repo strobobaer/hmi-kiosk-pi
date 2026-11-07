@@ -199,5 +199,19 @@ check "rc.xml des Desktops wiederhergestellt" test "$(cat /etc/xdg/labwc/rc.xml)
 check "alte Kiosk-environment im Desktop-Ordner entfernt" test ! -e /etc/xdg/labwc/environment
 
 
+# 12. Mit systemd (Ersatz-systemctl zeichnet auf): Die Netzwerk-Kennung wird sofort einmal gestartet, damit eine
+#     Sicherung gleich nach der Installation schon die Seriennummer trägt. Den Desktop gibt es seit Abschnitt 11 nicht mehr.
+mkdir -p /run/systemd/system /tmp/fakebin
+printf '#!/bin/sh\necho "$*" >>/tmp/systemctl.log\n' >/tmp/fakebin/systemctl
+chmod 755 /tmp/fakebin/systemctl
+: >/tmp/systemctl.log
+out=$(PATH=/tmp/fakebin:$PATH /bundle/install.sh 2>&1)
+rc=$?
+if [ $rc -eq 0 ]; then ok "mit systemd: Exit 0"; else bad "mit systemd: Exit $rc"; echo "$out" | tail -n 5; fi
+check "identity wird nach dem Aktivieren gestartet" bash -c "grep -q '^enable .*hmi-kiosk-identity.service' /tmp/systemctl.log && grep -q '^start hmi-kiosk-identity.service\$' /tmp/systemctl.log"
+check "grow-root wird aktiviert" grep -q '^enable .*hmi-kiosk-grow-root.service' /tmp/systemctl.log
+check "identity wird vor dem Dienst-Neustart gestartet" bash -c "[ \$(grep -n '^start hmi-kiosk-identity.service\$' /tmp/systemctl.log | head -n1 | cut -d: -f1) -lt \$(grep -n '^restart hmi-kiosk-helper.service\$' /tmp/systemctl.log | head -n1 | cut -d: -f1) ]"
+rm -rf /run/systemd/system /tmp/fakebin
+
 echo
 if [ $fails -eq 0 ]; then echo "Alle Prüfungen bestanden."; else echo "$fails Prüfung(en) fehlgeschlagen."; exit 1; fi

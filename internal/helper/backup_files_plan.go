@@ -74,8 +74,11 @@ type filesPlan struct {
 	boot, root  fsInfo
 }
 
-// usbNeed: Rohdatei plus komprimierte Datei (Schätzung 10 % der Rohgröße) liegen zugleich auf dem Stick.
-func (p *filesPlan) usbNeed() int64 { return p.rawSize + p.rawSize/10 }
+// usbNeed: Auf dem Stick liegen zugleich die Rohdatei und die komprimierte Datei (gzip streamt aus der Rohdatei, die
+// erst danach gelöscht wird). Ein gut gefülltes System komprimiert mit gzip (schnellste Stufe) nur auf etwa 50 bis
+// 70 % der Rohgröße; darum Rohgröße + 70 % + 256 MiB Reserve. Die einfachere Alternative, die Rohdatei auf der Karte
+// zu bauen, scheidet aus: Dort fehlt oft der Platz, der Stick-Weg soll gerade dann gehen.
+func (p *filesPlan) usbNeed() int64 { return p.rawSize + p.rawSize*7/10 + 256*mib }
 
 // filesSystemSize: belegt + 25 % + Zuschlag, auf MiB aufgerundet.
 func filesSystemSize(used, extra int64) int64 {
