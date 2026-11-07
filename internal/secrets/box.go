@@ -10,14 +10,70 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const keySize = 32
 
+var (
+	// ErrKeyMissing: Die Schlüsseldatei fehlt, obwohl verschlüsselte Werte gespeichert sind.
+	ErrKeyMissing = errors.New("Schlüsseldatei fehlt")
+	// ErrNoKey: Die Box hat keinen Schlüssel (Reparaturmodus).
+	ErrNoKey = errors.New("kein Geräteschlüssel verfügbar")
+)
+
 // Box verschlüsselt einzelne Werte mit einem lokal gespeicherten AES-256-Schlüssel.
+// Ohne Schlüssel (Unavailable) schlagen Seal und Open mit ErrNoKey fehl; Rekey setzt
+// den Schlüssel später, ohne dass Halter der Box etwas tauschen müssen.
 type Box struct {
+	mu   sync.RWMutex
 	aead cipher.AEAD
 }
+
+// Unavailable liefert eine Box ohne Schlüssel.
+func Unavailable() *Box { return &Box{} }
+
+// NewBox baut eine Box aus einem vorhandenen Schlüssel.
+func NewBox(key []byte) (*Box, error) {
+	b := &Box{}
+	return b, b.Rekey(key)
+}
+
+func (b *Box) current() cipher.AEAD {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.aead
+}
+
+// Available meldet, ob die Box einen Schlüssel hat.
+func (b *Box) Available() bool { return b.current() != nil }
+
+// Rekey ersetzt den Schlüssel der Box.
+func (b *Box) Rekey(key []byte) error {
+	if len(key) != keySize {
+		return fmt.Errorf("Schlüssel hat %d statt %d Byte", len(key), keySize)
+	}
+	aead, err := newGCM(key)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.aead = aead
+	b.mu.Unlock()
+	return nil
+}
+
+// GenerateKey erzeugt einen neuen zufälligen Schlüssel.
+func GenerateKey() ([]byte, error) {
+	key := make([]byte, keySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, fmt.Errorf("Schlüssel erzeugen: %w", err)
+	}
+	return key, nil
+}
+
+// WriteKeyFile schreibt den Schlüssel atomar mit Modus 0600.
+func WriteKeyFile(path string, key []byte) error { return writeFileAtomic(path, key, 0o600) }
 
 // OpenBox lädt den Schlüssel aus path oder erzeugt ihn mit Modus 0600. Eine leere
 // oder zu kurze Datei stammt von einem abgebrochenen ersten Schreiben; sie gilt nur
@@ -26,6 +82,8 @@ type Box struct {
 func OpenBox(path string, sealedInUse bool) (*Box, error) {
 	key, err := os.ReadFile(path)
 	switch {
+	case errors.Is(err, os.ErrNotExist) && sealedInUse:
+		return nil, fmt.Errorf("%w: %s, die gespeicherten VNC-Passwörter und der gemeinsame Schlüssel sind damit nicht lesbar", ErrKeyMissing, path)
 	case errors.Is(err, os.ErrNotExist):
 		key, err = createKey(path)
 	case err != nil:
@@ -39,21 +97,17 @@ func OpenBox(path string, sealedInUse bool) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	aead, err := newGCM(key)
-	if err != nil {
-		return nil, err
-	}
-	return &Box{aead: aead}, nil
+	return NewBox(key)
 }
 
 // createKey schreibt einen neuen Schlüssel atomar: Ein Stromausfall hinterlässt
 // entweder keine oder eine vollständige Datei.
 func createKey(path string) ([]byte, error) {
-	key := make([]byte, keySize)
-	if _, err := rand.Read(key); err != nil {
-		return nil, fmt.Errorf("Schlüssel erzeugen: %w", err)
+	key, err := GenerateKey()
+	if err != nil {
+		return nil, err
 	}
-	if err := writeFileAtomic(path, key, 0o600); err != nil {
+	if err := WriteKeyFile(path, key); err != nil {
 		return nil, fmt.Errorf("Schlüssel speichern: %w", err)
 	}
 	return key, nil
@@ -104,24 +158,32 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 
 // Seal liefert nonce||ciphertext als Base64.
 func (b *Box) Seal(plain string) (string, error) {
-	nonce := make([]byte, b.aead.NonceSize())
+	aead := b.current()
+	if aead == nil {
+		return "", ErrNoKey
+	}
+	nonce := make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
-	return base64.StdEncoding.EncodeToString(b.aead.Seal(nonce, nonce, []byte(plain), nil)), nil
+	return base64.StdEncoding.EncodeToString(aead.Seal(nonce, nonce, []byte(plain), nil)), nil
 }
 
 // Open kehrt Seal um.
 func (b *Box) Open(sealed string) (string, error) {
+	aead := b.current()
+	if aead == nil {
+		return "", ErrNoKey
+	}
 	raw, err := base64.StdEncoding.DecodeString(sealed)
 	if err != nil {
 		return "", fmt.Errorf("ungültiges Format: %w", err)
 	}
-	n := b.aead.NonceSize()
-	if len(raw) < n+b.aead.Overhead() {
+	n := aead.NonceSize()
+	if len(raw) < n+aead.Overhead() {
 		return "", errors.New("verschlüsselter Wert zu kurz")
 	}
-	plain, err := b.aead.Open(nil, raw[:n], raw[n:], nil)
+	plain, err := aead.Open(nil, raw[:n], raw[n:], nil)
 	if err != nil {
 		return "", errors.New("Entschlüsselung fehlgeschlagen")
 	}

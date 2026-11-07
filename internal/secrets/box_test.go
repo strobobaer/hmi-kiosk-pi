@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -121,5 +122,69 @@ func TestBoxWritesKeyWithoutLeftovers(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 || entries[0].Name() != "box.key" {
 		t.Fatalf("Reste im Ordner: %v", entries)
+	}
+}
+
+func TestBoxMissingKeyFileWithSealedValuesIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "box.key")
+	_, err := OpenBox(path, true)
+	if !errors.Is(err, ErrKeyMissing) {
+		t.Fatalf("fehlende Datei bei verschlüsselten Werten: %v", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("Schlüsseldatei trotzdem angelegt")
+	}
+	if _, err := OpenBox(path, false); err != nil {
+		t.Fatalf("erster Start: %v", err)
+	}
+}
+
+func TestUnavailableBoxFailsCleanlyAndRekeyMakesItWork(t *testing.T) {
+	b := Unavailable()
+	if b.Available() {
+		t.Fatal("Box ohne Schlüssel gilt als verfügbar")
+	}
+	if _, err := b.Seal("x"); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("Seal: %v", err)
+	}
+	if _, err := b.Open("AAAA"); !errors.Is(err, ErrNoKey) {
+		t.Fatalf("Open: %v", err)
+	}
+	key, err := GenerateKey()
+	if err != nil || len(key) != keySize {
+		t.Fatalf("GenerateKey: %d Byte, %v", len(key), err)
+	}
+	if err := b.Rekey(key); err != nil {
+		t.Fatal(err)
+	}
+	enc, err := b.Seal("ä")
+	if err != nil || !b.Available() {
+		t.Fatalf("Seal nach Rekey: %v", err)
+	}
+	if out, err := b.Open(enc); err != nil || out != "ä" {
+		t.Fatalf("Open: %q %v", out, err)
+	}
+	if err := b.Rekey([]byte("kurz")); err == nil {
+		t.Fatal("zu kurzer Schlüssel angenommen")
+	}
+}
+
+func TestWriteKeyFileIsAtomicAndReadable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "box.key")
+	key, _ := GenerateKey()
+	if err := WriteKeyFile(path, key); err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBox(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := NewBox(key)
+	enc, _ := other.Seal("x")
+	if out, err := b.Open(enc); err != nil || out != "x" {
+		t.Fatalf("Schlüssel nicht aus Datei geladen: %q %v", out, err)
+	}
+	if err := WriteKeyFile(filepath.Join(path, "unten"), key); err == nil {
+		t.Fatal("Schreiben in einen unmöglichen Pfad meldet keinen Fehler")
 	}
 }

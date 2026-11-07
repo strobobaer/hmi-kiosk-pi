@@ -41,6 +41,8 @@ type HMI struct {
 	Mode        *Mode         `json:"mode,omitempty"`
 	Takeover    TakeoverStyle `json:"takeover"`
 	AllowWatch  bool          `json:"allowWatch"`
+	// PasswordLost: Das Passwort ging bei einer Schlüsselreparatur verloren und muss neu eingegeben werden.
+	PasswordLost bool `json:"passwordLost,omitempty"`
 }
 
 type Peer struct {
@@ -94,6 +96,9 @@ type Config struct {
 		// HardwareID ist die Kennung des Geräts, auf dem die Konfiguration eingerichtet
 		// wurde. Sie bleibt lokal: Der Import übernimmt sie nicht.
 		HardwareID string `json:"hardwareId"`
+		// MaintenanceManual hält den Wartungsmodus an, den der Admin von Hand gestartet hat
+		// (Sicherung ohne Kennung, Übertragung auf ein anderes Terminal). Auch lokal.
+		MaintenanceManual bool `json:"maintenanceManual,omitempty"`
 	} `json:"terminal"`
 	Peers        []Peer     `json:"peers"`
 	SharedKeyEnc string     `json:"sharedKeyEnc"`

@@ -69,3 +69,34 @@ func TestNewTerminalIDIsFreshAndValid(t *testing.T) {
 		t.Fatalf("%q %q", a, b)
 	}
 }
+
+func TestInMaintenanceByHardwareOrManualFlag(t *testing.T) {
+	var c Config
+	c.Terminal.HardwareID = "aaaa"
+	if InMaintenance(c, "aaaa") || InMaintenance(c, "") {
+		t.Fatal("Wartungsmodus ohne Grund")
+	}
+	if !InMaintenance(c, "bbbb") {
+		t.Fatal("anderes Gerät nicht erkannt")
+	}
+	c.Terminal.MaintenanceManual = true
+	if !InMaintenance(c, "aaaa") || !InMaintenance(c, "") {
+		t.Fatal("von Hand gestarteter Wartungsmodus fehlt")
+	}
+	raw, _ := json.Marshal(c)
+	if !strings.Contains(string(raw), `"maintenanceManual":true`) {
+		t.Fatalf("JSON-Name falsch: %s", raw)
+	}
+}
+
+func TestPasswordLostRoundTripsAndIsOmittedWhenFalse(t *testing.T) {
+	h := HMI{ID: "a", PasswordLost: true}
+	raw, _ := json.Marshal(h)
+	if !strings.Contains(string(raw), `"passwordLost":true`) {
+		t.Fatalf("JSON: %s", raw)
+	}
+	raw, _ = json.Marshal(HMI{ID: "a"})
+	if strings.Contains(string(raw), "passwordLost") {
+		t.Fatalf("Feld nicht weggelassen: %s", raw)
+	}
+}

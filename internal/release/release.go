@@ -4,6 +4,7 @@ package release
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"strings"
 )
@@ -18,4 +19,13 @@ func PublicKey() ed25519.PublicKey {
 		return nil
 	}
 	return ed25519.PublicKey(b)
+}
+
+// Fingerprint kürzt den SHA-256 des Schlüssels auf 16 Hex-Zeichen; ohne Schlüssel leer.
+func Fingerprint(key ed25519.PublicKey) string {
+	if len(key) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(key)
+	return hex.EncodeToString(sum[:])[:16]
 }

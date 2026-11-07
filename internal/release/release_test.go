@@ -1,6 +1,7 @@
 package release
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -27,5 +28,17 @@ func TestPublicKeyAccessor(t *testing.T) {
 	k := PublicKey()
 	if len(k) != 32 || k[0] != 7 {
 		t.Fatalf("Schlüssel %v", k)
+	}
+}
+
+func TestFingerprintIsFirst16HexOfSHA256(t *testing.T) {
+	if Fingerprint(nil) != "" {
+		t.Fatal("ohne Schlüssel muss der Fingerabdruck leer sein")
+	}
+	key := make([]byte, 32)
+	sum := sha256.Sum256(key)
+	want := hex.EncodeToString(sum[:])[:16]
+	if got := Fingerprint(key); got != want || len(got) != 16 {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

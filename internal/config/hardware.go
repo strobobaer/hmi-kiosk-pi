@@ -9,3 +9,9 @@ func HardwareChanged(stored, current string) bool {
 
 // NewTerminalID erzeugt eine frische Terminal-Kennung.
 func NewTerminalID() string { return newID() }
+
+// InMaintenance meldet, ob das Terminal im Wartungsmodus steht: Die Karte läuft auf
+// einem anderen Gerät, oder der Admin hat ihn von Hand gestartet.
+func InMaintenance(c Config, currentHardwareID string) bool {
+	return c.Terminal.MaintenanceManual || HardwareChanged(c.Terminal.HardwareID, currentHardwareID)
+}
