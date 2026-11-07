@@ -82,25 +82,29 @@ const errWritable = "Der Schreibschutz ist ausgeschaltet. Eine SD-Sicherung ist 
 
 // checkReadOnly lehnt ab, wenn Partition 1 oder 2 der Karte irgendwo schreibbar eingehängt ist
 // (Schreibschutz aus): Dann wäre die Rohkopie nicht stimmig. Unter dem Overlay ist die untere
-// Ebene der Wurzel nur lesbar eingehängt.
+// Ebene der Wurzel nur lesbar eingehängt. Verglichen wird die Gerätenummer (major:minor) aus
+// mountinfo, nicht der Quellname: die Wurzel erscheint auf dem Pi auch als /dev/root.
 func (s *Server) checkReadOnly(devPath string) error {
-	raw, err := os.ReadFile(s.Backup.mountInfo())
-	if err != nil {
-		return errors.New("Die Einhängepunkte der SD-Karte ließen sich nicht prüfen: " + err.Error())
-	}
 	base := filepath.Base(devPath)
 	sep := ""
 	if base != "" && base[len(base)-1] >= '0' && base[len(base)-1] <= '9' {
 		sep = "p"
 	}
-	want := map[string]bool{"/dev/" + base + sep + "1": true, "/dev/" + base + sep + "2": true}
-	for _, line := range strings.Split(string(raw), "\n") {
-		left, right, ok := strings.Cut(line, " - ")
-		if !ok {
-			continue
+	want := map[string]bool{}
+	for _, n := range []string{"1", "2"} {
+		b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), base+sep+n, "dev"))
+		if err != nil {
+			return errors.New("Die Partitionen der SD-Karte ließen sich nicht prüfen: " + err.Error())
 		}
-		lf, rf := strings.Fields(left), strings.Fields(right)
-		if len(lf) < 6 || len(rf) < 2 || !want[rf[1]] {
+		want[strings.TrimSpace(string(b))] = true
+	}
+	raw, err := os.ReadFile(s.Backup.mountInfo())
+	if err != nil {
+		return errors.New("Die Einhängepunkte der SD-Karte ließen sich nicht prüfen: " + err.Error())
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		lf := strings.Fields(line)
+		if len(lf) < 6 || !want[lf[2]] {
 			continue
 		}
 		for _, o := range strings.Split(lf[5], ",") {

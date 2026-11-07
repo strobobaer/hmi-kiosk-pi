@@ -39,6 +39,7 @@ const (
 	// minInodes und inodeRatio: Inodes aus der Zahl der Einträge mit Reserve; feste Dichte,
 	// damit ein vergrößertes Dateisystem keine übergroßen Inode-Tabellen anlegt.
 	minInodes  = 16384
+	inodeSize  = 512 // Inode-Tabelle je Eintrag (256 B Inode, Reserve für Verzeichnisblöcke)
 	inodeRatio = 16384
 
 	tempPrefix = "hmi-kiosk-backup-"
@@ -98,6 +99,9 @@ func dataUsed(ctx context.Context, root string) (int64, int64, error) {
 		return nil
 	})
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return 0, 0, cerr
+		}
 		return 0, 0, fmt.Errorf("Die Datenpartition ließ sich nicht ausmessen: %v", err)
 	}
 	return total, entries, nil
@@ -188,7 +192,7 @@ func (s *Server) measure(ctx context.Context, dev *os.File) (*compactPlan, error
 	if err != nil {
 		return nil, err
 	}
-	data := imageSize(used)
+	data := imageSize(used + entries*inodeSize)
 	if data > maxDataImage {
 		return nil, fmt.Errorf("Die Daten auf der Datenpartition (%d MB belegt) sind zu groß für die kompakte Sicherung (höchstens %d MB Abbild).", used/mib, maxDataImage/mib)
 	}
@@ -272,10 +276,16 @@ func (s *Server) buildDataImage(ctx context.Context, p *compactPlan, path string
 	if err := s.exec(ctx, "mkfs.ext4", "-q", "-F", "-L", dataLabel, "-b", strconv.Itoa(fsBlockSize), "-I", "256", "-m", "1",
 		"-i", strconv.Itoa(inodeRatio), "-N", strconv.FormatInt(p.inodes, 10),
 		"-E", opts, "-d", s.Backup.dataDir(), path); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		return nil, fmt.Errorf("Die Datenpartition für die Sicherung ließ sich nicht erstellen: %v", err)
 	}
 	mode := fmt.Sprintf("set_inode_field <2> mode 0%o", 0o40000|p.owner.perm)
 	if err := s.exec(ctx, "debugfs", "-w", "-R", mode, path); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
+		}
 		return nil, fmt.Errorf("Die Rechte der Datenpartition ließen sich nicht setzen: %v", err)
 	}
 	img, err := os.Open(path)

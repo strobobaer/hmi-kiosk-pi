@@ -31,8 +31,9 @@ const (
 )
 
 const (
-	errBackupBusy = "Eine SD-Sicherung läuft gerade."
-	msgCancelled  = "Die Sicherung wurde abgebrochen."
+	errBackupBusy   = "Eine SD-Sicherung läuft gerade."
+	msgCancelled    = "Die Sicherung wurde abgebrochen."
+	msgDisconnected = "Die Verbindung zum Browser wurde getrennt."
 
 	defaultIdleTimeout = 60 * time.Second
 	copyChunk          = 1 << 20
@@ -206,6 +207,8 @@ func (r *backupRun) end(err error, file string) {
 	switch {
 	case err != nil && b.cancelled:
 		b.st.Error = msgCancelled
+	case errors.Is(err, context.Canceled):
+		b.st.Error = msgDisconnected
 	case err != nil:
 		b.st.Error = err.Error()
 		b.st.File = file

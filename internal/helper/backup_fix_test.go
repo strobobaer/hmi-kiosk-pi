@@ -24,10 +24,12 @@ const roMountInfo = `22 1 179:2 / /media/root-ro ro,relatime - ext4 /dev/mmcblk9
 func TestCompactImageRefusesWritableBootOrRoot(t *testing.T) {
 	const want = "Der Schreibschutz ist ausgeschaltet. Eine SD-Sicherung ist nur mit eingeschaltetem Schreibschutz möglich, sonst wäre die Kopie unbrauchbar."
 	for name, info := range map[string]string{
-		"System rw":   "22 1 179:2 / / rw,relatime - ext4 /dev/mmcblk9p2 rw\n23 22 179:1 / /boot/firmware ro,relatime - vfat /dev/mmcblk9p1 ro\n",
-		"Boot rw":     "22 1 179:2 / /media/root-ro ro,relatime - ext4 /dev/mmcblk9p2 ro\n23 22 179:1 / /boot/firmware rw,relatime - vfat /dev/mmcblk9p1 rw\n",
-		"zweiter rw":  roMountInfo + "30 24 179:2 / /mnt/x rw,relatime - ext4 /dev/mmcblk9p2 rw\n",
-		"System ohne": "",
+		"System rw":                           "22 1 179:2 / / rw,relatime - ext4 /dev/mmcblk9p2 rw\n23 22 179:1 / /boot/firmware ro,relatime - vfat /dev/mmcblk9p1 ro\n",
+		"Boot rw":                             "22 1 179:2 / /media/root-ro ro,relatime - ext4 /dev/mmcblk9p2 ro\n23 22 179:1 / /boot/firmware rw,relatime - vfat /dev/mmcblk9p1 rw\n",
+		"zweiter rw":                          roMountInfo + "30 24 179:2 / /mnt/x rw,relatime - ext4 /dev/mmcblk9p2 rw\n",
+		"System ohne":                         "",
+		"System als /dev/root rw":             "22 1 179:2 / / rw,relatime - ext4 /dev/root rw\n23 22 179:1 / /boot/firmware ro - vfat /dev/mmcblk9p1 ro\n",
+		"Overlay, Boot rw über anderen Namen": roMountInfo + "31 24 179:1 / /mnt/boot rw - vfat /dev/disk/by-uuid/ABCD rw\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := newCompactEnv(t)
@@ -99,7 +101,8 @@ func TestBackupStreamClientCloseDuringBuildCancelsAndFreesLock(t *testing.T) {
 }
 
 func TestBackupTimeoutsAlign(t *testing.T) {
-	if helperapi.BackupHeaderTimeout <= openTimeout || helperapi.BackupHeaderTimeout > openTimeout+time.Minute {
+	worst := openTimeout + commandTimeout // Bau plus sync
+	if helperapi.BackupHeaderTimeout < worst+30*time.Second || helperapi.BackupHeaderTimeout > worst+time.Minute {
 		t.Fatalf("Kopfzeile %v, Bau %v", helperapi.BackupHeaderTimeout, openTimeout)
 	}
 }
@@ -175,5 +178,85 @@ func TestDataUsedCountsEntries(t *testing.T) {
 	_, n, err := dataUsed(context.Background(), dir)
 	if err != nil || n != 3 {
 		t.Fatalf("Einträge %d %v", n, err)
+	}
+}
+
+// Mit Overlay erscheint die untere Ebene unter /dev/root nur lesbar: erlaubt.
+func TestCompactImageOverlayWithDevRootReadOnlyIsFine(t *testing.T) {
+	c := newCompactEnv(t)
+	writeFile(t, c.srv.Backup.MountInfo, "22 1 179:2 / /media/root-ro ro,relatime - ext4 /dev/root ro\n23 22 179:1 / /boot/firmware ro - vfat /dev/mmcblk9p1 ro\n24 1 0:40 / / rw - overlay overlayroot rw\n")
+	rc, _, err := c.srv.openCompact(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
+}
+
+func TestCompactImageMissingSysfsRefuses(t *testing.T) {
+	c := newCompactEnv(t)
+	c.srv.Backup.SysClassBlock = filepath.Join(t.TempDir(), "fehlt")
+	if _, _, err := c.srv.openCompact(context.Background()); err == nil {
+		t.Fatal("kein Fehler")
+	}
+}
+
+func TestBackupClientAbortGivesGermanStatus(t *testing.T) {
+	linuxOnly(t)
+	e, _ := backupEnv(t)
+	cl := helperapi.New(startServer(t, e))
+	_, rc, err := cl.BackupStream(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.ReadFull(rc, make([]byte, 100))
+	rc.Close()
+	st := waitStopped(t, cl)
+	if st.Error != "Die Verbindung zum Browser wurde getrennt." {
+		t.Fatalf("Status: %+v", st)
+	}
+}
+
+func TestBackupClientCloseDuringBuildGivesGermanStatus(t *testing.T) {
+	c := newCompactEnv(t)
+	real := c.srv.exec
+	started := make(chan struct{})
+	c.srv.exec = func(ctx context.Context, name string, args ...string) error {
+		if name == "mkfs.ext4" {
+			close(started)
+			<-ctx.Done()
+			return fmt.Errorf("signal: killed: %v", ctx.Err())
+		}
+		return real(ctx, name, args...)
+	}
+	cl := helperapi.New(startServer(t, c.env))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { cl.BackupStream(ctx); close(done) }()
+	<-started
+	cancel()
+	<-done
+	st := waitStopped(t, cl)
+	if st.Error != "Die Verbindung zum Browser wurde getrennt." || strings.Contains(st.Error, "context") {
+		t.Fatalf("Status: %+v", st)
+	}
+	dirEmpty(t, c.run)
+}
+
+func TestImageBudgetCountsInodeTables(t *testing.T) {
+	c := newCompactEnv(t)
+	for i := 0; i < 2000; i++ {
+		writeFile(t, filepath.Join(c.data, "d", fmt.Sprintf("f%d", i)), "x")
+	}
+	used, n, err := dataUsed(context.Background(), c.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, dev, err := c.srv.planCompact(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev.Close()
+	if want := imageSize(used + n*512); p.dataSize != want {
+		t.Fatalf("Datenpartition %d, erwartet %d", p.dataSize, want)
 	}
 }

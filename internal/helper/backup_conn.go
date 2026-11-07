@@ -124,5 +124,5 @@ func streamErr(err error) error {
 	if errors.Is(err, os.ErrDeadlineExceeded) {
 		return errors.New("Die Sicherung wurde nicht abgeholt (Zeitüberschreitung).")
 	}
-	return errors.New("Die Verbindung zum Dienst wurde unterbrochen.")
+	return errors.New(msgDisconnected)
 }

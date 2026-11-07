@@ -28,7 +28,8 @@ const MaxBackupNameLen = 40
 // auf die Kopfzeile etwas länger.
 const (
 	BackupOpenTimeout   = 10 * time.Minute
-	BackupHeaderTimeout = BackupOpenTimeout + 30*time.Second
+	BackupSyncTimeout   = 30 * time.Second // sync vor dem Bau, wie commandTimeout im Helfer
+	BackupHeaderTimeout = BackupOpenTimeout + BackupSyncTimeout + 30*time.Second
 )
 
 const (

@@ -24,9 +24,9 @@ type BackupAPI interface {
 const (
 	backupCallTimeout = 10 * time.Second
 	backupRefreshSec  = 3
-	// Der Helfer misst /data für die Größe; das dauert bei vielen Dateien.
 	// backupWriteIdle: so lange darf ein Schreibvorgang zum Browser stehen, bevor die Verbindung fällt.
-	backupWriteIdle   = 60 * time.Second
+	backupWriteIdle = 60 * time.Second
+	// Der Helfer misst /data für die Größe; das dauert bei vielen Dateien.
 	backupInfoTimeout = 40 * time.Second
 )
 

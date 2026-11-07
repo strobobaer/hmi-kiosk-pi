@@ -103,7 +103,7 @@ Während einer Sicherung sind Neustart, Update und Funkeinstellungen gesperrt; e
 **Zurückspielen:**
 
 1. Raspberry Pi Imager starten, Gerät „Raspberry Pi 5“, Betriebssystem „Eigenes Image“ (unten in der Liste) und die Datei `.img.gz` wählen. Der Imager entpackt sie selbst.
-2. Zielkarte (mindestens 16 GB) wählen. Beim Hinweis auf **OS-Anpassungen** „Nein“ wählen: Das Abbild enthält schon alles; Anpassungen des Imagers gehören nicht hinein.
+2. Zielkarte (ab 16 GB) wählen. Beim Hinweis auf **OS-Anpassungen** „Nein“ wählen: Das Abbild enthält schon alles; Anpassungen des Imagers gehören nicht hinein.
 3. Schreiben, Karte einsetzen, starten. Beim ersten Start **wächst die Datenpartition automatisch auf die ganze Karte** (Dienst `hmi-kiosk-grow-data`, danach kein weiterer Neustart nötig). Einzelheiten stehen im Journal (`journalctl -u hmi-kiosk-grow-data`); die Boot-Partition ist dann schreibgeschützt, deshalb gibt es dort keine Protokolldatei. Scheitert das Wachsen, startet das Gerät trotzdem mit der kleinen Partition; der nächste Start versucht es erneut.
 
 ### Schreibschutz (Overlay) ausschalten

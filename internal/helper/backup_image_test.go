@@ -119,6 +119,9 @@ func newCompactEnv(t *testing.T) *compactEnv {
 	b.Source = c.card.path
 	b.MountInfo = filepath.Join(t.TempDir(), "mountinfo")
 	writeFile(t, b.MountInfo, roMountInfo)
+	b.SysClassBlock = filepath.Join(t.TempDir(), "class-block")
+	writeFile(t, filepath.Join(b.SysClassBlock, "mmcblk9p1", "dev"), "179:1\n")
+	writeFile(t, filepath.Join(b.SysClassBlock, "mmcblk9p2", "dev"), "179:2\n")
 	b.DataDir = c.data
 	b.RunDir = c.run
 	b.ImageRelease = imageMarker(t)
