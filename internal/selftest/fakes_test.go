@@ -175,9 +175,16 @@ func (p *fakeProc) handshake(c net.Conn, pw string) error {
 	}
 	c.Write([]byte("RFB 003.008\n"))
 	var n [1]byte
-	io.ReadFull(c, n[:])
+	if _, err := io.ReadFull(c, n[:]); err != nil {
+		return err
+	}
+	if n[0] == 0 {
+		return errors.New("keine Sicherheitsverfahren")
+	}
 	types := make([]byte, n[0])
-	io.ReadFull(c, types)
+	if _, err := io.ReadFull(c, types); err != nil {
+		return err
+	}
 	sec := types[0]
 	c.Write([]byte{sec})
 	if sec == 2 {
