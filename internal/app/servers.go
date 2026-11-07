@@ -28,10 +28,11 @@ func newLocalServer(ctx context.Context, h http.Handler) *http.Server {
 	}
 }
 
-func newAdminServer(h http.Handler, cert tls.Certificate) *http.Server {
+// newAdminServer: Das Zertifikat kommt aus getCert, damit es eine neue Adresse abdecken kann.
+func newAdminServer(h http.Handler, getCert func(*tls.ClientHelloInfo) (*tls.Certificate, error)) *http.Server {
 	return &http.Server{
 		Handler:           h,
-		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12},
+		TLSConfig:         &tls.Config{GetCertificate: getCert, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       5 * time.Minute, // das Hochladen eines Updates
 		WriteTimeout:      5 * time.Minute,
@@ -63,7 +64,7 @@ func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, 
 }
 
 func (s *service) startAdmin(wg *sync.WaitGroup) (*http.Server, string) {
-	cert, ok := s.loadCert()
+	cert, dir, ok := s.loadCert()
 	if !ok {
 		return nil, ""
 	}
@@ -72,7 +73,7 @@ func (s *service) startAdmin(wg *sync.WaitGroup) (*http.Server, string) {
 		s.warn(fmt.Sprintf("Admin-Seite und Terminal-API nicht verfügbar: %v", err))
 		return nil, ""
 	}
-	srv := newAdminServer(s.adminMux(), cert)
+	srv := newAdminServer(s.adminMux(), web.NewCertSource(dir, cert).GetCertificate)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -84,19 +85,21 @@ func (s *service) startAdmin(wg *sync.WaitGroup) (*http.Server, string) {
 }
 
 // loadCert weicht bei defekter Datenpartition in den RAM aus, damit die Admin-Seite
-// den Fehler melden kann und die Abstimmung weiterläuft.
-func (s *service) loadCert() (tls.Certificate, bool) {
-	cert, err := web.LoadOrCreateCert(filepath.Join(s.opts.DataDir, tlsDirName))
+// den Fehler melden kann und die Abstimmung weiterläuft. dir ist der Ordner des Zertifikats.
+func (s *service) loadCert() (tls.Certificate, string, bool) {
+	dir := filepath.Join(s.opts.DataDir, tlsDirName)
+	cert, err := web.LoadOrCreateCert(dir)
 	if err == nil {
-		return cert, true
+		return cert, dir, true
 	}
 	s.warn(fmt.Sprintf("Zertifikat auf der Datenpartition nicht verfügbar, es gilt ein vorläufiges: %v", err))
-	cert, err = web.LoadOrCreateCert(filepath.Join(s.opts.RunDir, tlsDirName))
+	dir = filepath.Join(s.opts.RunDir, tlsDirName)
+	cert, err = web.LoadOrCreateCert(dir)
 	if err != nil {
 		s.warn(fmt.Sprintf("Admin-Seite und Terminal-API nicht verfügbar, kein Zertifikat: %v", err))
-		return tls.Certificate{}, false
+		return tls.Certificate{}, "", false
 	}
-	return cert, true
+	return cert, dir, true
 }
 
 func (s *service) adminMux() http.Handler {

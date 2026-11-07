@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -327,7 +326,7 @@ func TestServerTimeouts(t *testing.T) {
 	if local.ReadHeaderTimeout != 5*time.Second || local.WriteTimeout != 0 || local.IdleTimeout != 60*time.Second || local.BaseContext == nil {
 		t.Fatalf("lokal %+v", local)
 	}
-	admin := newAdminServer(nil, tls.Certificate{})
+	admin := newAdminServer(nil, nil)
 	if admin.ReadHeaderTimeout != 5*time.Second || admin.ReadTimeout != 5*time.Minute || admin.WriteTimeout != 5*time.Minute || admin.IdleTimeout != 60*time.Second {
 		t.Fatalf("Admin %+v", admin)
 	}

@@ -68,13 +68,25 @@ func createCert(dir, certPath, keyPath string, now time.Time) (tls.Certificate, 
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return tls.Certificate{}, err
 	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, keyPEM, err := generateCert(now, interfaceIPs())
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+	if err := saveCert(certPath, keyPath, certPEM, keyPEM); err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+// generateCert erzeugt ein selbst signiertes Zertifikat für den Rechnernamen und ips.
+func generateCert(now time.Time, ips []net.IP) (certPEM, keyPEM []byte, err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, err
 	}
 	host, err := os.Hostname()
 	if err != nil || host == "" {
@@ -89,25 +101,26 @@ func createCert(dir, certPath, keyPath string, now time.Time) (tls.Certificate, 
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              []string{host, host + ".local"},
-		IPAddresses:           interfaceIPs(),
+		IPAddresses:           ips,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, err
 	}
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
-		return tls.Certificate{}, err
+		return nil, nil, err
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM, nil
+}
+
+func saveCert(certPath, keyPath string, certPEM, keyPEM []byte) error {
 	if err := writeFileAtomic(keyPath, keyPEM, 0o600); err != nil {
-		return tls.Certificate{}, err
+		return err
 	}
-	if err := writeFileAtomic(certPath, certPEM, 0o644); err != nil {
-		return tls.Certificate{}, err
-	}
-	return tls.X509KeyPair(certPEM, keyPEM)
+	return writeFileAtomic(certPath, certPEM, 0o644)
 }
 
 func interfaceIPs() []net.IP {
@@ -151,3 +164,5 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	}
 	return os.Rename(tmp.Name(), path)
 }
+
+func mkdirCert(dir string) error { return os.MkdirAll(dir, 0o700) }
