@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/coord"
 	"hmikiosk/internal/rfb"
 	"hmikiosk/internal/secrets"
 )
@@ -75,25 +76,26 @@ func (f *fakeUpdate) Install(_ context.Context, blob []byte) (string, error) {
 
 // adminEnv ist ein Admin-Handler mit Fälschungen für alle Abhängigkeiten.
 type adminEnv struct {
-	t        *testing.T
-	dir      string
-	store    *config.Store
-	box      *secrets.Box
-	helper   *fakeHelper
-	update   *fakeUpdate
-	clock    *fakeClock
-	logDir   string
-	wifi     bool
-	eth      bool
-	probe    func(context.Context, config.HMI) rfb.ProbeResult
-	selftest func(context.Context) []SelftestStep
-	soak     *fakeSoak
-	hw       string // Hardware-Kennung des Geräts, leer: nicht lesbar
-	tlsDir   string
-	backup   *fakeBackup
-	mu       sync.Mutex
-	applied  []config.Config
-	a        *admin
+	t         *testing.T
+	dir       string
+	store     *config.Store
+	box       *secrets.Box
+	helper    *fakeHelper
+	update    *fakeUpdate
+	clock     *fakeClock
+	logDir    string
+	wifi      bool
+	eth       bool
+	probe     func(context.Context, config.HMI) rfb.ProbeResult
+	selftest  func(context.Context) []SelftestStep
+	soak      *fakeSoak
+	hw        string // Hardware-Kennung des Geräts, leer: nicht lesbar
+	tlsDir    string
+	backup    *fakeBackup
+	checkPeer func(context.Context, config.Peer) coord.PeerState
+	mu        sync.Mutex
+	applied   []config.Config
+	a         *admin
 }
 
 // useFastHash ersetzt Argon2 durch einen Vergleich, sonst dauert jeder Test Sekunden.
@@ -144,6 +146,14 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		Backup:       e.backup,
 		HardwareID:   func() string { return e.hw },
 		TLSDir:       e.tlsDir,
+		KeyFile:      dir + "/secrets.key",
+		CheckPeer: func(ctx context.Context, p config.Peer) coord.PeerState {
+			if e.checkPeer != nil {
+				return e.checkPeer(ctx, p)
+			}
+			return coord.PeerState{Reachable: true, KeyOK: true}
+		},
+		UpdateKeyFingerprint: "0123456789abcdef",
 		Selftest: func(ctx context.Context) []SelftestStep {
 			if e.selftest != nil {
 				return e.selftest(ctx)

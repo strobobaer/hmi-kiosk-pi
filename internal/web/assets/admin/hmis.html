@@ -1,5 +1,6 @@
 {{define "content"}}
 {{$csrf := .CSRF}}
+{{if .Body.Unreadable}}<p class="msg warn">Mindestens ein gespeichertes Passwort lässt sich mit dem Schlüssel dieses Geräts nicht öffnen (zum Beispiel, weil die Schlüsseldatei von einem anderen Gerät stammt). <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
 <p><a class="btn primary" href="/admin/hmis/new">HMI anlegen</a></p>
 {{if not .Body.HMIs}}<p class="hint">Noch keine HMIs eingerichtet.</p>{{end}}
 <div class="cards">
@@ -15,7 +16,7 @@
     <p class="tags">
       <span class="tag">Reihenfolge {{.Order}}</span>
       {{if .ViewOnly}}<span class="tag">Nur ansehen</span>{{end}}
-      {{if .HasPassword}}<span class="tag">Passwort gesetzt</span>{{else}}<span class="tag">Ohne Passwort</span>{{end}}
+      {{if eq .PasswordNote "lost"}}<span class="tag warn">Passwort fehlt</span>{{else if eq .PasswordNote "unreadable"}}<span class="tag warn">Passwort unlesbar</span>{{else if .HasPassword}}<span class="tag">Passwort gesetzt</span>{{else}}<span class="tag">Ohne Passwort</span>{{end}}
     </p>
     {{with .Probe}}
     <dl class="probe" aria-label="Ergebnis der Verbindungsprüfung">

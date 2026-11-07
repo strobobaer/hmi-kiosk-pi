@@ -16,6 +16,8 @@
   <label>VNC-Passwort
     <input type="password" name="password" autocomplete="new-password" placeholder="{{if .HasPassword}}gesetzt – leer lassen zum Beibehalten{{else}}keines gesetzt{{end}}">
   </label>
+  {{if eq .PasswordNote "lost"}}<p class="msg warn">Das Passwort fehlt: Es ging bei einer Schlüsselreparatur verloren. Bitte hier neu eingeben.</p>{{end}}
+  {{if eq .PasswordNote "unreadable"}}<p class="msg warn">Das gespeicherte Passwort ist nicht lesbar (falscher Geräteschlüssel). Hier ein neues eingeben oder alle betroffenen Passwörter über die Reparatur zurücksetzen. <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
   {{if .HasPassword}}
   <label class="check"><input type="checkbox" name="remove_password"> Passwort entfernen</label>
   {{end}}

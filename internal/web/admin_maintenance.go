@@ -38,14 +38,15 @@ func (a *admin) hardwareID() string {
 	return a.d.HardwareID()
 }
 
-// inMaintenance: Die Karte läuft auf einem anderen Gerät als eingerichtet.
+// inMaintenance: Die Karte läuft auf einem anderen Gerät als eingerichtet, oder der Admin hat den Wartungsmodus gestartet.
 func (a *admin) inMaintenance(c config.Config) bool {
-	return config.HardwareChanged(c.Terminal.HardwareID, a.hardwareID())
+	return config.InMaintenance(c, a.hardwareID())
 }
 
 type maintenanceData struct {
 	OldName, OldRole string
 	OldHW, NewHW     string
+	Manual           bool   // von Hand gestartet, nicht durch ein anderes Gerät
 	Name, Role       string // Eingaben des Formulars „neues Terminal“
 }
 
@@ -73,7 +74,8 @@ func (a *admin) renderMaintenance(w http.ResponseWriter, s sessionRef, status in
 	d := maintenanceData{
 		OldName: cfg.Terminal.Name, OldRole: roleLabel(cfg.Terminal.Role),
 		OldHW: shortHardwareID(cfg.Terminal.HardwareID), NewHW: shortHardwareID(a.hardwareID()),
-		Role: string(cfg.Terminal.Role), // der alte Name wird nicht vorgeschlagen: ein neues Terminal braucht einen eigenen
+		Manual: cfg.Terminal.MaintenanceManual,
+		Role:   string(cfg.Terminal.Role), // der alte Name wird nicht vorgeschlagen: ein neues Terminal braucht einen eigenen
 	}
 	if form != nil {
 		d.Name, d.Role = form.Name, form.Role
@@ -122,10 +124,13 @@ func (a *admin) finishMaintenance(w http.ResponseWriter, r *http.Request, s sess
 	defer a.cfgMu.Unlock()
 	hw := a.hardwareID()
 	err := a.updateLocked(func(c *config.Config) error {
-		if !config.HardwareChanged(c.Terminal.HardwareID, hw) {
+		if !config.InMaintenance(*c, hw) {
 			return errNotInMaintenance
 		}
-		c.Terminal.HardwareID = hw
+		if hw != "" { // ohne lesbare Kennung bleibt die gespeicherte
+			c.Terminal.HardwareID = hw
+		}
+		c.Terminal.MaintenanceManual = false
 		return change(c)
 	})
 	switch {

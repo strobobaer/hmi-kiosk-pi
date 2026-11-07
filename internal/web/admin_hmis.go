@@ -61,6 +61,7 @@ type hmiFormData struct {
 	Mode, Takeover       string
 	ViewOnly, AllowWatch bool
 	HasPassword          bool
+	PasswordNote         string // "lost" oder "unreadable", sonst leer
 	Icons, Colors        []option
 }
 
@@ -129,13 +130,13 @@ func (a *admin) applyPassword(h *config.HMI, r *http.Request) error {
 	case remove && pw != "":
 		return errors.New("Bitte entweder ein neues Passwort eingeben oder „Passwort entfernen“ wählen.")
 	case remove:
-		h.PasswordEnc = ""
+		h.PasswordEnc, h.PasswordLost = "", false
 	case pw != "":
 		enc, err := a.d.Box.Seal(pw)
 		if err != nil {
 			return fmt.Errorf("Passwort konnte nicht verschlüsselt werden: %w", err)
 		}
-		h.PasswordEnc = enc
+		h.PasswordEnc, h.PasswordLost = enc, false
 	}
 	return nil
 }
@@ -155,10 +156,27 @@ type hmiCard struct {
 	Port, Order           int
 	Icon, Color           string
 	ViewOnly, HasPassword bool
+	PasswordNote          string // "lost" oder "unreadable", sonst leer
 	Probe                 *rfb.ProbeResult
 }
 
-type hmiListData struct{ HMIs []hmiCard }
+type hmiListData struct {
+	HMIs       []hmiCard
+	Unreadable bool // mindestens ein Passwort ist mit dem Geräteschlüssel nicht lesbar
+}
+
+// passwordNote nennt, warum ein Passwort nicht nutzbar ist: verloren (Reparatur) oder unlesbar (falscher Schlüssel).
+func (a *admin) passwordNote(h config.HMI) string {
+	switch {
+	case h.PasswordEnc == "" && h.PasswordLost:
+		return "lost"
+	case h.PasswordEnc != "":
+		if _, err := a.d.Box.Open(h.PasswordEnc); err != nil {
+			return "unreadable"
+		}
+	}
+	return ""
+}
 
 func hmiCards(c config.Config, probeID string, probe *rfb.ProbeResult) []hmiCard {
 	hs := slices.Clone(c.HMIs)
@@ -183,18 +201,21 @@ func (a *admin) renderHMIList(w http.ResponseWriter, s sessionRef, status int, e
 		http.Error(w, "Konfiguration nicht lesbar", http.StatusInternalServerError)
 		return
 	}
-	a.page(w, s, status, "hmis.html", "hmis", "HMIs", errMsg, hmiListData{HMIs: hmiCards(cfg, probeID, probe)})
+	data := hmiListData{HMIs: hmiCards(cfg, probeID, probe)}
+	for i, card := range data.HMIs {
+		if h, ok := findIn(cfg, card.ID); ok {
+			data.HMIs[i].PasswordNote = a.passwordNote(h)
+			data.Unreadable = data.Unreadable || data.HMIs[i].PasswordNote == "unreadable"
+		}
+	}
+	a.page(w, s, status, "hmis.html", "hmis", "HMIs", errMsg, data)
 }
 
 func (a *admin) handleHMIList(w http.ResponseWriter, _ *http.Request, s sessionRef) {
 	a.renderHMIList(w, s, http.StatusOK, "", "", nil)
 }
 
-func (a *admin) findHMI(id string) (config.HMI, bool) {
-	cfg, _, err := a.d.Store.Load()
-	if err != nil {
-		return config.HMI{}, false
-	}
+func findIn(cfg config.Config, id string) (config.HMI, bool) {
 	for _, h := range cfg.HMIs {
 		if h.ID == id {
 			return h, true
@@ -203,12 +224,22 @@ func (a *admin) findHMI(id string) (config.HMI, bool) {
 	return config.HMI{}, false
 }
 
+func (a *admin) findHMI(id string) (config.HMI, bool) {
+	cfg, _, err := a.d.Store.Load()
+	if err != nil {
+		return config.HMI{}, false
+	}
+	return findIn(cfg, id)
+}
+
 // --- Anlegen und Bearbeiten ---
 
 func (a *admin) renderHMIForm(w http.ResponseWriter, s sessionRef, status int, errMsg string, f hmiFormData) {
 	title := "HMI bearbeiten"
 	if f.IsNew {
 		title = "HMI anlegen"
+	} else if h, ok := a.findHMI(f.ID); ok {
+		f.PasswordNote = a.passwordNote(h)
 	}
 	a.page(w, s, status, "hmi_edit.html", "hmis", title, errMsg, f)
 }

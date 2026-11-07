@@ -87,7 +87,12 @@ type AdminDeps struct {
 	// HardwareID liefert die Kennung des Geräts (leer: nicht lesbar), TLSDir den Ordner des Zertifikats.
 	HardwareID func() string
 	TLSDir     string
-	Clock      coord.Clock
+	// KeyFile ist die Schlüsseldatei des Geräts, CheckPeer prüft den Schlüssel eines anderen Terminals,
+	// UpdateKeyFingerprint der Fingerabdruck des eingebauten Update-Schlüssels (leer: keiner eingebaut).
+	KeyFile              string
+	CheckPeer            func(ctx context.Context, p config.Peer) coord.PeerState
+	UpdateKeyFingerprint string
+	Clock                coord.Clock
 }
 
 const formBodyLimit = 64 << 10
@@ -218,6 +223,9 @@ func (a *admin) routes() []route {
 		post("/admin/network/bt-off", a.handleBtOff),
 		post("/admin/network/bt-on", a.handleBtOn),
 
+		get(pathRepair, a.handleRepairPage),
+		post(pathRepair, a.handleRepairRun),
+
 		get(pathMaintenance, a.handleMaintenancePage),
 		post(pathMaintenance+"/replace", a.handleMaintenanceReplace),
 		post(pathMaintenance+"/new", a.handleMaintenanceNew),
@@ -227,6 +235,7 @@ func (a *admin) routes() []route {
 		get("/admin/system/selftest.txt", a.handleSelftestDownload),
 		post("/admin/system/display", a.handleDisplay),
 		post("/admin/system/time", a.handleSetTime),
+		post("/admin/system/maintenance", a.handleMaintenanceStart),
 		post("/admin/system/reboot", a.handleReboot),
 		post("/admin/system/restart-service", a.handleRestartService),
 		post("/admin/system/selftest", a.handleSelftest),
@@ -293,7 +302,12 @@ func (a *admin) wrap(rt route) http.Handler {
 			redirect(w, r, "/admin/login")
 			return
 		}
-		if a.inMaintenance(cfg) && !maintenancePaths[r.URL.Path] {
+		forced := a.repairForced(cfg)
+		if forced && !repairPaths[r.URL.Path] {
+			redirect(w, r, pathRepair)
+			return
+		}
+		if a.inMaintenance(cfg) && !maintenancePaths[r.URL.Path] && !(forced && repairPaths[r.URL.Path]) {
 			redirect(w, r, pathMaintenance)
 			return
 		}
@@ -439,7 +453,7 @@ func (a *admin) updateLocked(change func(*config.Config) error) error {
 
 var adminPageNames = []string{
 	"login.html", "setup.html", "hmis.html", "hmi_edit.html", "client.html",
-	"kiosk.html", "terminals.html", "network.html", "system.html", "backup.html", "maintenance.html",
+	"kiosk.html", "terminals.html", "network.html", "system.html", "backup.html", "maintenance.html", "repair.html",
 }
 
 func parseAdminPages(sub fs.FS) map[string]*template.Template {

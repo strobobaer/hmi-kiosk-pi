@@ -141,7 +141,7 @@ func (a *admin) merge(ex exportFile, cur config.Config) (config.Config, error) {
 			if err != nil {
 				return next, err
 			}
-			h.PasswordEnc = enc
+			h.PasswordEnc, h.PasswordLost = enc, false
 		}
 		if h.Icon != "" && !validIcon(h.Icon) {
 			return next, fmt.Errorf("HMI „%s“: unbekanntes Symbol", h.Name)

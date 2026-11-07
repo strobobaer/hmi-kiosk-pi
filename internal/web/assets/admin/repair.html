@@ -1,0 +1,38 @@
+{{define "content"}}
+{{with .Body}}
+{{if .Done}}
+<section class="panel stack">
+  <h2>Neuer Geräteschlüssel erzeugt</h2>
+  <p>Lesbare Passwörter wurden mit dem neuen Schlüssel übernommen. Nicht lesbare wurden gelöscht.</p>
+  {{if or .LostHMIs .SharedLost}}
+  <p>Bitte jetzt neu eingeben:</p>
+  <ul>
+    {{range .LostHMIs}}<li>VNC-Passwort von <a href="/admin/hmis/{{.ID}}">{{.Name}}</a> – neu eingeben</li>{{end}}
+    {{if .SharedLost}}<li>Gemeinsamer Terminal-Schlüssel auf der Seite <a href="/admin/terminals">Terminals</a> – neu eingeben</li>{{end}}
+  </ul>
+  {{else}}
+  <p>Es war nichts zu löschen.</p>
+  {{end}}
+  <p><a class="btn" href="/admin/hmis">Zu den HMIs</a> <a class="btn" href="/admin/system">Zur System-Seite</a></p>
+</section>
+{{else}}
+<section class="panel stack">
+  {{if .Forced}}
+  <p class="msg err">Die Schlüsseldatei dieses Geräts fehlt oder ist nicht lesbar. Die gespeicherten Passwörter und der gemeinsame Terminal-Schlüssel lassen sich deshalb nicht öffnen. Bis zur Reparatur ist nur diese Seite erreichbar; die Kacheln laufen weiter, HMIs ohne lesbares Passwort lassen sich aber nicht öffnen.</p>
+  {{else}}
+  <p class="msg warn">Die Schlüsseldatei ist lesbar, aber einzelne gespeicherte Werte lassen sich damit nicht öffnen (zum Beispiel, weil die Datei von einem anderen Gerät stammt).</p>
+  {{end}}
+  {{if .Affected}}
+  <h2>Betroffene Einträge</h2>
+  <ul>{{range .Affected}}<li>{{.}}</li>{{end}}</ul>
+  {{end}}
+</section>
+<form method="post" action="/admin/repair" class="panel stack" data-confirm="Neuen Geräteschlüssel erzeugen und die betroffenen Passwörter löschen?">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <input type="hidden" name="confirm" value="ja">
+  <p>Es entsteht ein neuer Geräteschlüssel. Passwörter, die sich noch öffnen lassen, bleiben erhalten. Die betroffenen Passwörter werden gelöscht und müssen danach neu eingegeben werden.</p>
+  <div class="actions"><button type="submit" class="btn danger">Neuen Geräteschlüssel erzeugen und betroffene Passwörter löschen</button></div>
+</form>
+{{end}}
+{{end}}
+{{end}}

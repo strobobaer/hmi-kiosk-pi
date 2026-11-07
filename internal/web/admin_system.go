@@ -48,6 +48,7 @@ type systemData struct {
 	Time            string
 	Display         displayFormData
 	Selftest        []SelftestStep
+	Keys            keysView
 }
 
 func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, errMsg string, ex systemExtras) {
@@ -68,6 +69,7 @@ func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, er
 	if ex.Display != nil {
 		d.Display = *ex.Display
 	}
+	d.Keys = a.keysView(cfg)
 	d.LogLines, d.HasLog = logTailLines(a.d.LogDir)
 	a.lastMu.Lock()
 	d.HasSelftestFile = len(a.lastSelf) > 0

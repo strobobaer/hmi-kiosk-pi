@@ -16,7 +16,7 @@
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button type="submit" class="btn ghost">Abmelden</button>
   </form>
-  {{if ne .Section "maintenance"}}<nav class="nav" aria-label="Bereiche">
+  {{if and (ne .Section "maintenance") (ne .Section "repair")}}<nav class="nav" aria-label="Bereiche">
     <a href="/admin/hmis"{{if eq .Section "hmis"}} aria-current="page"{{end}}>HMIs</a>
     <a href="/admin/client"{{if eq .Section "client"}} aria-current="page"{{end}}>Client</a>
     <a href="/admin/kiosk"{{if eq .Section "kiosk"}} aria-current="page"{{end}}>Kiosk</a>
