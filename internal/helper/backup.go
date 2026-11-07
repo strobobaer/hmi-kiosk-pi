@@ -27,6 +27,7 @@ const (
 const (
 	// openTimeout begrenzt den Bau des Abbilds (mkfs aus /data), infoTimeout das Ausmessen.
 	openTimeout = helperapi.BackupOpenTimeout
+	syncTimeout = helperapi.BackupSyncTimeout
 	infoTimeout = 30 * time.Second
 )
 

@@ -89,7 +89,7 @@ Eine zurückgeschaltete Version ist nur über erneutes Einspielen wieder erreich
 
 Die SD-Sicherung ist ein Abbild der ganzen Karte als Datei `hmikiosk-<Terminalname>-<Datum>-<Uhrzeit>.img.gz`. Anders als die Konfiguration (oben) enthält sie auch das Betriebssystem und alle installierten Programmversionen. Sie gibt es nur für Systeme aus dem SD-Abbild; bei einer Installation mit `install.sh` ist der Knopf gesperrt, dort den Konfigurations-Export nutzen.
 
-Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesichert, die Datenpartition `/data` wird neu in eine kleine Partition gepackt (belegte Bytes plus 25 % plus 64 MB, höchstens 1 GB). Es passt deshalb auf **jede Karte ab 16 GB**, auch auf eine größere als die Originalkarte. Die Seite zeigt vorab die erwartete Rohgröße; die Datei ist komprimiert kleiner. Dauert etwa so lange, wie die Karte zum Lesen braucht (einige Minuten).
+Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesichert, die Datenpartition `/data` wird neu in eine kleine Partition gepackt (belegte Bytes plus 512 Byte je Datei und Ordner für die Dateisystem-Tabellen, davon 25 % und 64 MB mehr, höchstens 1 GB). Es passt deshalb auf **jede Karte ab 16 GB**, auch auf eine größere als die Originalkarte. Die Seite zeigt vorab die erwartete Rohgröße; die Datei ist komprimiert kleiner. Dauert etwa so lange, wie die Karte zum Lesen braucht (einige Minuten).
 
 **Erstellen** (Menü System, „SD-Sicherung“, Hinweise bestätigen):
 

@@ -101,7 +101,7 @@ func TestBackupStreamClientCloseDuringBuildCancelsAndFreesLock(t *testing.T) {
 }
 
 func TestBackupTimeoutsAlign(t *testing.T) {
-	worst := openTimeout + commandTimeout // Bau plus sync
+	worst := openTimeout + syncTimeout // Bau plus sync
 	if helperapi.BackupHeaderTimeout < worst+30*time.Second || helperapi.BackupHeaderTimeout > worst+time.Minute {
 		t.Fatalf("Kopfzeile %v, Bau %v", helperapi.BackupHeaderTimeout, openTimeout)
 	}
@@ -258,5 +258,27 @@ func TestImageBudgetCountsInodeTables(t *testing.T) {
 	dev.Close()
 	if want := imageSize(used + n*512); p.dataSize != want {
 		t.Fatalf("Datenpartition %d, erwartet %d", p.dataSize, want)
+	}
+}
+
+func TestBackupClientCloseDuringSyncGivesGermanStatus(t *testing.T) {
+	linuxOnly(t)
+	e, _ := backupEnv(t)
+	started := make(chan struct{})
+	e.srv.exec = func(ctx context.Context, name string, args ...string) error {
+		close(started)
+		<-ctx.Done()
+		return fmt.Errorf("signal: killed: %v", ctx.Err())
+	}
+	cl := helperapi.New(startServer(t, e))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { cl.BackupStream(ctx); close(done) }()
+	<-started
+	cancel()
+	<-done
+	st := waitStopped(t, cl)
+	if st.Error != "Die Verbindung zum Browser wurde getrennt." {
+		t.Fatalf("Status: %+v", st)
 	}
 }

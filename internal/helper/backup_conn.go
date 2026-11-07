@@ -85,9 +85,12 @@ func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
 
 	headerSent := false
 	err = func() error {
-		sctx, cancel := context.WithTimeout(run.ctx, commandTimeout)
+		sctx, cancel := context.WithTimeout(run.ctx, syncTimeout)
 		defer cancel()
 		if err := s.run(sctx, "sync"); err != nil {
+			if cerr := run.ctx.Err(); cerr != nil {
+				return cerr
+			}
 			return err
 		}
 		octx, ocancel := context.WithTimeout(run.ctx, openTimeout)
