@@ -48,11 +48,16 @@ func serveMain() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	out, err := helper.NewOSExecOut()
+	if err != nil {
+		log.Fatal(err)
+	}
 	srv := helper.NewServer(*socket, *uid, e, *bootCfg, update.Ops{Root: *root})
 	srv.SocketGID = *gid
 	srv.NTPStatePath = *ntpState
 	srv.HealthyMarker = *marker
 	srv.ReapplyNTPOnStart = true
+	srv.ExecOut = out
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

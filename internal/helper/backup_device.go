@@ -1,0 +1,110 @@
+package helper
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+)
+
+var (
+	devNameRe = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+	usbDiskRe = regexp.MustCompile(`^sd[a-z]+$`)
+)
+
+// bootDisk liefert den Namen des Blockgeräts (z. B. mmcblk0), auf dem /boot/firmware liegt:
+// aus /proc/self/mountinfo die Partition, über /sys/class/block deren Elterngerät.
+func (s *Server) bootDisk() (string, error) {
+	raw, err := os.ReadFile(s.Backup.mountInfo())
+	if err != nil {
+		return "", errors.New("Das Gerät der SD-Karte ließ sich nicht ermitteln: " + err.Error())
+	}
+	source := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		left, right, ok := strings.Cut(line, " - ")
+		if !ok {
+			continue
+		}
+		lf, rf := strings.Fields(left), strings.Fields(right)
+		if len(lf) >= 5 && lf[4] == s.Backup.bootMount() && len(rf) >= 2 {
+			source = rf[1] // der zuletzt eingehängte Eintrag gilt
+		}
+	}
+	name, ok := strings.CutPrefix(source, "/dev/")
+	if !ok || !devNameRe.MatchString(name) {
+		return "", errors.New("Das Gerät der SD-Karte ist nicht erkennbar.")
+	}
+	return s.parentDisk(name)
+}
+
+// parentDisk löst eine Partition zu ihrem Gerät auf. Ein Gerät ohne Partitionstabelle gilt als sich selbst.
+func (s *Server) parentDisk(name string) (string, error) {
+	real, err := filepath.EvalSymlinks(filepath.Join(s.Backup.sysClass(), name))
+	if err != nil {
+		return "", errors.New("Das Gerät der SD-Karte ist in /sys nicht zu finden.")
+	}
+	if _, err := os.Stat(filepath.Join(real, "partition")); err == nil {
+		real = filepath.Dir(real)
+	}
+	disk := filepath.Base(real)
+	if !devNameRe.MatchString(disk) {
+		return "", errors.New("Das Gerät der SD-Karte ist nicht erkennbar.")
+	}
+	return disk, nil
+}
+
+// findUSB sucht genau einen USB-Speicher (sdX, dessen /sys-Pfad über USB läuft, nicht das
+// Systemgerät system) und liefert dessen erste Partition, sonst das Gerät selbst.
+func (s *Server) findUSB(system string) (string, error) {
+	sysBlock := s.Backup.sysBlock()
+	entries, err := os.ReadDir(sysBlock)
+	if err != nil {
+		return "", errors.New("Die Geräteliste ist nicht lesbar: " + err.Error())
+	}
+	sysRoot := filepath.Dir(sysBlock)
+	var found []string
+	for _, en := range entries {
+		name := en.Name()
+		if name == system || !usbDiskRe.MatchString(name) {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(filepath.Join(sysBlock, name))
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(sysRoot, real)
+		if err != nil || !strings.Contains("/"+filepath.ToSlash(rel), "/usb") {
+			continue
+		}
+		found = append(found, filepath.Join(s.Backup.devDir(), firstPartition(real, name)))
+	}
+	sort.Strings(found)
+	switch len(found) {
+	case 0:
+		return "", errors.New("Kein USB-Stick gefunden. Bitte einen Stick einstecken.")
+	case 1:
+		return found[0], nil
+	}
+	return "", errors.New("Mehrere USB-Speicher gefunden. Bitte nur einen Stick einstecken.")
+}
+
+// firstPartition gibt den Namen der Partition 1 unter dem Gerät zurück, sonst den des Geräts.
+func firstPartition(realDir, disk string) string {
+	entries, err := os.ReadDir(realDir)
+	if err != nil {
+		return disk
+	}
+	for _, en := range entries {
+		n := en.Name()
+		if !strings.HasPrefix(n, disk) || !devNameRe.MatchString(n) {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(realDir, n, "partition"))
+		if err == nil && strings.TrimSpace(string(b)) == "1" {
+			return n
+		}
+	}
+	return disk
+}

@@ -29,6 +29,7 @@ type request struct {
 }
 
 type response struct {
+	Data  any    `json:"data,omitempty"`
 	OK    bool   `json:"ok,omitempty"`
 	Error string `json:"error,omitempty"`
 }
@@ -50,6 +51,15 @@ type Server struct {
 	NTPStatePath string
 	// HealthyMarker meldet, dass die gestartete Version gesund ist (Dienst schreibt ihre Version hinein).
 	HealthyMarker string
+
+	// ExecOut startet ein Programm und liefert seine Ausgabe (nur blkid).
+	ExecOut ExecOut
+	// Backup legt Orte und Zeiten der SD-Sicherung fest; die Voreinstellung passt für das Gerät.
+	Backup BackupConfig
+
+	backup backupState
+	base   context.Context
+	bgWG   sync.WaitGroup
 
 	peerUID func(net.Conn) (int, error)
 	mu      sync.Mutex
@@ -115,10 +125,12 @@ func (s *Server) Serve(ctx context.Context) error {
 		ln.Close()
 		return err
 	}
+	s.base = ctx
 	go func() { <-ctx.Done(); ln.Close() }()
 
 	slots := make(chan struct{}, maxConns)
 	var wg sync.WaitGroup
+	defer s.bgWG.Wait()
 	defer wg.Wait()
 	if s.ReapplyNTPOnStart {
 		wg.Add(1)
@@ -169,6 +181,10 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	if s.handleBackupConn(ctx, c, req) {
+		return
+	}
+
 	s.mu.Lock()
 	cctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	err = s.Dispatch(cctx, req.Cmd, req.Arg)
@@ -198,8 +214,10 @@ func readRequest(r io.Reader) (request, error) {
 	return req, nil
 }
 
-func reply(c net.Conn, err error) {
-	resp := response{OK: true}
+func reply(c net.Conn, err error) { replyData(c, nil, err) }
+
+func replyData(c net.Conn, data any, err error) {
+	resp := response{OK: true, Data: data}
 	if err != nil {
 		resp = response{Error: err.Error()}
 	}

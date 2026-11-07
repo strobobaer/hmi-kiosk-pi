@@ -78,6 +78,7 @@ var commands = map[string]command{
 	CmdSetNTP:         {takesArg: true, run: (*Server).setNTP},
 	CmdUpdateActivate: {takesArg: true, run: (*Server).updateActivate},
 	CmdUpdateRollback: {run: (*Server).updateRollback},
+	CmdBackupUSB:      {takesArg: true, run: (*Server).backupUSB},
 }
 
 // Dispatch führt einen Befehl aus. Fehlertexte sind für die Admin-Seite bestimmt.
@@ -91,6 +92,9 @@ func (s *Server) Dispatch(ctx context.Context, cmd, arg string) error {
 	}
 	if c.takesArg && arg == "" {
 		return errors.New("Der Wert fehlt")
+	}
+	if blockedDuringBackup[cmd] && s.backup.isRunning() {
+		return errors.New(errBackupBusy)
 	}
 	return c.run(s, ctx, arg)
 }
