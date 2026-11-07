@@ -91,6 +91,9 @@ type Config struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 		Role Role   `json:"role"`
+		// HardwareID ist die Kennung des Geräts, auf dem die Konfiguration eingerichtet
+		// wurde. Sie bleibt lokal: Der Import übernimmt sie nicht.
+		HardwareID string `json:"hardwareId"`
 	} `json:"terminal"`
 	Peers        []Peer     `json:"peers"`
 	SharedKeyEnc string     `json:"sharedKeyEnc"`
