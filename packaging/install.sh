@@ -2,7 +2,7 @@
 # Installiert den HMI-Kiosk auf einem Debian- oder Raspberry-Pi-OS-System (Trixie, arm64 oder amd64).
 # Gedacht für Systeme ohne das fertige SD-Abbild: ohne Schreibschutz, ohne Datenpartition.
 #
-#   sudo ./install.sh [--no-start] [--online] [--data-dir ORDNER] [--force-downgrade]
+#   sudo ./install.sh [--no-start] [--online] [--disable-desktop] [--data-dir ORDNER] [--force-downgrade]
 #
 # Das Skript liegt in einem Bundle (erzeugt von packaging/bundle.sh) und installiert daraus ohne Netz:
 # Pakete aus bundle/repo, Programme aus bundle/bin, Dienstdateien aus bundle/rootfs.
@@ -10,6 +10,8 @@
 #
 #   --no-start        Dienste einrichten, aber weder aktivieren noch starten (für Tests)
 #   --online          Pakete aus den Paketquellen des Systems holen statt aus dem Bundle
+#   --disable-desktop Einen vorhandenen Desktop (Display-Manager, z. B. lightdm auf Raspberry Pi OS
+#                     Desktop) abschalten und in die Textkonsole starten; wirkt nach dem Neustart
 #   --data-dir ORDNER Datenordner (Standard /var/lib/hmi-kiosk; im SD-Abbild ist es /data)
 #   --force-downgrade Erlaubt, eine ältere Version als die laufende zu installieren
 #
@@ -24,6 +26,7 @@ DATA_DIR=/var/lib/hmi-kiosk
 NO_START=0
 ONLINE=0
 FORCE_DOWNGRADE=0
+DISABLE_DESKTOP=0
 
 KIOSK_USER=hmikiosk
 KIOSK_UID_WISH=1100
@@ -45,6 +48,7 @@ while [ $# -gt 0 ]; do
 	--no-start) NO_START=1 ;;
 	--online) ONLINE=1 ;;
 	--force-downgrade) FORCE_DOWNGRADE=1 ;;
+	--disable-desktop) DISABLE_DESKTOP=1 ;;
 	--data-dir)
 		[ $# -ge 2 ] || die "--data-dir braucht einen Ordner."
 		DATA_DIR="$2"
@@ -123,6 +127,16 @@ if [ -L "$DATA_DIR/app/current" ]; then
 	if [[ "$RUNNING" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$RUNNING" != "$B_VERSION" ] &&
 		[ "$(printf '%s\n%s\n' "$RUNNING" "$B_VERSION" | sort -V | head -n 1)" = "$B_VERSION" ] && [ "$FORCE_DOWNGRADE" = 0 ]; then
 		die "Auf diesem System läuft Version $RUNNING, das Bundle enthält die ältere Version $B_VERSION. Ein Rückschritt wird nicht ohne Zustimmung ausgeführt. Mit --force-downgrade erzwingen. Es wurde nichts verändert."
+	fi
+fi
+
+# Ein Desktop (Display-Manager) würde sich mit der Kiosk-Sitzung um Bildschirm und Eingaben streiten.
+DM_LINK=/etc/systemd/system/display-manager.service
+DM_UNIT=""
+if [ -L "$DM_LINK" ] || [ -e "$DM_LINK" ]; then
+	DM_UNIT="$(basename "$(readlink "$DM_LINK" || echo display-manager.service)")"
+	if [ "$DISABLE_DESKTOP" = 0 ]; then
+		die "Auf diesem System startet beim Booten ein Desktop ($DM_UNIT). Er verträgt sich nicht mit der Kiosk-Sitzung. Mit --disable-desktop schaltet install.sh ihn ab und startet künftig in die Textkonsole (rückgängig: sudo systemctl enable $DM_UNIT && sudo systemctl set-default graphical.target). Es wurde nichts verändert."
 	fi
 fi
 
@@ -331,6 +345,19 @@ install_data_and_app() {
 
 have_systemd() { [ -d /run/systemd/system ] && command -v systemctl >/dev/null; }
 
+# Schaltet den Desktop ab, ohne ihn jetzt zu beenden: install.sh läuft oft in einem Terminal darauf.
+disable_desktop() {
+	[ -n "$DM_UNIT" ] || return 0
+	if have_systemd; then
+		systemctl disable "$DM_UNIT"
+		systemctl set-default multi-user.target
+	else
+		rm -f "$DM_LINK"
+		ln -sfn /lib/systemd/system/multi-user.target /etc/systemd/system/default.target
+	fi
+	msg "Desktop ($DM_UNIT) abgeschaltet, das System startet künftig in die Textkonsole."
+}
+
 setup_services() {
 	if ! have_systemd; then
 		msg "Hinweis: systemd läuft hier nicht (Container oder Chroot). Dienste werden nicht aktiviert oder gestartet."
@@ -343,6 +370,11 @@ setup_services() {
 	fi
 	# shellcheck disable=SC2086
 	systemctl enable $UNITS
+	if [ -n "$DM_UNIT" ]; then
+		# Der Desktop läuft noch bis zum Neustart; zwei grafische Sitzungen gleichzeitig vermeiden.
+		msg "Dienste aktiviert. Sie starten nach dem Neustart."
+		return
+	fi
 	systemctl restart hmi-kiosk-helper.service
 	systemctl restart hmi-kiosk-session.service
 	systemctl restart hmi-kiosk.service
@@ -356,7 +388,11 @@ main() {
 	install_system_files
 	install_dropins
 	install_data_and_app
+	disable_desktop
 	setup_services
+	if [ -n "$DM_UNIT" ]; then
+		msg "Bitte jetzt neu starten: sudo reboot"
+	fi
 	msg "Fertig. Die Admin-Seite ist unter https://<Adresse dieses Geräts>:8443 erreichbar, sobald der Dienst läuft."
 	msg "Kein Schreibschutz und keine eigene Datenpartition: das ist ein System ohne SD-Abbild. Der Watchdog wirkt nach dem nächsten Neustart."
 }

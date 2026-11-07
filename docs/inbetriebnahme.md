@@ -432,7 +432,7 @@ Solange eine Abweichung offen ist, bleibt die alte Karte des Terminals beschrift
 
 Für ein System ohne das fertige SD-Abbild gibt es ein Offline-Bundle und `install.sh`. Es gilt für Debian oder Raspberry Pi OS **Trixie** auf arm64 oder amd64. Es gibt keinen Schreibschutz und keine eigene Datenpartition. Das Abbild bleibt der empfohlene Weg.
 
-**Voraussetzung:** Das Zielsystem darf keine Desktop-Umgebung und keinen Display-Manager (zum Beispiel gdm, lightdm, sddm) haben. Die Kiosk-Sitzung belegt die Konsole `tty1` und den Bildschirm allein. `install.sh` schreibt außerdem `/etc/xdg/labwc/rc.xml`, `/etc/xdg/labwc/environment` und `/etc/xdg/openbox/rc.xml`; eine vorhandene abweichende Datei bleibt einmal als `.vor-hmi-kiosk` erhalten. Am besten ein frisch installiertes Debian Trixie Lite (ohne Desktop) verwenden.
+**Voraussetzung:** Beim Start darf kein Desktop (Display-Manager, zum Beispiel lightdm, gdm, sddm) laufen. Die Kiosk-Sitzung belegt die Konsole `tty1` und den Bildschirm allein. Findet `install.sh` einen Display-Manager, bricht es ab, ohne etwas zu ändern. Mit `--disable-desktop` schaltet es ihn ab und stellt den Start auf die Textkonsole um; die Desktop-Pakete bleiben installiert. Die Kiosk-Dienste starten dann erst nach dem Neustart (`sudo reboot`). Rückgängig: `sudo systemctl enable lightdm && sudo systemctl set-default graphical.target`. Das ist der Weg für Raspberry Pi OS Desktop. `install.sh` schreibt außerdem `/etc/xdg/labwc/rc.xml`, `/etc/xdg/labwc/environment` und `/etc/xdg/openbox/rc.xml`; eine vorhandene abweichende Datei bleibt einmal als `.vor-hmi-kiosk` erhalten. Am besten ein frisch installiertes Debian Trixie Lite (ohne Desktop) verwenden.
 
 ### Bundle bauen
 
@@ -455,7 +455,9 @@ Für ein PC-System `--arch amd64`. Das Programm wird dabei mit `.secrets/release
    sudo ./install.sh
    ```
 
-4. Das Skript braucht kein Netz. Es prüft vor allem anderen:
+   Auf Raspberry Pi OS Desktop zusätzlich `--disable-desktop`, danach `sudo reboot`. Mit Internet am Gerät ist `--online` die bessere Wahl: Die Pakete kommen dann aus den Quellen von Raspberry Pi OS statt aus dem Bundle.
+
+4. Ohne `--online` braucht das Skript kein Netz. Es prüft vor allem anderen:
    - `VERSION_CODENAME` in `/etc/os-release` gleich `trixie`
    - die dpkg-Architektur gleich der des Bundles
    - die Prüfsummen des Bundles

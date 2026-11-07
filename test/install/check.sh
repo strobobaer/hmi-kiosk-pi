@@ -151,6 +151,25 @@ out=$(/bundle/install.sh --no-start --data-dir /srv/leer 2>&1)
 rc=$?
 if [ $rc -eq 0 ]; then ok "Leerer Ordner: Exit 0"; else bad "Leerer Ordner: Exit $rc"; echo "$out" | tail -n 5; fi
 
+# 10. System mit Desktop (Display-Manager wie auf Raspberry Pi OS Desktop).
+touch /lib/systemd/system/lightdm.service
+ln -sfn /lib/systemd/system/lightdm.service /etc/systemd/system/display-manager.service
+ln -sfn /lib/systemd/system/graphical.target /etc/systemd/system/default.target
+out=$(/bundle/install.sh --no-start 2>&1)
+rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'lightdm.service' && echo "$out" | grep -q -- '--disable-desktop'; then ok "Desktop: Abbruch mit Hinweis auf --disable-desktop"; else bad "Desktop nicht erkannt (Exit $rc)"; echo "$out" | tail -n 5; fi
+check "Desktop: Display-Manager bleibt ohne Schalter" test -L /etc/systemd/system/display-manager.service
+check "Desktop: Standardziel bleibt ohne Schalter" test "$(readlink /etc/systemd/system/default.target)" = /lib/systemd/system/graphical.target
+out=$(/bundle/install.sh --no-start --disable-desktop 2>&1)
+rc=$?
+if [ $rc -eq 0 ]; then ok "--disable-desktop: Exit 0"; else bad "--disable-desktop: Exit $rc"; echo "$out" | tail -n 5; fi
+check "--disable-desktop: Display-Manager abgeschaltet" test ! -e /etc/systemd/system/display-manager.service
+check "--disable-desktop: Standardziel multi-user" bash -c 'readlink /etc/systemd/system/default.target | grep -q multi-user.target'
+if echo "$out" | grep -q 'sudo reboot'; then ok "--disable-desktop: Hinweis auf Neustart"; else bad "--disable-desktop: Neustart-Hinweis fehlt"; fi
+out=$(/bundle/install.sh --no-start --disable-desktop 2>&1)
+rc=$?
+if [ $rc -eq 0 ]; then ok "--disable-desktop ohne Desktop: Exit 0 (wiederholbar)"; else bad "--disable-desktop wiederholt: Exit $rc"; fi
+
 
 echo
 if [ $fails -eq 0 ]; then echo "Alle Prüfungen bestanden."; else echo "$fails Prüfung(en) fehlgeschlagen."; exit 1; fi
