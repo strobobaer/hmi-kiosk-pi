@@ -98,3 +98,35 @@ func TestCertSourceKeepsCertWhenRenewFails(t *testing.T) {
 		t.Fatalf("Adresse fehlt: %v", leafIPs(t, got))
 	}
 }
+
+func TestCertSourceRenewsAtMostOncePerMinute(t *testing.T) {
+	dir := t.TempDir()
+	cert, err := LoadOrCreateCert(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := NewCertSource(dir, cert)
+	now := time.Date(2026, 11, 7, 10, 0, 0, 0, time.UTC)
+	src.now = func() time.Time { return now }
+	src.ifaces = func() []net.IP { return nil }
+	got, _ := src.GetCertificate(helloAt("192.0.2.10"))
+	if !hasIP(leafIPs(t, got), "192.0.2.10") {
+		t.Fatal("erste Adresse fehlt")
+	}
+	got, _ = src.GetCertificate(helloAt("192.0.2.11"))
+	if hasIP(leafIPs(t, got), "192.0.2.11") {
+		t.Fatal("zweite Erneuerung binnen einer Minute")
+	}
+	// Viele Adressen füllen die Merkliste nicht unbegrenzt.
+	for i := 0; i < 300; i++ {
+		src.GetCertificate(helloAt(net.IPv4(198, 51, byte(i/250), byte(i%250+1)).String()))
+	}
+	if len(src.tried) > certTriedMax {
+		t.Fatalf("Merkliste %d Einträge", len(src.tried))
+	}
+	now = now.Add(61 * time.Second)
+	got, _ = src.GetCertificate(helloAt("192.0.2.11"))
+	if !hasIP(leafIPs(t, got), "192.0.2.11") {
+		t.Fatal("nach einer Minute nicht erneuert")
+	}
+}

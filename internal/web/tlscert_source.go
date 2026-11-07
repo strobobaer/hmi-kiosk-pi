@@ -10,8 +10,11 @@ import (
 	"time"
 )
 
-// certRetry: So lange wird nach einer gescheiterten Erneuerung für dieselbe Adresse nicht neu versucht.
+// certRetry: Mindestabstand zwischen zwei Erneuerungen (insgesamt und je Adresse).
 const certRetry = time.Minute
+
+// certTriedMax begrenzt die Merkliste der zuletzt versuchten Adressen.
+const certTriedMax = 64
 
 // CertSource liefert das Zertifikat der Admin-Seite. Fehlt die IP-Adresse, unter der ein Browser
 // das Terminal anspricht, im Zertifikat (etwa nach dem Wechsel auf eine feste Adresse), wird es
@@ -24,6 +27,7 @@ type CertSource struct {
 	cert   *tls.Certificate
 	ips    []net.IP
 	tried  map[string]time.Time
+	last   time.Time // letzte Erneuerung (gleich welche Adresse)
 	now    func() time.Time
 	ifaces func() []net.IP
 }
@@ -53,45 +57,62 @@ func (c *CertSource) covers(ip net.IP) bool {
 	return false
 }
 
-// GetCertificate ist für tls.Config.GetCertificate gedacht.
+// GetCertificate ist für tls.Config.GetCertificate gedacht. Erneuert wird höchstens einmal je
+// Minute insgesamt (und je Adresse); der Schlüssel entsteht außerhalb der Sperre, andere
+// Handshakes bekommen solange das bisherige Zertifikat.
 func (c *CertSource) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	var ip net.IP
 	if hello != nil && hello.Conn != nil {
 		if a, ok := hello.Conn.LocalAddr().(*net.TCPAddr); ok {
 			ip = a.IP
 		}
 	}
+	c.mu.Lock()
+	cur := c.cert
 	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || c.covers(ip) {
-		return c.cert, nil
+		c.mu.Unlock()
+		return cur, nil
 	}
+	now := c.now()
 	key := ip.String()
-	if t, ok := c.tried[key]; ok && c.now().Sub(t) < certRetry {
-		return c.cert, nil
+	if t, ok := c.tried[key]; (ok && now.Sub(t) < certRetry) || (!c.last.IsZero() && now.Sub(c.last) < certRetry) {
+		c.mu.Unlock()
+		return cur, nil
 	}
-	c.tried[key] = c.now()
+	c.last = now
+	for k, t := range c.tried {
+		if now.Sub(t) >= certRetry {
+			delete(c.tried, k)
+		}
+	}
+	if len(c.tried) >= certTriedMax {
+		clear(c.tried)
+	}
+	c.tried[key] = now
+	c.mu.Unlock()
+
 	ips := c.ifaces()
 	if !containsIP(ips, ip) {
 		ips = append(ips, ip)
 	}
-	certPEM, keyPEM, err := generateCert(c.now(), ips)
-	if err != nil {
-		log.Printf("Zertifikat für %s nicht erneuert: %v", ip, err)
-		return c.cert, nil
+	certPEM, keyPEM, err := generateCert(now, ips)
+	var cert tls.Certificate
+	if err == nil {
+		cert, err = tls.X509KeyPair(certPEM, keyPEM)
 	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
 		log.Printf("Zertifikat für %s nicht erneuert: %v", ip, err)
-		return c.cert, nil
+		return cur, nil
 	}
 	if err := mkdirCert(c.dir); err != nil {
 		log.Printf("Neues Zertifikat für %s gilt nur bis zum Neustart: %v", ip, err)
 	} else if err := saveCert(filepath.Join(c.dir, certFile), filepath.Join(c.dir, certKeyFile), certPEM, keyPEM); err != nil {
 		log.Printf("Neues Zertifikat für %s gilt nur bis zum Neustart: %v", ip, err)
 	}
+	c.mu.Lock()
 	c.set(&cert)
-	return c.cert, nil
+	c.mu.Unlock()
+	return &cert, nil
 }
 
 func containsIP(ips []net.IP, ip net.IP) bool {
