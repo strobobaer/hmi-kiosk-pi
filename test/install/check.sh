@@ -60,7 +60,7 @@ sum_before=$(sha256sum $DATA/config.json | cut -d' ' -f1)
 
 state() {
 	(cd / && sha256sum etc/systemd/system/hmi-kiosk*.service etc/systemd/system/hmi-kiosk*.d/10-install.conf \
-		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session etc/hmi-kiosk/labwc/rc.xml etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/hmi-kiosk")
+		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session usr/local/sbin/hmi-kiosk-grow-root usr/local/sbin/hmi-kiosk-identity etc/hmi-kiosk/labwc/rc.xml etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/hmi-kiosk")
 	find $DATA -printf '%p %l %u %m\n' | sort
 }
 
@@ -79,18 +79,29 @@ if [ "$state1" = "$(state)" ]; then ok "zweiter Lauf ändert nichts (Dateien, Ve
 check "Konfiguration unverändert" test "$(sha256sum $DATA/config.json | cut -d' ' -f1)" = "$sum_before"
 check "Konfiguration gehört hmikiosk" test "$(stat -c %U $DATA/config.json)" = hmikiosk
 
-for p in labwc xwayland remmina remmina-plugin-vnc tigervnc-viewer openbox xserver-xorg-core xinit xauth x11-utils rfkill libpam-systemd; do
+for p in labwc xwayland remmina remmina-plugin-vnc tigervnc-viewer openbox xserver-xorg-core xinit xauth x11-utils rfkill libpam-systemd rsync dosfstools fdisk e2fsprogs util-linux; do
 	check "Paket $p installiert" bash -c "dpkg-query -W -f='\${db:Status-Abbrev}\n' $p | grep -q '^ii'"
 done
 if dpkg-query -W -f='${db:Status-Abbrev}\n' chromium 2>/dev/null | grep -q '^ii'; then ok "Paket chromium installiert"; else bad "Chromium fehlt"; fi
+for c in rsync mkfs.vfat mkfs.ext4 sfdisk losetup partx resize2fs blkid findmnt; do
+	check "Programm $c vorhanden" bash -c "command -v $c"
+done
 for p in raspi-config overlayroot; do
 	check "Abbild-Paket $p nicht installiert" bash -c "! dpkg-query -W -f='\${db:Status-Abbrev}\n' $p 2>/dev/null | grep -q '^ii'"
 done
 
-for u in hmi-kiosk hmi-kiosk-helper hmi-kiosk-session hmi-kiosk-update-guard; do
+for u in hmi-kiosk hmi-kiosk-helper hmi-kiosk-session hmi-kiosk-update-guard hmi-kiosk-identity; do
 	check "Unit $u.service" test -f /etc/systemd/system/$u.service
 	check "Drop-in $u" test -f /etc/systemd/system/$u.service.d/10-install.conf
 done
+check "Unit hmi-kiosk-grow-root.service" test -f /etc/systemd/system/hmi-kiosk-grow-root.service
+check "grow-root nur ohne SD-Abbild" grep -q '^ConditionPathExists=!/etc/hmi-kiosk/image-release' /etc/systemd/system/hmi-kiosk-grow-root.service
+for s in hmi-kiosk-grow-root hmi-kiosk-identity; do
+	check "Skript $s root:root 755" test "$(stat -c '%U:%G %a' /usr/local/sbin/$s)" = "root:root 755"
+	check "Skript $s ist gültige Shell" sh -n /usr/local/sbin/$s
+done
+check "identity-Drop-in nennt Datenordner und Pfad der Kennung" bash -c "grep -q 'RequiresMountsFor=$DATA$' /etc/systemd/system/hmi-kiosk-identity.service.d/10-install.conf && grep -q 'HMI_IDENTITY_DIR=$DATA/system$' /etc/systemd/system/hmi-kiosk-identity.service.d/10-install.conf"
+check "grow-root und identity in der Aktivierungsliste" bash -c "grep -q 'UNITS=.*hmi-kiosk-grow-root.service' /bundle/install.sh && grep -q 'UNITS=.*hmi-kiosk-identity.service' /bundle/install.sh"
 check "keine Erststart-Unit" test ! -e /etc/systemd/system/hmi-kiosk-firstboot.service
 check "Helfer root:root 755" test "$(stat -c '%U:%G %a' /usr/local/bin/hmi-kiosk-helper)" = "root:root 755"
 check "Dienst in app/$V" test -x $DATA/app/$V/hmi-kiosk
@@ -110,7 +121,7 @@ check "Dienst-Drop-in nennt Datenordner und Kennung" bash -c "grep -q 'ExecStart
 check "Helfer-Drop-in nennt -uid $uid und -root $DATA" bash -c "grep -q -- '-uid $uid .* -root $DATA ' /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf"
 check "Dienstprogramm startet (Flaggen)" bash -c "$DATA/app/current/hmi-kiosk -h 2>&1 | grep -q -- '-data'"
 check "Gruppe hmikiosk genau einmal" bash -c '[ "$(getent group hmikiosk | wc -l)" = 1 ]'
-check "systemd-analyze verify der vier Dienste samt Drop-ins" systemd-analyze verify hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service
+check "systemd-analyze verify der Dienste samt Drop-ins" systemd-analyze verify hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service
 
 # 7. Neuere Bundle-Version: current wechselt, die alte bleibt als previous, Konfiguration bleibt.
 rm -rf /tmp/b4 && cp -r /bundle /tmp/b4
@@ -139,6 +150,7 @@ rc=$?
 if [ $rc -eq 0 ]; then ok "--data-dir: Exit 0"; else bad "--data-dir: Exit $rc"; echo "$out" | tail -n 5; fi
 check "--data-dir: Dienst unter /srv/hk" test -x /srv/hk/app/current/hmi-kiosk
 check "--data-dir: Drop-in nennt /srv/hk" grep -q -- '-data /srv/hk ' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf
+check "--data-dir: identity-Drop-in nennt /srv/hk/system" grep -q 'HMI_IDENTITY_DIR=/srv/hk/system$' /etc/systemd/system/hmi-kiosk-identity.service.d/10-install.conf
 
 # 9. Fremder Datenordner wird nicht angefasst, ein leerer ist erlaubt.
 mkdir -p /srv/fremd && echo x >/srv/fremd/datei

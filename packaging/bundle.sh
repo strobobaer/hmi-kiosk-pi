@@ -9,7 +9,8 @@
 #
 # Die Pakete werden in einem Container debian:trixie derselben Architektur geladen (Docker, Internet nötig).
 # Liste: packaging/image/stage-hmi/00-packages/00-packages-nr ohne die Punkte, die nur das Abbild braucht
-# (raspi-config, overlayroot, fdisk), dazu libpam-systemd. Die Abhängigkeiten werden gegen ein frisches
+# (raspi-config, overlayroot), dazu libpam-systemd und die Werkzeuge der dateiweisen SD-Sicherung
+# (rsync, dosfstools, fdisk mit sfdisk, e2fsprogs, util-linux mit losetup). Die Abhängigkeiten werden gegen ein frisches
 # debian:trixie aufgelöst: Alles, was dort schon installiert ist, setzt install.sh auf dem Zielsystem voraus.
 #
 # Programme: aus --bin-dir (muss hmi-kiosk und hmi-kiosk-helper enthalten) oder, ohne Angabe, frisch gebaut
@@ -18,8 +19,10 @@ set -euo pipefail
 
 CODENAME=trixie
 IMAGE=debian:trixie
-IMAGE_ONLY_PACKAGES="raspi-config overlayroot fdisk"
-EXTRA_PACKAGES="libpam-systemd"
+IMAGE_ONLY_PACKAGES="raspi-config overlayroot"
+# rsync, dosfstools, fdisk, e2fsprogs und util-linux braucht die dateiweise SD-Sicherung samt Wachstum der Wurzel
+# (im SD-Abbild geht dieser Weg nicht; sie schaden dort nicht).
+EXTRA_PACKAGES="libpam-systemd rsync dosfstools fdisk e2fsprogs util-linux"
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
@@ -124,8 +127,10 @@ rm -f "$bundle/repo/.packages"
 
 cp "$bindir/hmi-kiosk" "$bindir/hmi-kiosk-helper" "$bundle/bin/"
 cp -r packaging/rootfs "$bundle/rootfs"
+# Dieselbe Netzwerk-Kennung wie im SD-Abbild (packaging/image/identity.sh).
+install -D -m 755 packaging/image/identity.sh "$bundle/rootfs/usr/local/sbin/hmi-kiosk-identity"
 cp packaging/install.sh "$bundle/install.sh"
-chmod 755 "$bundle/install.sh" "$bundle/bin/"* "$bundle/rootfs/usr/local/bin/hmi-kiosk-session"
+chmod 755 "$bundle/install.sh" "$bundle/bin/"* "$bundle/rootfs/usr/local/bin/hmi-kiosk-session" "$bundle/rootfs/usr/local/sbin/hmi-kiosk-grow-root"
 printf 'version=%s\ncodename=%s\narch=%s\npackages=%s\n' "$version" "$CODENAME" "$arch" "$resolved" >"$bundle/manifest"
 (cd "$bundle" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum --text >SHA256SUMS)
 

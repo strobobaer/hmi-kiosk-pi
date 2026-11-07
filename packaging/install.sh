@@ -1,6 +1,7 @@
 #!/bin/bash
 # Installiert den HMI-Kiosk auf einem Debian- oder Raspberry-Pi-OS-System (Trixie, arm64 oder amd64).
-# Gedacht für Systeme ohne das fertige SD-Abbild: ohne Schreibschutz, ohne Datenpartition.
+# Gedacht für Systeme ohne das fertige SD-Abbild: ohne Schreibschutz, ohne Datenpartition. Die SD-Sicherung
+# in der Admin-Seite baut dort ein Abbild dateiweise (rsync, dosfstools, fdisk, e2fsprogs, util-linux).
 #
 #   sudo ./install.sh [--no-start] [--online] [--disable-desktop] [--data-dir ORDNER] [--force-downgrade]
 #
@@ -31,7 +32,7 @@ DISABLE_DESKTOP=0
 KIOSK_USER=hmikiosk
 KIOSK_UID_WISH=1100
 KIOSK_GROUPS=input,video,render
-UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service"
+UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service"
 
 msg() { echo "install.sh: $*"; }
 die() {
@@ -251,6 +252,10 @@ install_system_files() {
 	put 644 "$HERE/rootfs/etc/pam.d/hmi-kiosk-session" /etc/pam.d/hmi-kiosk-session
 	put 755 "$HERE/rootfs/usr/local/bin/hmi-kiosk-session" /usr/local/bin/hmi-kiosk-session
 	put 755 "$HERE/bin/hmi-kiosk-helper" /usr/local/bin/hmi-kiosk-helper
+	# Wachstum der Wurzel auf größerer Karte und Netzwerk-Kennung (wie im SD-Abbild): beide gehören in jede
+	# dateiweise SD-Sicherung dieses Systems, damit eine Kopie auf anderer Hardware richtig anläuft.
+	put 755 "$HERE/rootfs/usr/local/sbin/hmi-kiosk-grow-root" /usr/local/sbin/hmi-kiosk-grow-root
+	put 755 "$HERE/rootfs/usr/local/sbin/hmi-kiosk-identity" /usr/local/sbin/hmi-kiosk-identity
 	install_cursor_theme
 	# Die Sitzung braucht /run/user/<uid> auch ohne Anmeldung.
 	install -d -m 755 /var/lib/systemd/linger
@@ -319,6 +324,15 @@ ExecStart=/usr/local/bin/hmi-kiosk-helper update-guard -root $DATA_DIR"
 [Service]
 Environment=
 Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID XDG_SESSION_TYPE=wayland XDG_SESSION_CLASS=user HMI_KIOSK_CONFIG=$DATA_DIR/config.json"
+
+	# Die Kennung liegt im root-eigenen Unterordner system des Datenordners. Ohne Overlay schreibt das Skript
+	# /etc/machine-id und /etc/hostname dauerhaft.
+	write_dropin hmi-kiosk-identity.service "# Von install.sh erzeugt: Datenordner dieses Systems.
+[Unit]
+RequiresMountsFor=
+RequiresMountsFor=$DATA_DIR
+[Service]
+Environment=HMI_IDENTITY_DIR=$DATA_DIR/system"
 }
 
 # --- Datenordner und Programmversion ---
@@ -418,7 +432,7 @@ main() {
 	fi
 	msg "Fertig. Die Admin-Seite ist unter https://<Adresse dieses Geräts>:8443 erreichbar, sobald der Dienst läuft."
 	msg "Kein Schreibschutz und keine eigene Datenpartition: das ist ein System ohne SD-Abbild. Der Watchdog wirkt nach dem nächsten Neustart."
-	msg "Hinweis: Wird dieses System auf ein zweites Gerät kopiert, den Rechnernamen dort von Hand ändern. Die Netzwerk-Identität (hmi-kiosk-identity) gibt es nur im SD-Abbild, hier ändert install.sh nichts automatisch."
+	msg "Hinweis: Die Netzwerk-Kennung (hmi-kiosk-identity) gibt einer Kopie dieses Systems auf anderer Hardware beim ersten Start eine eigene Maschinen-ID und einen eigenen Rechnernamen; hmi-kiosk-grow-root vergrößert die Wurzel auf einer größeren Karte. Beides wirkt nach dem Neustart."
 }
 
 main
