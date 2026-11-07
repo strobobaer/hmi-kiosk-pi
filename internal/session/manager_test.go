@@ -1706,3 +1706,15 @@ func TestClearNoticeOnlyRemovesThatNotice(t *testing.T) {
 		t.Fatalf("Hinweis blieb: %q", h.m.Snapshot().Notice)
 	}
 }
+
+func TestSetNoticeShowsStandingNoticeOnTiles(t *testing.T) {
+	h := newHarness(t, nil)
+	h.m.SetNotice("Wartungsmodus")
+	if got := h.m.Snapshot().Notice; got != "Wartungsmodus" {
+		t.Fatalf("Hinweis %q", got)
+	}
+	h.m.ClearNotice("Wartungsmodus")
+	if got := h.m.Snapshot().Notice; got != "" {
+		t.Fatalf("Hinweis blieb: %q", got)
+	}
+}

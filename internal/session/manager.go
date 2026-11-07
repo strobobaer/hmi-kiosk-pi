@@ -341,3 +341,13 @@ func (m *Manager) ClearNotice(msg string) {
 		return nil
 	})
 }
+
+// SetNotice zeigt msg als Hinweis auf der Kachelseite, solange keine Sitzung läuft.
+func (m *Manager) SetNotice(msg string) {
+	_ = m.do(func() error {
+		if m.state == StateTiles {
+			m.notice = msg
+		}
+		return nil
+	})
+}

@@ -8,6 +8,7 @@ import (
 	"log"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"hmikiosk/internal/config"
@@ -67,6 +68,8 @@ type Coordinator struct {
 	table  *Table
 	events chan Event
 
+	standby atomic.Bool // Wartungsmodus: nichts senden, nichts fragen
+
 	newTicker func(time.Duration) (<-chan time.Time, func())
 
 	mu      sync.Mutex
@@ -101,6 +104,14 @@ func (c *Coordinator) UpdateIdentity(self Holder, peers []config.Peer) {
 	c.s.Peers = slices.Clone(peers)
 }
 
+// SetStandby schaltet die Abstimmung aus (Wartungsmodus eines geklonten Geräts):
+// Das Terminal sendet keine Herzschläge, stellt keine Anfragen und ist für
+// andere nicht erreichbar.
+func (c *Coordinator) SetStandby(on bool) { c.standby.Store(on) }
+
+// Standby meldet, ob die Abstimmung ausgeschaltet ist.
+func (c *Coordinator) Standby() bool { return c.standby.Load() }
+
 func (c *Coordinator) settings() Settings {
 	c.sMu.RLock()
 	defer c.sMu.RUnlock()
@@ -124,6 +135,9 @@ type peerReply struct {
 // Request fragt alle Terminals an und entscheidet. Bleibt die Anfrage offen
 // (kein Reject), gilt sie bis Hold, Release oder Fristablauf als laufend.
 func (c *Coordinator) Request(ctx context.Context, hmi string) Result {
+	if c.Standby() {
+		return Result{Decision: Decision{Outcome: Reject}, Rejected: true}
+	}
 	s := c.settings()
 	self := s.Self.Terminal
 	own := &claimState{
@@ -239,6 +253,9 @@ func strongerClaim(cur *Claim, next Claim) Claim {
 
 // Takeover fordert den Halter aus der Entscheidung auf, das HMI freizugeben.
 func (c *Coordinator) Takeover(ctx context.Context, hmi string, d Decision) error {
+	if c.Standby() {
+		return errors.New("Wartungsmodus")
+	}
 	if d.Holder == nil {
 		return errors.New("Übernahme ohne Halter")
 	}
@@ -321,6 +338,9 @@ func (c *Coordinator) Run(ctx context.Context) {
 }
 
 func (c *Coordinator) tick(ctx context.Context) {
+	if c.Standby() {
+		return
+	}
 	c.mu.Lock()
 	held := make(map[string]Holder, len(c.held))
 	for hmi, h := range c.held {

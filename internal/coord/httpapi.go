@@ -70,7 +70,14 @@ func NewHandlerFunc(c *Coordinator, key func() []byte) http.Handler {
 		c.handleTakeover(r.HMI, r.By, r.Warn)
 		return struct{}{}, nil
 	}))
-	return mux
+	// Im Wartungsmodus gilt das Terminal für die anderen als nicht erreichbar.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c.Standby() {
+			http.Error(w, "Wartungsmodus", http.StatusServiceUnavailable)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (a *peerAPI) serveNonce(w http.ResponseWriter, _ *http.Request) {
