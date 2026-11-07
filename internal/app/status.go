@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"hmikiosk/internal/config"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/web"
@@ -41,6 +42,12 @@ func (s *service) Status() web.SystemStatus {
 	add(keyWarn)
 	st.Warnings = append(st.Warnings, warnings...)
 	add(s.journal.Warning())
+	switch {
+	case s.hwID == "":
+		add("Die Hardware-Kennung des Geräts ist nicht lesbar: Ein auf ein anderes Gerät übertragenes Terminal würde nicht erkannt.")
+	case config.HardwareChanged(cfg.Terminal.HardwareID, s.hwID):
+		add(maintenanceNotice)
+	}
 	if !st.OverlayActive {
 		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
 	}

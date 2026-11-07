@@ -87,6 +87,7 @@ type fixture struct {
 	cancel  context.CancelFunc
 	done    chan error
 	stopped bool
+	hw      string // Hardware-Kennung des Testgeräts, leer: nicht lesbar
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -127,6 +128,7 @@ func (f *fixture) options() Options {
 		HelperSocket:       filepath.Join(f.run, "kein-helfer.sock"),
 		SessionProfileFile: filepath.Join(f.run, "keine-sitzung", "profile"),
 		Runner:             f.runner,
+		HardwareID:         func() string { return f.hw },
 	}
 }
 

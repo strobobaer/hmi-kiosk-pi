@@ -137,9 +137,11 @@ func (s *service) adminHandler() http.Handler {
 				return s.helper.Call(ctx, "update-activate", version)
 			},
 		},
-		Selftest: s.adminSelftest,
-		Soak:     s.soak,
-		Backup:   s.helper,
+		Selftest:   s.adminSelftest,
+		Soak:       s.soak,
+		Backup:     s.helper,
+		HardwareID: func() string { return s.hwID },
+		TLSDir:     filepath.Join(s.opts.DataDir, tlsDirName),
 	})
 }
 

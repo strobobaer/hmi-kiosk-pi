@@ -53,7 +53,9 @@ type Options struct {
 	// SessionProfileFile nennt das Grafikprofil der laufenden Sitzung (hmi-kiosk-session prepare).
 	SessionProfileFile string
 	Runner             client.Runner
-	ChromiumEnabled    bool
+	// HardwareID liest die Hardware-Kennung des Geräts; nil heißt: aus dem Gerät lesen.
+	HardwareID      func() string
+	ChromiumEnabled bool
 	// Ready wird gerufen, wenn der Dienst läuft (für Tests).
 	Ready func(Bound)
 }
@@ -88,8 +90,10 @@ type service struct {
 	selftestPage selftestPage
 	touch        *selftest.TouchBoard
 
-	markGood   bool // der geladene Stand kommt unverändert aus config.json
-	loadFailed bool // keine lesbare Konfiguration, es gilt die Grundeinstellung
+	markGood     bool   // der geladene Stand kommt unverändert aus config.json
+	loadFailed   bool   // keine lesbare Konfiguration, es gilt die Grundeinstellung
+	usedFallback bool   // der Rückfallstand gilt, config.json ist verloren oder defekt
+	hwID         string // Hardware-Kennung dieses Geräts, leer wenn nicht lesbar
 
 	mu       sync.RWMutex
 	cfg      config.Config
@@ -147,6 +151,8 @@ func newService(opts Options) (*service, error) {
 	s.soak = newSoakJob(s)
 	s.cleanupStartup()
 	s.loadConfig()
+	s.hwID = s.detectHardwareID()
+	s.claimHardware()
 	s.openBox()
 	s.mu.Lock()
 	s.key, s.keyWarn = s.openKey(s.cfg)
@@ -154,6 +160,7 @@ func newService(opts Options) (*service, error) {
 	s.mu.Unlock()
 	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
 	s.buildParts(cfg, key)
+	s.coord.SetStandby(s.maintenance())
 	return s, nil
 }
 
@@ -182,6 +189,7 @@ func (s *service) loadConfig() {
 		s.loadFailed = true
 	case info.UsedFallback:
 		warn = fmt.Sprintf("Konfiguration defekt, Rückfall auf den letzten guten Stand: %s", info.Reason)
+		s.usedFallback = true
 	case info.FirstStart:
 		// Die Kennung des Terminals muss einen Neustart überleben.
 		if err := s.store.Save(cfg); err != nil {
@@ -236,7 +244,7 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		Screen:   s.screen,
 		Probe:    s.sessionProbe,
 		OnEnd:    s.onSessionEnd,
-		Blocked:  s.soakBlocked,
+		Blocked:  s.sessionBlocked,
 	})
 	s.reach = newReachability(
 		func() []config.HMI { return s.config().HMIs },
@@ -268,6 +276,7 @@ func (s *service) serve(parent context.Context) error {
 		defer close(mgrDone)
 		s.mgr.Run(ctx)
 	}()
+	s.syncMaintenance()
 	background(func() { s.coord.Run(ctx) })
 	background(func() { s.reach.run(ctx) })
 	background(func() {
