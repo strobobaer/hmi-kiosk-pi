@@ -98,13 +98,38 @@ Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesich
 
 Während einer Sicherung sind Neustart, Update und Funkeinstellungen gesperrt; es läuft immer nur eine Sicherung. Die Kopie entsteht im laufenden Betrieb: Boot und System sind schreibgeschützt und damit stimmig, `/data` wird nicht eingefroren, die Kopie entspricht einem Stand nach Stromausfall (das Dateisystem wird beim Start geprüft und repariert, die Konfiguration wird atomar geschrieben). Reicht der freie Arbeitsspeicher nicht (Reserve 512 MB) oder sind die Daten zu groß, lehnt das Terminal ab und nennt den Grund.
 
-**Vertraulich aufbewahren:** Das Abbild enthält alle Einstellungen, Passwörter und Schlüssel. Es gehört zu **diesem** Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.
+**Vertraulich aufbewahren:** Das Abbild enthält alle Einstellungen, Passwörter und Schlüssel. Es gehört zu **diesem** Terminal. Auf einem anderen Gerät läuft es im Wartungsmodus (Abschnitt „SD-Sicherung auf ein anderes Gerät“); nur die Einstellungen überträgt der Konfigurations-Export.
 
 **Zurückspielen:**
 
 1. Raspberry Pi Imager starten, Gerät „Raspberry Pi 5“, Betriebssystem „Eigenes Image“ (unten in der Liste) und die Datei `.img.gz` wählen. Der Imager entpackt sie selbst.
 2. Zielkarte (ab 16 GB) wählen. Beim Hinweis auf **OS-Anpassungen** „Nein“ wählen: Das Abbild enthält schon alles; Anpassungen des Imagers gehören nicht hinein.
 3. Schreiben, Karte einsetzen, starten. Beim ersten Start **wächst die Datenpartition automatisch auf die ganze Karte** (Dienst `hmi-kiosk-grow-data`, danach kein weiterer Neustart nötig). Einzelheiten stehen im Journal (`journalctl -u hmi-kiosk-grow-data`); die Boot-Partition ist dann schreibgeschützt, deshalb gibt es dort keine Protokolldatei. Scheitert das Wachsen, startet das Gerät trotzdem mit der kleinen Partition; der nächste Start versucht es erneut.
+
+### SD-Sicherung auf ein anderes Gerät
+
+Eine SD-Sicherung läuft auch in einem **anderen** Raspberry Pi: als Ersatz für ein ausgefallenes Gerät oder als Vorlage für ein weiteres Terminal. Das Terminal merkt den Gerätewechsel selbst. Es vergleicht beim Start die Seriennummer des Raspberry Pi mit der gespeicherten Hardware-Kennung (`/proc/device-tree/serial-number`; auf einem PC die DMI-Produkt-UUID). Ohne lesbare Kennung gibt es keine Erkennung, die Seite System zeigt dann nur einen Hinweis.
+
+**Ersatzgerät oder neues Terminal aus der Vorlage:**
+
+1. Sicherung zurückspielen und das Gerät mit dem Netzwerkkabel starten (Abschnitt „SD-Sicherung“, Zurückspielen).
+2. Das Terminal startet im **Wartungsmodus**: Die Kachelseite zeigt oben „Wartungsmodus: Das Terminal wurde auf ein anderes Gerät übertragen. Einrichtung in der Admin-Seite.“, alle Kacheln und die Daueranzeige sind gesperrt. Das Terminal sendet keine Herzschläge, stellt keine Anfragen und antwortet den anderen Terminals mit 503, gilt dort also als nicht erreichbar.
+3. Die Admin-Seite (Adresse des **neuen** Geräts, Port 8443) nach der Anmeldung leitet jede Seite auf die Wartungsseite um. Nur Abmelden, das System-Protokoll und die Wartungsseite selbst bleiben erreichbar. Die Seite zeigt Name und Rolle der Sicherung sowie die alte und die neue Hardware-Kennung (gekürzt) und bietet zwei Wege:
+   - **Als Ersatz für <Name> übernehmen:** Kennung, Name und Rolle bleiben, die Hardware-Kennung wird die des neuen Geräts. Das **alte Gerät muss außer Betrieb sein**, sonst arbeiten zwei Terminals mit derselben Kennung (Bestätigung nötig).
+   - **Als neues Terminal einrichten:** Das Gerät bekommt eine neue Terminal-Kennung, Name und Rolle werden neu angegeben (Regeln wie unter „Terminals“; der Name darf keinem Eintrag unter „Andere Terminals“ entsprechen). Das alte Terminal wird **nicht** automatisch eingetragen: Bei Bedarf unter „Terminals“ als anderes Terminal ergänzen, und auf dem alten Terminal das neue.
+4. Nach der Wahl wird die Konfiguration gespeichert, das Zertifikat der Admin-Seite neu erzeugt (der Browser warnt einmal erneut) und der Dienst neu gestartet; danach erneut anmelden. Ist der Neustart nicht möglich, steht ein Hinweis da: das Terminal dann neu starten. Der Wartungsmodus endet mit dem Speichern.
+
+**Rechnername und Netzwerk-Kennung:** Zwei Geräte mit demselben Rechnernamen und derselben Maschinen-ID (`/etc/machine-id`, daraus bildet der DHCP-Client seine Kennung) stritten im Netz um dieselbe Adresse. Darum läuft im SD-Abbild bei jedem Start vor dem Netzwerk der Dienst `hmi-kiosk-identity`. Er hält die Identität des Geräts in `/data/system/identity` fest (Seriennummer, Maschinen-ID, Rechnername):
+
+| Fall | Was geschieht |
+|---|---|
+| Erster Start auf dem Originalgerät | Die aktuelle Maschinen-ID und der Rechnername werden festgehalten, nichts ändert sich. |
+| Dieselbe Seriennummer | Maschinen-ID und Rechnername aus der Datei gelten wieder (das Overlay verwirft `/etc` bei jedem Start). |
+| Andere Seriennummer (Klon) | Neue Maschinen-ID, Rechnername `hmi-kiosk-<letzte 6 Zeichen der Seriennummer>`, die Datei wird neu geschrieben. Das Gerät bekommt im Netz also eine andere Adresse als das Original. |
+
+Der Dienst ist unabhängig vom Wartungsmodus und blockiert den Start nie; Meldungen stehen im Journal (`journalctl -u hmi-kiosk-identity`). Die Datei wird nur beachtet, wenn `/data/system` ein echter, root gehörender Ordner ist und die Datei darin ebenso; sonst geschieht nichts. Bei einer Installation mit `install.sh` (kein Abbild, kein Overlay) gibt es diesen Dienst nicht; dort den Rechnernamen von Hand ändern, wenn die Installation geklont wird.
+
+**Der Konfigurations-Export** übernimmt die Hardware-Kennung nicht, sie bleibt lokal wie Name, Kennung und Rolle.
 
 ### Schreibschutz (Overlay) ausschalten
 
@@ -182,6 +207,7 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 | „Keine Verbindung zu <HMI> zustande gekommen“ | Hinweis nach dem Antippen | Der Client hat in 15 Sekunden keine Verbindung hergestellt. | HMI prüfen (siehe „nicht erreichbar“). Unter Client das Profil wechseln. |
 | „Verbindung zu <HMI> verloren“ / „beendet“ | Hinweis | Das HMI hat die Verbindung getrennt oder das Netz war weg. | HMI und Netz prüfen. Neu verbinden. |
 | „Passwort von <HMI> lässt sich nicht entschlüsseln“ | Hinweis | Die Schlüsseldatei des Geräts passt nicht zu den gespeicherten Passwörtern. | Passwort des HMI neu eintragen. Tritt es bei allen HMIs auf, Konfiguration aus der Sicherung wiederherstellen. |
+| „Wartungsmodus: Das Terminal wurde auf ein anderes Gerät übertragen.“ | Hinweis auf der Kachelseite, Wartungsseite in der Admin-Seite | Die SD-Karte läuft in einem anderen Raspberry Pi als dem, auf dem sie eingerichtet wurde. | Admin-Seite öffnen und „Als Ersatz übernehmen“ oder „Als neues Terminal einrichten“ wählen (Abschnitt „SD-Sicherung auf ein anderes Gerät“). |
 | „Dieses HMI gibt es nicht mehr“ | Hinweis | Das HMI wurde gelöscht, während es genutzt wurde. | Kachelseite neu laden lassen. Daueranzeige unter Kiosk prüfen. |
 
 ### Admin-Seite und Gerät
