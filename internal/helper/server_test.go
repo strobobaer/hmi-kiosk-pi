@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -70,6 +71,34 @@ func rawCall(t *testing.T, sock, payload string) map[string]any {
 		t.Fatal(err)
 	}
 	return m
+}
+
+// systemd legt den Ordner des Sockets als root:root an; der Dienst (Gruppe SocketGID)
+// muss trotzdem hineinkommen, darf dort aber nichts anlegen.
+func TestServeGivesSocketDirToSocketGroup(t *testing.T) {
+	linuxOnly(t)
+	if os.Geteuid() != 0 {
+		t.Skip("braucht root")
+	}
+	e := newEnv(t, "")
+	e.srv.SocketGID = 4242
+	sock := startServer(t, e)
+	dir := filepath.Dir(sock)
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	if st.Uid != 0 || st.Gid != 4242 || fi.Mode().Perm() != 0o750 {
+		t.Fatalf("Ordner %d:%d %o, erwartet 0:4242 750", st.Uid, st.Gid, fi.Mode().Perm())
+	}
+	si, err := os.Stat(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := si.Sys().(*syscall.Stat_t).Gid; g != 4242 {
+		t.Fatalf("Socket-Gruppe %d", g)
+	}
 }
 
 func TestServerClientRoundTrip(t *testing.T) {

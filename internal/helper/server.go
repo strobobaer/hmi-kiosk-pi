@@ -68,9 +68,32 @@ func NewServer(socket string, allowedUID int, e Exec, bootCfg string, upd Update
 
 func (s *Server) authorized(uid int) bool { return uid == 0 || uid == s.allowedUID }
 
+// prepareSocketDir gibt den Ordner des Sockets der Socket-Gruppe (Lesen und Durchgehen,
+// kein Anlegen). Das hängt nicht davon ab, wie systemd oder install.sh ihn angelegt haben.
+func (s *Server) prepareSocketDir() error {
+	if s.SocketGID < 0 || os.Geteuid() != 0 {
+		return nil
+	}
+	dir := filepath.Dir(s.socket)
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return errors.New("Ordner des Sockets ist kein Ordner: " + dir)
+	}
+	if err := os.Lchown(dir, 0, s.SocketGID); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o750)
+}
+
 // Serve horcht, bis ctx endet.
 func (s *Server) Serve(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(s.socket), 0o755); err != nil {
+		return err
+	}
+	if err := s.prepareSocketDir(); err != nil {
 		return err
 	}
 	if fi, err := os.Lstat(s.socket); err == nil {
