@@ -13,9 +13,10 @@ import (
 
 var binaryNames = []string{"mount", "umount", "blkid", "sync", "rfkill", "systemctl", "timedatectl", "mkfs.ext4", "debugfs"}
 
-// optionalBinaryNames werden nur für die dateiweise Sicherung gebraucht. Fehlen sie, startet der Helfer trotzdem;
+// optionalBinaryNames werden nur für die dateiweise Sicherung (losetup, rsync, mkfs.vfat) und die
+// Ethernet-Einstellung (nmcli, arping) gebraucht. Fehlen sie, startet der Helfer trotzdem;
 // die Sicherung meldet dann, was nachzuinstallieren ist.
-var optionalBinaryNames = []string{"losetup", "rsync", "mkfs.vfat"}
+var optionalBinaryNames = []string{"losetup", "rsync", "mkfs.vfat", "nmcli", "arping"}
 var binaryDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
 
 // NewOSExec löst die benötigten Programme einmalig in festen Verzeichnissen auf

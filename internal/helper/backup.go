@@ -54,7 +54,7 @@ var nameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 // Während einer Sicherung ändern diese Befehle das System; sie werden abgelehnt.
 var blockedDuringBackup = map[string]bool{
 	CmdReboot: true, CmdRestartService: true, CmdUpdateActivate: true, CmdUpdateRollback: true,
-	CmdWifiOff: true, CmdWifiOn: true, CmdBtOff: true, CmdBtOn: true,
+	CmdWifiOff: true, CmdWifiOn: true, CmdBtOff: true, CmdBtOn: true, CmdNetApply: true,
 }
 
 // BackupConfig sind die Orte und Zeiten der SD-Sicherung; Leeres gilt als Voreinstellung.

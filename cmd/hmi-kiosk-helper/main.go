@@ -1,6 +1,7 @@
 // hmi-kiosk-helper ist der kleine root-Helfer des Kiosk-Dienstes.
 //
-// Ohne Unterbefehl bedient er den Socket. Mit "update-guard" prüft er nach einer
+// Ohne Unterbefehl bedient er den Socket. Mit "net-boot" schreibt er beim Start das
+// Ethernet-Profil aus der Datenpartition. Mit "update-guard" prüft er nach einer
 // Aktivierung, ob die neue Version gesund meldet, und schaltet sonst zurück.
 package main
 
@@ -21,9 +22,15 @@ const (
 	defaultRoot   = "/data"
 	defaultMarker = "/run/hmi-kiosk/healthy"
 	guardTimeout  = 60 * time.Second
+
+	defaultNetSaved = "/data/system/ethernet.json"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "net-boot" {
+		netBootMain(os.Args[2:])
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "update-guard" {
 		guardMain(os.Args[2:])
 		return
@@ -37,6 +44,7 @@ func serveMain() {
 	gid := flag.Int("gid", -1, "Gruppe des Sockets, -1 für unverändert")
 	bootCfg := flag.String("boot-config", "/boot/firmware/config.txt", "Pfad der config.txt")
 	ntpState := flag.String("ntp-state", "/data/system/ntp-server", "Datei für den dauerhaften NTP-Server")
+	netSaved := flag.String("net-saved", defaultNetSaved, "Datei für die bestätigte Ethernet-Einstellung")
 	root := flag.String("root", defaultRoot, "Wurzel der Datenpartition mit app/")
 	marker := flag.String("marker", defaultMarker, "Gesundmarke des Dienstes")
 	flag.Parse()
@@ -59,6 +67,8 @@ func serveMain() {
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
 	srv.Backup.HasTool = helper.OSHasTool
+	srv.Net.SavedPath = *netSaved
+	srv.RecoverNetOnStart = true
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -99,4 +109,16 @@ func runGuard(ctx context.Context, root, marker string, timeout time.Duration, e
 		}
 		return e(ctx, "systemctl", "restart", "hmi-kiosk.service")
 	})
+}
+
+// netBootMain schreibt vor NetworkManager das Profil aus der bestätigten Ethernet-Einstellung
+// (hmi-kiosk-network.service). Es endet immer mit 0: Das Netz darf daran nie hängen.
+func netBootMain(args []string) {
+	fs := flag.NewFlagSet("net-boot", flag.ContinueOnError)
+	saved := fs.String("saved", defaultNetSaved, "Datei mit der bestätigten Ethernet-Einstellung")
+	if err := fs.Parse(args); err != nil {
+		log.Printf("net-boot: %v", err)
+		return
+	}
+	helper.NetBoot(helper.NetConfig{SavedPath: *saved}, log.Printf)
 }

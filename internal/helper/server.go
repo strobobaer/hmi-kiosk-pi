@@ -56,8 +56,12 @@ type Server struct {
 	ExecOut ExecOut
 	// Backup legt Orte und Zeiten der SD-Sicherung fest; die Voreinstellung passt für das Gerät.
 	Backup BackupConfig
+	// Net legt Orte und Zeiten der Ethernet-Einstellung fest; RecoverNetOnStart setzt eine offene Frist beim Start zurück.
+	Net               NetConfig
+	RecoverNetOnStart bool
 
 	backup backupState
+	netRT  netRuntime
 	base   context.Context
 	bgWG   sync.WaitGroup
 
@@ -132,6 +136,15 @@ func (s *Server) Serve(ctx context.Context) error {
 	var wg sync.WaitGroup
 	defer s.bgWG.Wait()
 	defer wg.Wait()
+	if s.RecoverNetOnStart {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.RecoverNet(ctx); err != nil {
+				log.Printf("Ethernet-Rücksetzung beim Start: %v", err)
+			}
+		}()
+	}
 	if s.ReapplyNTPOnStart {
 		wg.Add(1)
 		go func() {
@@ -187,10 +200,10 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 
 	s.mu.Lock()
 	cctx, cancel := context.WithTimeout(ctx, commandTimeout)
-	err = s.Dispatch(cctx, req.Cmd, req.Arg)
+	data, err := s.DispatchData(cctx, req.Cmd, req.Arg)
 	cancel()
 	s.mu.Unlock()
-	reply(c, err)
+	replyData(c, data, err)
 }
 
 func readRequest(r io.Reader) (request, error) {

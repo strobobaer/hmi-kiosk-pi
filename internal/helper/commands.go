@@ -54,7 +54,9 @@ var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 type command struct {
 	takesArg bool
-	run      func(s *Server, ctx context.Context, arg string) error
+	// runData liefert Daten zurück (statt run).
+	runData func(s *Server, ctx context.Context, arg string) (any, error)
+	run     func(s *Server, ctx context.Context, arg string) error
 }
 
 var commands = map[string]command{
@@ -79,24 +81,37 @@ var commands = map[string]command{
 	CmdUpdateActivate: {takesArg: true, run: (*Server).updateActivate},
 	CmdUpdateRollback: {run: (*Server).updateRollback},
 	CmdBackupUSB:      {takesArg: true, run: (*Server).backupUSB},
+	CmdNetApply:       {takesArg: true, run: (*Server).netApply},
+	CmdNetConfirm:     {runData: (*Server).netConfirm},
+	CmdNetRevert:      {run: (*Server).netRevert},
+	CmdNetStatus:      {runData: (*Server).netStatus},
 }
 
 // Dispatch führt einen Befehl aus. Fehlertexte sind für die Admin-Seite bestimmt.
 func (s *Server) Dispatch(ctx context.Context, cmd, arg string) error {
+	_, err := s.DispatchData(ctx, cmd, arg)
+	return err
+}
+
+// DispatchData ist Dispatch für Befehle, die Daten zurückgeben.
+func (s *Server) DispatchData(ctx context.Context, cmd, arg string) (any, error) {
 	c, ok := commands[cmd]
 	if !ok {
-		return errors.New("Unbekannter Befehl")
+		return nil, errors.New("Unbekannter Befehl")
 	}
 	if !c.takesArg && arg != "" {
-		return errors.New("Dieser Befehl nimmt keinen Wert an")
+		return nil, errors.New("Dieser Befehl nimmt keinen Wert an")
 	}
 	if c.takesArg && arg == "" {
-		return errors.New("Der Wert fehlt")
+		return nil, errors.New("Der Wert fehlt")
 	}
 	if blockedDuringBackup[cmd] && s.backup.isRunning() {
-		return errors.New(errBackupBusy)
+		return nil, errors.New(errBackupBusy)
 	}
-	return c.run(s, ctx, arg)
+	if c.runData != nil {
+		return c.runData(s, ctx, arg)
+	}
+	return nil, c.run(s, ctx, arg)
 }
 
 func (s *Server) run(ctx context.Context, name string, args ...string) error {
