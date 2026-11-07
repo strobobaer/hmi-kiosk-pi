@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"hmikiosk/internal/config"
@@ -34,6 +35,8 @@ const (
 	netPrevFile     = "prev.nmconnection"
 	maxNetStateSize = 4096
 	nmWaitSec       = "20"
+	// netStepTimeout begrenzt jeden nmcli-Schritt einzeln (nmcli wartet selbst höchstens 20 s).
+	netStepTimeout = 25 * time.Second
 )
 
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -148,11 +151,28 @@ type netPending struct {
 }
 
 // netRuntime ist der Zustand im Speicher. applyID wechselt bei jeder Anwendung und Rücksetzung,
-// damit verspätete Zeitgeber ins Leere laufen.
+// damit verspätete Zeitgeber ins Leere laufen; activated meldet, dass das Profil dieser Anwendung
+// hochgefahren ist. applyID, activated und stopDeadline gehören zum Befehls-Mutex des Servers;
+// msg liest auch net-status, das ohne diesen Mutex antwortet, daher der eigene Mutex.
 type netRuntime struct {
 	applyID      uint64
+	activated    bool
 	stopDeadline func() bool
-	msg          string
+
+	mu  sync.Mutex
+	msg string
+}
+
+func (r *netRuntime) setMsg(m string) {
+	r.mu.Lock()
+	r.msg = m
+	r.mu.Unlock()
+}
+
+func (r *netRuntime) getMsg() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.msg
 }
 
 func decodeStrict(b []byte, v any) error {
@@ -277,7 +297,11 @@ func (s *Server) netApply(ctx context.Context, arg string) error {
 		return err
 	}
 	n := s.Net
-	if _, err := n.readPending(); err == nil {
+	// Auch ein beschädigter Frist-Zustand gilt als offen: Er hält das vorherige Profil fest.
+	if n.pendingExists() {
+		if _, err := n.readPending(); err != nil {
+			log.Printf("Ethernet: Frist-Zustand beschädigt, neue Einstellung abgelehnt: %v", err)
+		}
 		return errors.New("Eine Netzwerkänderung wartet noch auf Bestätigung. Bitte zuerst bestätigen oder zurücksetzen.")
 	}
 	if !n.hasTool("nmcli") {
@@ -293,6 +317,10 @@ func (s *Server) netApply(ctx context.Context, arg string) error {
 		if !hasAddr(cur, addr) {
 			if !n.hasTool("arping") {
 				return errors.New("arping fehlt (Paket iputils-arping): Die Adresse lässt sich nicht auf Konflikte prüfen. Abbruch, es wurde nichts geändert.")
+			}
+			// Ohne Träger scheitert arping mit einer unverständlichen Meldung.
+			if !n.hasCarrier(iface) {
+				return errors.New("Die Ethernet-Schnittstelle hat keine Verbindung (Kabel prüfen).")
 			}
 			err := s.exec(ctx, "arping", "-D", "-q", "-I", iface, "-c", "2", "-w", "3", addr.String())
 			switch {
@@ -352,7 +380,8 @@ func (s *Server) netApply(ctx context.Context, arg string) error {
 
 	s.netRT.applyID++
 	id := s.netRT.applyID
-	s.netRT.msg = ""
+	s.netRT.activated = false
+	s.netRT.setMsg("")
 	n.after(n.activateDelay(), func() { s.netActivate(id) })
 	s.netRT.stopDeadline = n.after(n.deadline(), func() { s.netDeadline(id) })
 	log.Printf("Ethernet: neue Einstellung (%s) auf %s, Frist %v", describeEth(e), iface, n.deadline())
@@ -374,48 +403,61 @@ func (s *Server) restoreKeyfile(old []byte) {
 	}
 }
 
-func netCtx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), commandTimeout)
+// netStep führt einen nmcli-Schritt mit eigener Frist aus. Er läuft auch weiter, wenn der
+// Aufrufer nicht mehr wartet: Eine halbe Rücksetzung wäre schlimmer als eine späte.
+func (s *Server) netStep(parent context.Context, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), netStepTimeout)
+	defer cancel()
+	return s.run(ctx, "nmcli", args...)
 }
 
-// netActivate schaltet nach der kurzen Pause auf das Profil um; scheitert das, gilt sofort die alte Einstellung.
+func (n NetConfig) pendingExists() bool {
+	_, err := os.Lstat(n.pendingPath())
+	return err == nil
+}
+
+// hasCarrier liest /sys/class/net/<iface>/carrier (1: Kabel steckt, Gegenstelle da).
+func (n NetConfig) hasCarrier(iface string) bool {
+	b, err := os.ReadFile(filepath.Join(n.sysClassNet(), iface, "carrier"))
+	return err == nil && strings.TrimSpace(string(b)) == "1"
+}
+
+// netActivate schaltet nach der kurzen Pause auf das Profil um; scheitert das, gilt sofort die
+// alte Einstellung. Erst danach darf bestätigt werden.
 func (s *Server) netActivate(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.netRT.applyID != id {
 		return
 	}
-	ctx, cancel := netCtx()
-	defer cancel()
-	if err := s.run(ctx, "nmcli", "-w", nmWaitSec, "connection", "up", NMConnID); err != nil {
-		if _, perr := s.Net.readPending(); perr != nil {
-			log.Printf("Ethernet: bestätigtes Profil ließ sich nicht aktivieren: %v", err)
-			return
-		}
+	ctx := context.Background()
+	if err := s.netStep(ctx, "-w", nmWaitSec, "connection", "up", NMConnID); err != nil {
+		log.Printf("Ethernet: neue Einstellung ließ sich nicht aktivieren: %v", err)
 		s.revertNetLocked(ctx, fmt.Sprintf("Die neue Einstellung ließ sich nicht aktivieren (%v); die alte Einstellung ist wiederhergestellt.", err))
+		return
 	}
+	s.netRT.activated = true
 }
 
 func (s *Server) netDeadline(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.netRT.applyID != id {
+	if s.netRT.applyID != id || !s.Net.pendingExists() {
 		return
 	}
-	if _, err := s.Net.readPending(); err != nil {
-		return
-	}
-	ctx, cancel := netCtx()
-	defer cancel()
-	s.revertNetLocked(ctx, "Die neue Einstellung wurde nicht rechtzeitig bestätigt; die alte Einstellung ist wiederhergestellt.")
+	s.revertNetLocked(context.Background(), "Die neue Einstellung wurde nicht rechtzeitig bestätigt; die alte Einstellung ist wiederhergestellt.")
 }
 
 // revertNetLocked stellt das vorherige Profil (oder keins) wieder her und fährt die vorherige
-// Verbindung hoch. Der Frist-Zustand wird auch bei Fehlern entfernt: Ein zweiter Versuch hätte
-// dieselben Daten.
+// Verbindung hoch; scheitert das, verbindet es die Schnittstelle neu (NetworkManager wählt dann
+// selbst ein Profil, auch ein neu angelegtes „Wired connection 1“). Der Frist-Zustand wird auch
+// bei Fehlern entfernt: Ein zweiter Versuch hätte dieselben Daten. Jeder Schritt hat eine eigene Frist.
 func (s *Server) revertNetLocked(ctx context.Context, reason string) error {
 	n := s.Net
-	p, _ := n.readPending()
+	p, perr := n.readPending()
+	if perr != nil && n.pendingExists() {
+		log.Printf("Ethernet: Frist-Zustand beschädigt, setze ohne gemerkte Verbindung zurück: %v", perr)
+	}
 	old, err := readSmallFile(n.prevPath())
 	hadProfile := err == nil
 	var errs []string
@@ -426,7 +468,7 @@ func (s *Server) revertNetLocked(ctx context.Context, reason string) error {
 	} else if err := n.removeKeyfile(); err != nil {
 		errs = append(errs, fmt.Sprintf("Profil nicht entfernbar: %v", err))
 	}
-	if err := s.run(ctx, "nmcli", "connection", "reload"); err != nil {
+	if err := s.netStep(ctx, "connection", "reload"); err != nil {
 		errs = append(errs, err.Error())
 	}
 	iface := p.Iface
@@ -434,19 +476,30 @@ func (s *Server) revertNetLocked(ctx context.Context, reason string) error {
 		iface, _ = FirstEthernet(n.sysClassNet())
 	}
 	var upErr error
+	tried := false
 	switch {
 	case hadProfile:
-		upErr = s.run(ctx, "nmcli", "-w", nmWaitSec, "connection", "up", NMConnID)
+		tried, upErr = true, s.netStep(ctx, "-w", nmWaitSec, "connection", "up", NMConnID)
 	case uuidRe.MatchString(p.PrevUUID):
-		upErr = s.run(ctx, "nmcli", "-w", nmWaitSec, "connection", "up", "uuid", p.PrevUUID)
-	case iface != "":
-		upErr = s.run(ctx, "nmcli", "-w", nmWaitSec, "device", "connect", iface)
+		tried, upErr = true, s.netStep(ctx, "-w", nmWaitSec, "connection", "up", "uuid", p.PrevUUID)
 	}
-	if upErr != nil {
+	if tried && upErr != nil {
+		log.Printf("Ethernet: vorherige Verbindung ließ sich nicht hochfahren: %v", upErr)
+	}
+	if (!tried || upErr != nil) && iface != "" {
+		if err := s.netStep(ctx, "-w", nmWaitSec, "device", "connect", iface); err != nil {
+			log.Printf("Ethernet: Schnittstelle %s ließ sich nicht neu verbinden: %v", iface, err)
+			if upErr != nil {
+				errs = append(errs, upErr.Error())
+			}
+			errs = append(errs, err.Error())
+		}
+	} else if upErr != nil {
 		errs = append(errs, upErr.Error())
 	}
 	n.clearPending()
 	s.netRT.applyID++
+	s.netRT.activated = false
 	if s.netRT.stopDeadline != nil {
 		s.netRT.stopDeadline()
 		s.netRT.stopDeadline = nil
@@ -455,7 +508,7 @@ func (s *Server) revertNetLocked(ctx context.Context, reason string) error {
 	if len(errs) > 0 {
 		msg += " Fehler dabei: " + strings.Join(errs, "; ")
 	}
-	s.netRT.msg = msg
+	s.netRT.setMsg(msg)
 	log.Printf("Ethernet: %s", msg)
 	if len(errs) > 0 {
 		return errors.New(msg)
@@ -464,18 +517,26 @@ func (s *Server) revertNetLocked(ctx context.Context, reason string) error {
 }
 
 func (s *Server) netRevert(ctx context.Context, _ string) error {
-	if _, err := s.Net.readPending(); err != nil {
+	if !s.Net.pendingExists() {
 		return errors.New("Es wartet keine Netzwerkänderung auf Bestätigung.")
 	}
 	return s.revertNetLocked(ctx, "Die alte Einstellung wurde auf Wunsch wiederhergestellt.")
 }
 
-// netConfirm schreibt die Einstellung auf die Datenpartition und beendet die Frist.
+// netConfirm schreibt die Einstellung auf die Datenpartition und beendet die Frist. Bestätigt wird
+// erst, wenn das neue Profil hochgefahren ist.
 func (s *Server) netConfirm(_ context.Context, _ string) (any, error) {
 	n := s.Net
+	if !n.pendingExists() {
+		return nil, errors.New("Es wartet keine Netzwerkänderung auf Bestätigung.")
+	}
 	p, err := n.readPending()
 	if err != nil {
-		return nil, errors.New("Es wartet keine Netzwerkänderung auf Bestätigung.")
+		log.Printf("Ethernet: Frist-Zustand beschädigt: %v", err)
+		return nil, errors.New("Der Zustand der Netzwerkänderung ist beschädigt; bitte „Sofort zurücksetzen“.")
+	}
+	if !s.netRT.activated {
+		return nil, errors.New("Die neue Einstellung wird gerade aktiviert – bitte in einigen Sekunden erneut bestätigen.")
 	}
 	b, _ := json.Marshal(netSaved{Iface: p.Iface, Ethernet: p.New})
 	if err := writeStateFile(n.savedPath(), append(b, '\n')); err != nil {
@@ -486,15 +547,17 @@ func (s *Server) netConfirm(_ context.Context, _ string) (any, error) {
 		s.netRT.stopDeadline = nil
 	}
 	n.clearPending()
-	s.netRT.msg = ""
+	s.netRT.setMsg("")
 	log.Printf("Ethernet: Einstellung (%s) bestätigt", describeEth(p.New))
 	return p.New, nil
 }
 
+// netStatus liest nur Dateien und läuft ohne den Befehls-Mutex (siehe handleConn): Es antwortet
+// auch, während eine Rücksetzung auf nmcli wartet.
 func (s *Server) netStatus(_ context.Context, _ string) (any, error) {
 	n := s.Net
 	st := helperapi.NetStatus{
-		Message:       s.netRT.msg,
+		Message:       s.netRT.getMsg(),
 		NMMissing:     !n.hasTool("nmcli"),
 		ArpingMissing: !n.hasTool("arping"),
 	}
@@ -513,10 +576,15 @@ func (s *Server) netStatus(_ context.Context, _ string) (any, error) {
 			}
 		}
 	}
-	if p, err := n.readPending(); err == nil {
-		st.Pending, st.PendingCfg = true, p.New
-		left := p.Deadline.Sub(n.now())
-		st.RemainingSec = max(0, int((left+time.Second-1)/time.Second))
+	if n.pendingExists() {
+		st.Pending = true
+		if p, err := n.readPending(); err == nil {
+			st.PendingCfg = p.New
+			left := p.Deadline.Sub(n.now())
+			st.RemainingSec = max(0, int((left+time.Second-1)/time.Second))
+		} else {
+			st.Error = "Der Zustand der Netzwerkänderung ist beschädigt; bitte „Sofort zurücksetzen“."
+		}
 	}
 	return st, nil
 }
@@ -526,11 +594,9 @@ func (s *Server) netStatus(_ context.Context, _ string) (any, error) {
 func (s *Server) RecoverNet(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := os.Lstat(s.Net.pendingPath()); err != nil {
+	if !s.Net.pendingExists() {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
-	defer cancel()
 	return s.revertNetLocked(ctx, "Der Helfer wurde während der Frist neu gestartet; die alte Einstellung ist wiederhergestellt.")
 }
 

@@ -198,6 +198,13 @@ func (s *Server) handleConn(ctx context.Context, c net.Conn) {
 		return
 	}
 
+	// net-status liest nur und darf nicht hinter einer langen nmcli-Rücksetzung warten.
+	if req.Cmd == CmdNetStatus {
+		data, err := s.DispatchData(ctx, req.Cmd, req.Arg)
+		replyData(c, data, err)
+		return
+	}
+
 	s.mu.Lock()
 	cctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	data, err := s.DispatchData(cctx, req.Cmd, req.Arg)

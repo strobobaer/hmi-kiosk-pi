@@ -88,6 +88,7 @@ func newNetEnv(t *testing.T) *netEnv {
 		addrs: []netip.Prefix{netip.MustParsePrefix("192.168.1.20/24")}}
 	sys := filepath.Join(ne.dir, "sys")
 	mkNetIf(t, sys, "eth0", "1", false, true)
+	os.WriteFile(filepath.Join(sys, "eth0", "carrier"), []byte("1\n"), 0o644)
 	ne.srv.Net = NetConfig{
 		SysClassNet:   sys,
 		ConnDir:       filepath.Join(ne.dir, "nm"),
@@ -524,11 +525,132 @@ func TestNetOverSocketWithClient(t *testing.T) {
 	if err != nil || !st.Pending || st.PendingCfg.Address != "192.168.1.50" || st.RemainingSec != 120 {
 		t.Fatalf("Status %+v %v", st, err)
 	}
+	ne.timers.fire(t, testActivate)
+	// Hält ein langer Befehl den Befehls-Mutex, antwortet net-status trotzdem.
+	ne.srv.mu.Lock()
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	st, err = cl.NetStatus(sctx)
+	cancel()
+	ne.srv.mu.Unlock()
+	if err != nil || !st.Pending {
+		t.Fatalf("Status bei belegtem Mutex %+v %v", st, err)
+	}
 	got, err := cl.NetConfirm(ctx)
 	if err != nil || !reflect.DeepEqual(got, staticCfg) {
 		t.Fatalf("bestätigt %+v %v", got, err)
 	}
 	if err := cl.NetRevert(ctx); err == nil {
 		t.Fatal("Rücksetzen ohne Frist angenommen")
+	}
+}
+
+func TestNetRevertFallsBackToDeviceConnectWhenPreviousUUIDFails(t *testing.T) {
+	ne := newNetEnv(t)
+	if err := ne.apply(t, staticCfg); err != nil {
+		t.Fatal(err)
+	}
+	ne.timers.fire(t, testActivate)
+	// Das Laufzeitprofil „Wired connection 1“ wurde mit neuer UUID neu angelegt.
+	ne.fx.fail["nmcli -w 20 connection up uuid 11111111-2222-4333-8444-555555555555"] = errors.New("unbekannt")
+	n := len(ne.fx.got())
+	if err := ne.srv.Dispatch(context.Background(), CmdNetRevert, ""); err != nil {
+		t.Fatalf("Rücksetzen trotz gelungenem Rückfall gescheitert: %v", err)
+	}
+	want := []string{"nmcli connection reload", "nmcli -w 20 connection up uuid 11111111-2222-4333-8444-555555555555", "nmcli -w 20 device connect eth0"}
+	if got := ne.fx.got()[n:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Aufrufe %v", got)
+	}
+}
+
+func TestNetRevertFallsBackToDeviceConnectWhenOwnProfileFails(t *testing.T) {
+	ne := newNetEnv(t)
+	os.MkdirAll(ne.srv.Net.ConnDir, 0o700)
+	old, _ := NMKeyfile("eth0", config.EthernetCfg{Method: config.EthDHCP})
+	os.WriteFile(ne.keyfile(), old, 0o600)
+	if err := ne.apply(t, staticCfg); err != nil {
+		t.Fatal(err)
+	}
+	ne.fx.fail["nmcli -w 20 connection up "+NMConnID] = errors.New("kaputt")
+	n := len(ne.fx.got())
+	ne.srv.Dispatch(context.Background(), CmdNetRevert, "")
+	want := []string{"nmcli connection reload", "nmcli -w 20 connection up " + NMConnID, "nmcli -w 20 device connect eth0"}
+	if got := ne.fx.got()[n:]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Aufrufe %v", got)
+	}
+}
+
+func TestNetRevertStepsHaveOwnTimeouts(t *testing.T) {
+	ne := newNetEnv(t)
+	if err := ne.apply(t, staticCfg); err != nil {
+		t.Fatal(err)
+	}
+	orig := ne.srv.exec
+	ne.srv.exec = func(ctx context.Context, name string, args ...string) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		dl, ok := ctx.Deadline()
+		if !ok || time.Until(dl) > netStepTimeout {
+			return errors.New("ohne eigene Frist")
+		}
+		return orig(ctx, name, args...)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // abgelaufene Frist des Aufrufers: die Rücksetzung läuft trotzdem ganz durch
+	ne.srv.mu.Lock()
+	err := ne.srv.revertNetLocked(ctx, "Test")
+	ne.srv.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNetConfirmRefusedBeforeActivation(t *testing.T) {
+	ne := newNetEnv(t)
+	if err := ne.apply(t, staticCfg); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ne.srv.DispatchData(context.Background(), CmdNetConfirm, "")
+	if err == nil || err.Error() != "Die neue Einstellung wird gerade aktiviert – bitte in einigen Sekunden erneut bestätigen." {
+		t.Fatalf("Fehler %v", err)
+	}
+	if _, err := os.Stat(ne.srv.Net.SavedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("vor der Aktivierung gespeichert")
+	}
+	ne.timers.fire(t, testActivate)
+	if _, err := ne.srv.DispatchData(context.Background(), CmdNetConfirm, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNetCorruptPendingIsNotNothing(t *testing.T) {
+	ne := newNetEnv(t)
+	os.MkdirAll(ne.srv.Net.StateDir, 0o700)
+	os.WriteFile(filepath.Join(ne.srv.Net.StateDir, netPendingFile), []byte("{kaputt"), 0o600)
+	err := ne.apply(t, staticCfg)
+	if err == nil || !strings.Contains(err.Error(), "Bestätigung") || len(ne.fx.got()) != 0 {
+		t.Fatalf("Fehler %v, Aufrufe %v", err, ne.fx.got())
+	}
+	st := ne.status(t)
+	if !st.Pending || !strings.Contains(st.Error, "beschädigt") {
+		t.Fatalf("Status %+v", st)
+	}
+	if _, err := ne.srv.DispatchData(context.Background(), CmdNetConfirm, ""); err == nil {
+		t.Fatal("beschädigter Zustand bestätigt")
+	}
+	if err := ne.srv.Dispatch(context.Background(), CmdNetRevert, ""); err != nil {
+		t.Fatal(err)
+	}
+	if ne.status(t).Pending {
+		t.Fatal("noch offen")
+	}
+}
+
+func TestNetApplyWithoutCarrierAborts(t *testing.T) {
+	ne := newNetEnv(t)
+	os.WriteFile(filepath.Join(ne.srv.Net.SysClassNet, "eth0", "carrier"), []byte("0\n"), 0o644)
+	err := ne.apply(t, staticCfg)
+	if err == nil || err.Error() != "Die Ethernet-Schnittstelle hat keine Verbindung (Kabel prüfen)." || len(ne.fx.got()) != 0 {
+		t.Fatalf("Fehler %v, Aufrufe %v", err, ne.fx.got())
 	}
 }
