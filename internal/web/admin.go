@@ -84,6 +84,8 @@ type AdminDeps struct {
 	Selftest     func(ctx context.Context) []SelftestStep
 	Soak         SoakAPI
 	Backup       BackupAPI
+	// Net stellt die Ethernet-Schnittstelle über den Helfer um (leer: Abschnitt nicht verfügbar).
+	Net NetAPI
 	// HardwareID liefert die Kennung des Geräts (leer: nicht lesbar), TLSDir den Ordner des Zertifikats.
 	HardwareID func() string
 	TLSDir     string
@@ -224,6 +226,9 @@ func (a *admin) routes() []route {
 
 		get("/admin/network", a.handleNetworkPage),
 		post("/admin/network/ntp", a.handleNTP),
+		post("/admin/network/ethernet", a.handleEthernetApply),
+		post("/admin/network/ethernet/confirm", a.handleEthernetConfirm),
+		post("/admin/network/ethernet/revert", a.handleEthernetRevert),
 		post("/admin/network/wifi-off", a.handleWifiOff),
 		post("/admin/network/wifi-on", a.handleWifiOn),
 		post("/admin/network/bt-off", a.handleBtOff),

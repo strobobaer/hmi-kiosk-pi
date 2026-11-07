@@ -1,5 +1,67 @@
 {{define "content"}}
 {{with .Body}}
+{{with .Eth}}
+<section class="panel stack">
+  <h2>Ethernet (IPv4)</h2>
+  {{if .Pending}}
+  <div class="msg warn stack" role="alert">
+    <p><strong>Neue Einstellung wartet auf Bestätigung:</strong> {{.PendingAs}}</p>
+    <p>Restzeit: <strong>{{.Remaining}}</strong> min. Ohne Bestätigung stellt das Terminal danach die alte Einstellung wieder her.{{if .ConfirmAt}} Bestätigen unter https://{{.ConfirmAt}}:8443/admin/network.{{end}}</p>
+    <div class="actions">
+      <form method="post" action="/admin/network/ethernet/confirm">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button type="submit" class="btn primary">Bestätigen</button>
+      </form>
+      <form method="post" action="/admin/network/ethernet/revert">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button type="submit" class="btn danger">Sofort zurücksetzen</button>
+      </form>
+    </div>
+  </div>
+  {{end}}
+  {{if .Message}}<p class="msg warn">{{.Message}}</p>{{end}}
+  {{if .StatusErr}}<p class="msg err">Stand der Schnittstelle nicht abrufbar: {{.StatusErr}}</p>{{end}}
+  <p>Schnittstelle: {{if .Iface}}{{.Iface}}{{else}}unbekannt{{end}} · Aktuelle Adresse: {{if .Addresses}}{{range $i, $a := .Addresses}}{{if $i}}, {{end}}{{$a}}{{end}}{{else}}keine{{end}}</p>
+  <p>Gespeichert: {{.Saved}}</p>
+  {{if .NMMissing}}<p class="msg err">NetworkManager (nmcli) fehlt auf diesem System; die Ethernet-Einstellung lässt sich hier nicht ändern.</p>{{end}}
+  {{if .ArpMissing}}<p class="msg warn">arping fehlt (Paket iputils-arping): Eine feste Adresse lässt sich nicht auf Konflikte prüfen und wird deshalb abgelehnt.</p>{{end}}
+  {{if .Available}}
+  <form method="post" action="/admin/network/ethernet" class="stack" data-confirm="Netzwerkeinstellung jetzt übernehmen? Die Verbindung zur Admin-Seite kann abbrechen.">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <fieldset class="stack">
+      <legend>Adresse</legend>
+      <label class="check"><input type="radio" name="method" value="dhcp"{{if eq .Form.Method "dhcp"}} checked{{end}}> Automatisch (DHCP)</label>
+      <label class="check"><input type="radio" name="method" value="static"{{if eq .Form.Method "static"}} checked{{end}}> Feste Adresse</label>
+    </fieldset>
+    <div class="row">
+      <label class="grow">IP-Adresse
+        <input type="text" name="address" value="{{.Form.Address}}" inputmode="decimal" autocapitalize="off" spellcheck="false" placeholder="192.168.1.50">
+      </label>
+      <label class="short">Präfix
+        <input type="text" name="prefix" value="{{.Form.Prefix}}" inputmode="decimal" autocapitalize="off" spellcheck="false" placeholder="24">
+      </label>
+    </div>
+    <p class="hint">Präfix 8 bis 30, auch als Netzmaske (z. B. 255.255.255.0). Gateway und DNS sind freiwillig; die Felder gelten nur bei fester Adresse.</p>
+    <div class="row">
+      <label class="grow">Gateway
+        <input type="text" name="gateway" value="{{.Form.Gateway}}" inputmode="decimal" autocapitalize="off" spellcheck="false">
+      </label>
+      <label class="grow">DNS 1
+        <input type="text" name="dns1" value="{{.Form.DNS1}}" inputmode="decimal" autocapitalize="off" spellcheck="false">
+      </label>
+      <label class="grow">DNS 2
+        <input type="text" name="dns2" value="{{.Form.DNS2}}" inputmode="decimal" autocapitalize="off" spellcheck="false">
+      </label>
+    </div>
+    <p class="hint">Nach „Übernehmen“ gilt die neue Einstellung 2 Minuten lang auf Probe: Unter der neuen Adresse anmelden und bestätigen, sonst kehrt das Terminal zur alten Einstellung zurück. Vorher wird geprüft, ob ein anderes Gerät die Adresse schon benutzt.</p>
+    <p class="hint">Andere Terminals kennen dieses Terminal unter seiner Adresse: Dort auf der Seite „Terminals“ die Adresse anpassen. Die HMI-Ziele müssen auch im neuen Netz erreichbar sein.</p>
+    <div class="actions"><button type="submit" class="btn primary">Übernehmen</button></div>
+  </form>
+  {{else}}
+  <p class="hint">Die Ethernet-Einstellung ist hier nicht verfügbar.</p>
+  {{end}}
+</section>
+{{end}}
 <section class="panel stack">
   <h2>WLAN</h2>
   <p>Eingestellt: {{if .WifiOff}}dauerhaft aus{{else}}an{{end}}</p>

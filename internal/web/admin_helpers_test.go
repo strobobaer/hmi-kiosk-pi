@@ -92,6 +92,7 @@ type adminEnv struct {
 	hw        string // Hardware-Kennung des Geräts, leer: nicht lesbar
 	tlsDir    string
 	backup    *fakeBackup
+	net       *fakeNet
 	checkPeer func(context.Context, config.Peer) coord.PeerState
 	mu        sync.Mutex
 	applied   []config.Config
@@ -117,7 +118,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 	}
 	e := &adminEnv{
 		t: t, dir: dir, store: config.Open(dir), box: box,
-		helper: &fakeHelper{}, update: &fakeUpdate{}, soak: &fakeSoak{}, backup: &fakeBackup{},
+		helper: &fakeHelper{}, update: &fakeUpdate{}, soak: &fakeSoak{}, backup: &fakeBackup{}, net: &fakeNet{},
 		clock: &fakeClock{t: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)},
 		eth:   true, logDir: t.TempDir(), tlsDir: t.TempDir(),
 	}
@@ -144,6 +145,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		Update:       e.update,
 		Soak:         e.soak,
 		Backup:       e.backup,
+		Net:          e.net,
 		HardwareID:   func() string { return e.hw },
 		TLSDir:       e.tlsDir,
 		KeyFile:      dir + "/secrets.key",

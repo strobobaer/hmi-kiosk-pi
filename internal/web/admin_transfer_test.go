@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -97,6 +98,7 @@ func TestExportImportKeepsDeviceIdentity(t *testing.T) {
 		c.SharedKeyEnc = enc
 		c.Network.WifiOff = true
 		c.Network.NTPServer = "quelle.ntp"
+		c.Network.Ethernet = config.EthernetCfg{Method: config.EthStatic, Address: "192.168.7.10", Prefix: 24, DNS: []string{"192.168.7.1"}}
 	})
 	blob := exportBlob(t, sb)
 
@@ -107,6 +109,7 @@ func TestExportImportKeepsDeviceIdentity(t *testing.T) {
 		c.Admin.PasswordHash = "fast$ziel-passwort-xy"
 		c.Network.BluetoothOff = true
 		c.Network.NTPServer = "ziel.ntp"
+		c.Network.Ethernet = config.EthernetCfg{Method: config.EthDHCP}
 	})
 	before := dst.cfg()
 	body := importBlob(t, db, blob, exportPW)
@@ -119,7 +122,8 @@ func TestExportImportKeepsDeviceIdentity(t *testing.T) {
 	if c.Admin.PasswordHash != "fast$ziel-passwort-xy" {
 		t.Error("Admin-Passwort geändert")
 	}
-	if c.Network != before.Network {
+	// Auch die Ethernet-Einstellung bleibt: Eine feste Adresse der Quelle gäbe einen Adresskonflikt.
+	if !reflect.DeepEqual(c.Network, before.Network) {
 		t.Errorf("Netzwerk ist Gerätezustand und bleibt: %+v", c.Network)
 	}
 	if c.Client.Quality != 9 || c.Kiosk.Layout != "3" || len(c.HMIs) != 2 {

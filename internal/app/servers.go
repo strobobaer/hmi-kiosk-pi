@@ -136,6 +136,7 @@ func (s *service) adminHandler() http.Handler {
 		Selftest:             s.adminSelftest,
 		Soak:                 s.soak,
 		Backup:               s.helper,
+		Net:                  s.helper,
 		HardwareID:           func() string { return s.hwID },
 		TLSDir:               filepath.Join(s.opts.DataDir, tlsDirName),
 		KeyFile:              filepath.Join(s.opts.DataDir, secretsFile),

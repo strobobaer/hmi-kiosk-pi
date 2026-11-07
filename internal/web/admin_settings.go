@@ -304,9 +304,15 @@ func (a *admin) handleKeySet(w http.ResponseWriter, r *http.Request, s sessionRe
 type networkData struct {
 	WifiOff, BluetoothOff bool
 	NTP                   string
+	Eth                   ethView
 }
 
 func (a *admin) renderNetwork(w http.ResponseWriter, s sessionRef, status int, errMsg string, ntpOverride *string) {
+	a.renderNetworkEth(w, s, status, errMsg, ntpOverride, nil)
+}
+
+// renderNetworkEth zeigt die Netzwerkseite; ethOverride hält eine abgelehnte Ethernet-Eingabe.
+func (a *admin) renderNetworkEth(w http.ResponseWriter, s sessionRef, status int, errMsg string, ntpOverride *string, ethOverride *ethForm) {
 	cfg, _, err := a.d.Store.Load()
 	if err != nil {
 		http.Error(w, "Konfiguration nicht lesbar", http.StatusInternalServerError)
@@ -316,7 +322,12 @@ func (a *admin) renderNetwork(w http.ResponseWriter, s sessionRef, status int, e
 	if ntpOverride != nil {
 		d.NTP = *ntpOverride
 	}
-	a.page(w, s, status, "network.html", "network", "Netzwerk", errMsg, d)
+	d.Eth = a.ethernetView(cfg.Network.Ethernet, ethOverride)
+	refresh := 0
+	if d.Eth.Pending {
+		refresh = ethRefreshSec
+	}
+	a.pageRefresh(w, s, status, "network.html", "network", "Netzwerk", errMsg, refresh, d)
 }
 
 func (a *admin) handleNetworkPage(w http.ResponseWriter, _ *http.Request, s sessionRef) {
