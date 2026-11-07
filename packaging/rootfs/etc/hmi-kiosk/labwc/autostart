@@ -1,0 +1,3 @@
+# Autostart der labwc-Sitzung im Kiosk: bewusst leer.
+# Eigener Ordner (labwc -C /etc/hmi-kiosk/labwc), damit kein Desktop-Autostart
+# (zum Beispiel die Taskleiste von Raspberry Pi OS Desktop) mitläuft.

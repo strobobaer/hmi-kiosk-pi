@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- labwc im Kiosk (Spec Abschnitt 6). Gestartet mit "labwc -C /etc/xdg/labwc". -->
+<!-- labwc im Kiosk (Spec Abschnitt 6). Gestartet mit "labwc -C /etc/hmi-kiosk/labwc". -->
 <labwc_config>
   <core>
     <decoration>server</decoration>

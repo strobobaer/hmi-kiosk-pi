@@ -50,7 +50,7 @@ run_session() {
 	labwc)
 		export XDG_SESSION_TYPE=wayland
 		# -C: nur die Konfiguration des Abbilds, nie eine aus dem Benutzerordner.
-		exec labwc -C /etc/xdg/labwc
+		exec labwc -C /etc/hmi-kiosk/labwc
 		;;
 	x11)
 		export XDG_SESSION_TYPE=x11

@@ -215,14 +215,37 @@ put() {
 	mv -f "$tmp" "$dst"
 }
 
+# Bis Version 0.1.1 lag die Kiosk-Konfiguration in /etc/xdg/labwc, dem Ordner des Desktops.
+# Eigene Dateien dort wieder entfernen und gesicherte Desktop-Dateien zurücklegen.
+restore_desktop_labwc() {
+	local f p marker
+	for f in rc.xml environment; do
+		p="/etc/xdg/labwc/$f"
+		case "$f" in
+		rc.xml) marker="labwc im Kiosk" ;;
+		environment) marker="Umgebung der labwc-Sitzung im Kiosk" ;;
+		esac
+		[ -f "$p" ] && grep -q "$marker" "$p" || continue
+		if [ -f "$p.vor-hmi-kiosk" ]; then
+			mv -f "$p.vor-hmi-kiosk" "$p"
+			msg "$p: Fassung des Desktops wiederhergestellt."
+		else
+			rm -f "$p"
+			msg "$p: alte Kiosk-Datei entfernt."
+		fi
+	done
+}
+
 install_system_files() {
 	local u
 	for u in $UNITS; do
 		put 644 "$HERE/rootfs/etc/systemd/system/$u" "/etc/systemd/system/$u"
 	done
 	put 644 "$HERE/rootfs/etc/systemd/system.conf.d/watchdog.conf" /etc/systemd/system.conf.d/watchdog.conf
-	put 644 "$HERE/rootfs/etc/xdg/labwc/rc.xml" /etc/xdg/labwc/rc.xml
-	put 644 "$HERE/rootfs/etc/xdg/labwc/environment" /etc/xdg/labwc/environment
+	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/rc.xml" /etc/hmi-kiosk/labwc/rc.xml
+	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/environment" /etc/hmi-kiosk/labwc/environment
+	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/autostart" /etc/hmi-kiosk/labwc/autostart
+	restore_desktop_labwc
 	put 644 "$HERE/rootfs/etc/xdg/openbox/rc.xml" /etc/xdg/openbox/rc.xml
 	put 644 "$HERE/rootfs/etc/chromium/policies/managed/hmi-kiosk.json" /etc/chromium/policies/managed/hmi-kiosk.json
 	put 644 "$HERE/rootfs/etc/pam.d/hmi-kiosk-session" /etc/pam.d/hmi-kiosk-session

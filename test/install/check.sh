@@ -60,7 +60,7 @@ sum_before=$(sha256sum $DATA/config.json | cut -d' ' -f1)
 
 state() {
 	(cd / && sha256sum etc/systemd/system/hmi-kiosk*.service etc/systemd/system/hmi-kiosk*.d/10-install.conf \
-		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session etc/xdg/labwc/rc.xml etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/hmi-kiosk")
+		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session etc/hmi-kiosk/labwc/rc.xml etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/hmi-kiosk")
 	find $DATA -printf '%p %l %u %m\n' | sort
 }
 
@@ -169,6 +169,22 @@ if echo "$out" | grep -q 'sudo reboot'; then ok "--disable-desktop: Hinweis auf 
 out=$(/bundle/install.sh --no-start --disable-desktop 2>&1)
 rc=$?
 if [ $rc -eq 0 ]; then ok "--disable-desktop ohne Desktop: Exit 0 (wiederholbar)"; else bad "--disable-desktop wiederholt: Exit $rc"; fi
+
+# 11. Desktop-Ordner von labwc: der Kiosk hat einen eigenen Ordner und lässt den Desktop in Ruhe.
+#     Simuliert eine Installation bis 0.1.1, die /etc/xdg/labwc überschrieben hatte.
+mkdir -p /etc/xdg/labwc
+printf 'wf-panel-pi &\n' >/etc/xdg/labwc/autostart
+printf '<desktop-rc/>\n' >/etc/xdg/labwc/rc.xml.vor-hmi-kiosk
+cp /bundle/rootfs/etc/hmi-kiosk/labwc/rc.xml /etc/xdg/labwc/rc.xml
+cp /bundle/rootfs/etc/hmi-kiosk/labwc/environment /etc/xdg/labwc/environment
+out=$(/bundle/install.sh --no-start --disable-desktop 2>&1)
+rc=$?
+if [ $rc -eq 0 ]; then ok "labwc-Ordner: Exit 0"; else bad "labwc-Ordner: Exit $rc"; echo "$out" | tail -n 5; fi
+check "Kiosk-Sitzung nutzt /etc/hmi-kiosk/labwc" grep -q 'labwc -C /etc/hmi-kiosk/labwc' /usr/local/bin/hmi-kiosk-session
+check "eigener Autostart ohne Befehle" bash -c '! grep -v "^#" /etc/hmi-kiosk/labwc/autostart | grep -q .'
+check "Desktop-Autostart unberührt" test "$(cat /etc/xdg/labwc/autostart)" = "wf-panel-pi &"
+check "rc.xml des Desktops wiederhergestellt" test "$(cat /etc/xdg/labwc/rc.xml)" = "<desktop-rc/>"
+check "alte Kiosk-environment im Desktop-Ordner entfernt" test ! -e /etc/xdg/labwc/environment
 
 
 echo

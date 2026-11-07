@@ -241,12 +241,12 @@ grep -Eq '^hmikiosk:[!*]' "$R/etc/shadow" || msg="$msg; Passwort nicht gesperrt"
 if [ -z "$msg" ]; then ok benutzer "hmikiosk UID $uid, Gruppen input video render, ohne Passwort"; else bad benutzer "${msg#; }"; fi
 
 # Fensterregeln: Remmina ohne Rahmen bei 0,48, darunter maximiert (Rand oben 48)
-lw=$(flat "$R/etc/xdg/labwc/rc.xml" 2>/dev/null || true)
+lw=$(flat "$R/etc/hmi-kiosk/labwc/rc.xml" 2>/dev/null || true)
 if printf '%s' "$lw" | grep -q '<margin top="48" */>' &&
 	printf '%s' "$lw" | grep -Eq '<windowRule identifier="org\.remmina\.Remmina"[^>]*serverDecoration="no"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>'; then
 	ok rc-labwc "Remmina ohne Rahmen bei 0,48, maximiert unter dem Rand von 48"
 else
-	bad rc-labwc "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/labwc/rc.xml"
+	bad rc-labwc "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/hmi-kiosk/labwc/rc.xml"
 fi
 ob=$(flat "$R/etc/xdg/openbox/rc.xml" 2>/dev/null || true)
 if printf '%s' "$ob" | grep -q '<margins> *<top>48</top>' &&

@@ -38,9 +38,10 @@ for u in hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hm
 done
 install -d -m 755 "${R}/etc/systemd/system.conf.d"
 install -m 644 -o root -g root "${FS}/etc/systemd/system.conf.d/watchdog.conf" "${R}/etc/systemd/system.conf.d/watchdog.conf"
-install -d -m 755 "${R}/etc/xdg/labwc" "${R}/etc/xdg/openbox"
-install -m 644 -o root -g root "${FS}/etc/xdg/labwc/rc.xml" "${R}/etc/xdg/labwc/rc.xml"
-install -m 644 -o root -g root "${FS}/etc/xdg/labwc/environment" "${R}/etc/xdg/labwc/environment"
+install -d -m 755 "${R}/etc/hmi-kiosk/labwc" "${R}/etc/xdg/openbox"
+install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/labwc/rc.xml" "${R}/etc/hmi-kiosk/labwc/rc.xml"
+install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/labwc/environment" "${R}/etc/hmi-kiosk/labwc/environment"
+install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/labwc/autostart" "${R}/etc/hmi-kiosk/labwc/autostart"
 install -m 644 -o root -g root "${FS}/etc/xdg/openbox/rc.xml" "${R}/etc/xdg/openbox/rc.xml"
 # Navigationssperre (Spezifikation 11): Chromium lädt nur die Kachelseite auf 127.0.0.1:8080.
 install -d -m 755 "${R}/etc/chromium/policies/managed"
