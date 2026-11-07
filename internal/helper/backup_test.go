@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -283,7 +284,7 @@ func TestBackupMissingSourceIsReported(t *testing.T) {
 	e.srv.Backup.ImageRelease = imageMarker(t)
 	cl := helperapi.New(startServer(t, e))
 	_, _, err := cl.BackupStream(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "SD-Karte") {
+	if err == nil || !strings.Contains(err.Error(), "Systemdatenträger") {
 		t.Fatalf("err: %v", err)
 	}
 }
@@ -734,5 +735,41 @@ func TestFindUSBSystemOnUSBDrive(t *testing.T) {
 	sysTree(t, sys, "platform/xhci/usb1/1-2/1-2:1.0/host1/target1:0:0/1:0:0:0", "sdb", "sdb1")
 	if dev, err := s.findUSB("sda"); err != nil || dev != "/dev/sdb1" {
 		t.Fatalf("zweiter Stick: %q %v", dev, err)
+	}
+}
+
+// Scheitert bootDisk (system leer), darf ein Laufwerk, das / oder /data trägt, nie als Ziel erscheinen.
+func TestFindUSBSystemUnknownExcludesMountedDrive(t *testing.T) {
+	linuxOnly(t)
+	s, sys := detectEnv(t)
+	sysTree(t, sys, usbPath, "sda", "sda1", "sda2", "sda3")
+	for i, p := range []string{"sda", "sda1", "sda2", "sda3"} {
+		writeFile(t, filepath.Join(sys, "class", "block", p, "dev"), fmt.Sprintf("8:%d\n", i))
+	}
+	writeFile(t, s.Backup.MountInfo, "22 1 8:2 / / ro - ext4 /dev/root ro\n23 22 8:1 / /boot/firmware ro - vfat /dev/sda1 ro\n24 22 8:3 / /data rw - ext4 /dev/sda3 rw\n")
+	if dev, err := s.findUSB(""); err == nil {
+		t.Fatalf("Systemlaufwerk angeboten: %q", dev)
+	}
+	sysTree(t, sys, "platform/xhci/usb1/1-2/1-2:1.0/host1/target1:0:0/1:0:0:0", "sdb", "sdb1")
+	writeFile(t, filepath.Join(sys, "class", "block", "sdb", "dev"), "8:16\n")
+	writeFile(t, filepath.Join(sys, "class", "block", "sdb1", "dev"), "8:17\n")
+	if dev, err := s.findUSB(""); err != nil || dev != "/dev/sdb1" {
+		t.Fatalf("zweiter Stick: %q %v", dev, err)
+	}
+	// Nur die untere Overlay-Ebene (/media/root-ro) auf sda2 genügt ebenfalls.
+	writeFile(t, s.Backup.MountInfo, "22 1 8:2 / /media/root-ro ro - ext4 /dev/sda2 ro\n")
+	if dev, err := s.findUSB(""); err != nil || dev != "/dev/sdb1" {
+		t.Fatalf("Overlay-Unterlage: %q %v", dev, err)
+	}
+}
+
+// Ist weder das Systemgerät bekannt noch eine Einhängeprüfung möglich, wird kein Laufwerk angeboten.
+func TestFindUSBRefusesWhenSystemUnknownAndNoMountInfo(t *testing.T) {
+	linuxOnly(t)
+	s, sys := detectEnv(t)
+	sysTree(t, sys, usbPath, "sdb", "sdb1")
+	_, err := s.findUSB("")
+	if err == nil || !strings.Contains(err.Error(), "Systemlaufwerk") {
+		t.Fatalf("err: %v", err)
 	}
 }

@@ -91,13 +91,13 @@ func (s *Server) checkReadOnly(devPath string) error {
 	for n := 1; n <= 2; n++ {
 		b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), partName(base, n), "dev"))
 		if err != nil {
-			return errors.New("Die Partitionen der SD-Karte ließen sich nicht prüfen: " + err.Error())
+			return errors.New("Die Partitionen des Systemdatenträgers ließen sich nicht prüfen: " + err.Error())
 		}
 		want[strings.TrimSpace(string(b))] = true
 	}
 	raw, err := os.ReadFile(s.Backup.mountInfo())
 	if err != nil {
-		return errors.New("Die Einhängepunkte der SD-Karte ließen sich nicht prüfen: " + err.Error())
+		return errors.New("Die Einhängepunkte des Systemdatenträgers ließen sich nicht prüfen: " + err.Error())
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		lf := strings.Fields(line)

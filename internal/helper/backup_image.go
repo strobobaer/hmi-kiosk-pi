@@ -153,7 +153,7 @@ func (s *Server) planCompact(ctx context.Context) (*compactPlan, *os.File, error
 
 func openCard(path string, mustBeDevice bool) (*os.File, error) {
 	fail := func(err error) (*os.File, error) {
-		return nil, errors.New("Die SD-Karte ließ sich nicht öffnen: " + err.Error())
+		return nil, errors.New("Der Systemdatenträger ließ sich nicht öffnen: " + err.Error())
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -173,7 +173,7 @@ func openCard(path string, mustBeDevice bool) (*os.File, error) {
 func (s *Server) measure(ctx context.Context, dev *os.File) (*compactPlan, error) {
 	size, err := dev.Seek(0, io.SeekEnd)
 	if err != nil {
-		return nil, errors.New("Die SD-Karte ließ sich nicht öffnen: " + err.Error())
+		return nil, errors.New("Der Systemdatenträger ließ sich nicht öffnen: " + err.Error())
 	}
 	sec := make([]byte, sectorSize)
 	if _, err := dev.ReadAt(sec, 0); err != nil {

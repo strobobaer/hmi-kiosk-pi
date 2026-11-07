@@ -555,4 +555,11 @@ Diese Liste ist die Abnahme am Gerät. Alles andere ist ohne Hardware geprüft (
 24. [ ] Beide Raspis im selben Netz mit gleichem Hostnamen und gleicher PARTUUID ohne Auffälligkeiten (H22).
 25. [ ] Übernahme, Sperre, Vorrang, Netztrennung und Stromausfall mit beiden Geräten (Abschnitt 10, H25).
 
+**Start von SSD oder USB-Laufwerk (Abschnitt 3, „Auf SSD oder USB-Laufwerk installieren“)**
+
+26. [ ] Bootloader-Startreihenfolge des Pi 5 auf „NVMe/USB Boot“ stellen (Raspberry Pi Imager → „Misc utility images“ → „Bootloader (Pi 5 family)“ → „NVMe/USB Boot“ auf eine SD-Karte, einmal starten; oder `sudo raspi-config` → „Advanced Options“ → „Boot Order“). Danach SD-Karte entfernen, falls die Reihenfolge sie bevorzugt. Ergebnis und Reihenfolge notieren.
+27. [ ] NVMe-SSD am PCIe-Anschluss: `dtparam=pciex1` steht im letzten `[all]`-Abschnitt von `config.txt` (das Abbild bringt die Zeile mit); das Gerät erscheint als `nvme0n1`, das Abbild startet, `/data` entsteht als `nvme0n1p3`, die Systempartition wächst nicht (Abbild mit eigener Datenpartition).
+28. [ ] Start von einem USB-Laufwerk: Gerät `sda`, Partitionen `sda1` bis `sda3`, erster Start wie auf der SD-Karte.
+29. [ ] Auf SSD und auf USB: SD-Sicherung (dateiweise und Abbild) und Wiederherstellung funktionieren; bei Systemlaufwerk am USB-Anschluss bietet die Sicherung dieses Laufwerk nie als Ziel an, ein zweiter Stick wird gefunden.
+
 Alle Punkte erledigt: Die Abweichungen in Abschnitt 14 der Spezifikation nachtragen, die alte Karte des ersten Terminals erst danach löschen.

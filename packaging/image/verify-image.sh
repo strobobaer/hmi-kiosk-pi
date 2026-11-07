@@ -152,11 +152,12 @@ if grep -q 'x-systemd.growfs' "$R/etc/fstab"; then msg="$msg; fstab enthält x-s
 if installed cloud-init; then msg="$msg; cloud-init installiert"; fi
 if [ -z "$msg" ]; then ok groesse-fest "keine Vergrößerung der Systempartition"; else bad groesse-fest "${msg#; }"; fi
 
-# PCIe-Anschluss für NVMe-SSD (Pi 5)
-if grep -Eq '^dtparam=pciex1[[:space:]]*$' "$B/config.txt"; then
-	ok pcie-nvme "config.txt enthält dtparam=pciex1"
+# PCIe-Anschluss für NVMe-SSD (Pi 5): die Zeile muss im letzten Abschnitt [all] (oder ohne Abschnitt) stehen
+final_all=$(awk '/^\[/ { sec = $0; blk = ""; next } { blk = blk $0 "\n" } END { if (sec == "" || sec == "[all]") printf "%s", blk }' "$B/config.txt")
+if printf '%s\n' "$final_all" | grep -Eq '^dtparam=pciex1[[:space:]]*$'; then
+	ok pcie-nvme "config.txt enthält dtparam=pciex1 im letzten [all]-Abschnitt"
 else
-	bad pcie-nvme "config.txt ohne dtparam=pciex1 (NVMe-SSD würde nicht erkannt)"
+	bad pcie-nvme "dtparam=pciex1 fehlt im letzten [all]-Abschnitt von config.txt (NVMe-SSD würde nicht erkannt)"
 fi
 
 # Erster Start

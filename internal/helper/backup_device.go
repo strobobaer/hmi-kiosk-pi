@@ -19,7 +19,7 @@ var (
 func (s *Server) bootDisk() (string, error) {
 	raw, err := os.ReadFile(s.Backup.mountInfo())
 	if err != nil {
-		return "", errors.New("Das Gerät der SD-Karte ließ sich nicht ermitteln: " + err.Error())
+		return "", errors.New("Das Systemlaufwerk ließ sich nicht ermitteln: " + err.Error())
 	}
 	source := ""
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -34,7 +34,7 @@ func (s *Server) bootDisk() (string, error) {
 	}
 	name, ok := strings.CutPrefix(source, "/dev/")
 	if !ok || !devNameRe.MatchString(name) {
-		return "", errors.New("Das Gerät der SD-Karte ist nicht erkennbar.")
+		return "", errors.New("Das Systemlaufwerk ist nicht erkennbar.")
 	}
 	return s.parentDisk(name)
 }
@@ -43,21 +43,64 @@ func (s *Server) bootDisk() (string, error) {
 func (s *Server) parentDisk(name string) (string, error) {
 	real, err := filepath.EvalSymlinks(filepath.Join(s.Backup.sysClass(), name))
 	if err != nil {
-		return "", errors.New("Das Gerät der SD-Karte ist in /sys nicht zu finden.")
+		return "", errors.New("Das Systemlaufwerk ist in /sys nicht zu finden.")
 	}
 	if _, err := os.Stat(filepath.Join(real, "partition")); err == nil {
 		real = filepath.Dir(real)
 	}
 	disk := filepath.Base(real)
 	if !devNameRe.MatchString(disk) {
-		return "", errors.New("Das Gerät der SD-Karte ist nicht erkennbar.")
+		return "", errors.New("Das Systemlaufwerk ist nicht erkennbar.")
 	}
 	return disk, nil
 }
 
+// systemDevNums liefert die Gerätenummern (major:minor), auf denen /, der Bootordner, /data oder die
+// untere Overlay-Ebene (/media/root-ro) eingehängt sind. ok ist falsch, wenn mountinfo nicht lesbar ist.
+func (s *Server) systemDevNums() (map[string]bool, bool) {
+	raw, err := os.ReadFile(s.Backup.mountInfo())
+	if err != nil {
+		return nil, false
+	}
+	set := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		lf := strings.Fields(line)
+		if len(lf) < 5 {
+			continue
+		}
+		mp := lf[4]
+		if mp == "/" || mp == s.Backup.bootMount() || mp == "/data" || mp == "/media/root-ro" || strings.HasPrefix(mp, "/media/root-ro/") {
+			set[lf[2]] = true
+		}
+	}
+	return set, true
+}
+
+// diskHoldsSystem sagt, ob das Gerät oder eine seiner Partitionen eine der Gerätenummern trägt.
+func (s *Server) diskHoldsSystem(realDir, disk string, nums map[string]bool) bool {
+	names := []string{disk}
+	if entries, err := os.ReadDir(realDir); err == nil {
+		for _, en := range entries {
+			if strings.HasPrefix(en.Name(), disk) {
+				names = append(names, en.Name())
+			}
+		}
+	}
+	for _, n := range names {
+		if b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), n, "dev")); err == nil && nums[strings.TrimSpace(string(b))] {
+			return true
+		}
+	}
+	return false
+}
+
 // findUSB sucht genau einen USB-Speicher (sdX, dessen /sys-Pfad über USB läuft, nicht das
-// Systemgerät system) und liefert dessen erste Partition, sonst das Gerät selbst.
+// Systemgerät system und kein Laufwerk, das /, /boot/firmware, /data oder die Overlay-Unterlage trägt) und liefert dessen erste Partition, sonst das Gerät selbst.
 func (s *Server) findUSB(system string) (string, error) {
+	nums, mountsOK := s.systemDevNums()
+	if system == "" && (!mountsOK || len(nums) == 0) {
+		return "", errors.New("Das Systemlaufwerk ließ sich nicht ermitteln. Deshalb wird kein USB-Laufwerk als Ziel angeboten.")
+	}
 	sysBlock := s.Backup.sysBlock()
 	entries, err := os.ReadDir(sysBlock)
 	if err != nil {
@@ -76,6 +119,9 @@ func (s *Server) findUSB(system string) (string, error) {
 		}
 		rel, err := filepath.Rel(sysRoot, real)
 		if err != nil || !strings.Contains("/"+filepath.ToSlash(rel), "/usb") {
+			continue
+		}
+		if s.diskHoldsSystem(real, name, nums) {
 			continue
 		}
 		found = append(found, filepath.Join(s.Backup.devDir(), firstPartition(real, name)))

@@ -884,7 +884,7 @@ func TestFilesUSBEndToEnd(t *testing.T) {
 	b.SysClassBlock = filepath.Join(root, "sys", "class", "block")
 	b.SysBlock = filepath.Join(root, "sys", "block")
 	b.UsbMount = mnt
-	writeFile(t, b.MountInfo, "")
+	writeFile(t, b.MountInfo, "22 1 179:2 / / ro - ext4 /dev/mmcblk9p2 ro\n35 22 179:1 / /boot/firmware ro - vfat /dev/mmcblk9p1 ro\n")
 	sysTree(t, filepath.Join(root, "sys"), usbPath, "sda", "sda1")
 	sysTree(t, filepath.Join(root, "sys"), mmcPath, "mmcblk9", "mmcblk9p1", "mmcblk9p2")
 	fe.ff.blkid["/dev/sda1"] = "exfat\n"

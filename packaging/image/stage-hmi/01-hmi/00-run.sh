@@ -77,9 +77,13 @@ grep -q 'consoleblank=0' "${CMDLINE}" || sed -i 's/$/ consoleblank=0/' "${CMDLIN
 grep -Eq '(^| )fsck.repair=yes( |$)' "${CMDLINE}" || sed -i 's/$/ fsck.repair=yes/' "${CMDLINE}"
 
 # PCIe-Anschluss des Pi 5 einschalten, damit eine NVMe-SSD erkannt wird; ohne SSD harmlos.
-# Ein erneut geöffneter Abschnitt [all] am Dateiende stellt sicher, dass die Zeile für alle Modelle gilt.
+# Die Zeile gehört in den letzten Abschnitt, wenn dieser [all] ist (oder in den Kopf ohne Abschnitt),
+# sonst gälte sie nur für ein Modell; ein erneut geöffnetes [all] am Dateiende ist gültig.
 CONFIG="${R}/boot/firmware/config.txt"
-if ! grep -Eq '^dtparam=pciex1[[:space:]]*$' "${CONFIG}"; then
+final_all_block() {
+	awk '/^\[/ { sec = $0; blk = ""; next } { blk = blk $0 "\n" } END { if (sec == "" || sec == "[all]") printf "%s", blk }' "$1"
+}
+if ! final_all_block "${CONFIG}" | grep -Eq '^dtparam=pciex1[[:space:]]*$'; then
 	printf '\n[all]\n# NVMe-SSD am PCIe-Anschluss des Pi 5\ndtparam=pciex1\n' >>"${CONFIG}"
 fi
 

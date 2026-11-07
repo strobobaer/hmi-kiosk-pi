@@ -419,7 +419,7 @@ func TestCompactImageMissingDevice(t *testing.T) {
 	c := newCompactEnv(t)
 	c.srv.Backup.Source = filepath.Join(t.TempDir(), "fehlt")
 	_, _, err := c.srv.openCompact(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "SD-Karte") {
+	if err == nil || !strings.Contains(err.Error(), "Systemdatenträger") {
 		t.Fatalf("err: %v", err)
 	}
 }
