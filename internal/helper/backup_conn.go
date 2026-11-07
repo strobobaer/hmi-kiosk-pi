@@ -71,7 +71,8 @@ func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
 		return
 	}
 	// Abbrechen löst auch ein blockiertes Schreiben.
-	defer context.AfterFunc(run.ctx, func() { c.Close() })()
+	stopClose := context.AfterFunc(run.ctx, func() { c.Close() })
+	defer stopClose()
 	// Der Dienst sendet nach der Anfrage nichts mehr; Lesefehler oder Ende heißt: er ist weg.
 	// So endet auch der Bau des Abbilds, bevor die erste Kopfzeile geschrieben ist.
 	c.SetReadDeadline(time.Time{})
@@ -118,8 +119,12 @@ func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
 		}
 		return err
 	}()
+	// run.end bricht run.ctx ab; ohne vorheriges stopClose schlösse das die Verbindung,
+	// bevor die Fehlermeldung geschrieben ist (der Dienst sähe nur EOF). Hat ein Abbruch
+	// sie schon geschlossen, gibt es niemanden mehr, dem wir antworten könnten.
+	open := stopClose()
 	run.end(err, "")
-	if err != nil && !headerSent {
+	if err != nil && !headerSent && open {
 		reply(c, err)
 	}
 }
