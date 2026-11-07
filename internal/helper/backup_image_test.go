@@ -53,7 +53,7 @@ func makeMBRCard(t *testing.T) testCard {
 	putEntry(sec, 2, 0x83, tOldP3Start, tOldP3Size)
 	putEntry(sec, 3, 0, 0, 0)
 	sec[510], sec[511] = 0x55, 0xaa
-	p := filepath.Join(t.TempDir(), "karte.img")
+	p := filepath.Join(t.TempDir(), "mmcblk9")
 	if err := os.WriteFile(p, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -117,6 +117,8 @@ func newCompactEnv(t *testing.T) *compactEnv {
 	mkdirs(t, c.run)
 	b := &e.srv.Backup
 	b.Source = c.card.path
+	b.MountInfo = filepath.Join(t.TempDir(), "mountinfo")
+	writeFile(t, b.MountInfo, roMountInfo)
 	b.DataDir = c.data
 	b.RunDir = c.run
 	b.ImageRelease = imageMarker(t)
@@ -487,7 +489,7 @@ func TestDataUsedRoundsToBlocksAndSkipsLinks(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a", "klein"), "x")
 	writeFile(t, filepath.Join(dir, "a", "fest"), strings.Repeat("y", 5000))
 	symlink(t, "/etc", filepath.Join(dir, "verweis"))
-	got, err := dataUsed(context.Background(), dir)
+	got, _, err := dataUsed(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -605,9 +607,10 @@ func TestCleanupStaleMountAndTemp(t *testing.T) {
 	writeFile(t, filepath.Join(b.RunDir, "anderes"), "bleibt")
 	writeFile(t, filepath.Join(b.UsbMount, "hmikiosk-T-2026-11-05-0907.img.gz.part"), "halb")
 	writeFile(t, filepath.Join(b.UsbMount, "hmikiosk-T-2026-11-04-0907.img.gz"), "fertig")
+	writeFile(t, filepath.Join(b.UsbMount, "fremd.part"), "bleibt")
 	victim := filepath.Join(root, "opfer")
 	writeFile(t, victim, "bleibt")
-	symlink(t, victim, filepath.Join(b.UsbMount, "link.part"))
+	symlink(t, victim, filepath.Join(b.UsbMount, "hmikiosk-link.img.gz.part"))
 	writeFile(t, b.MountInfo, "40 22 8:1 / "+b.UsbMount+" rw,nosuid,nodev,noexec - exfat /dev/sda1 rw\n"+bootInfo)
 
 	e.srv.CleanupStale(context.Background())
@@ -620,7 +623,7 @@ func TestCleanupStaleMountAndTemp(t *testing.T) {
 	for _, en := range entries {
 		names = append(names, en.Name())
 	}
-	if len(names) != 1 || names[0] != "hmikiosk-T-2026-11-04-0907.img.gz" {
+	if len(names) != 2 || names[0] != "fremd.part" || names[1] != "hmikiosk-T-2026-11-04-0907.img.gz" {
 		t.Errorf("Stick-Ordner: %v", names)
 	}
 	if got, _ := os.ReadFile(victim); string(got) != "bleibt" {

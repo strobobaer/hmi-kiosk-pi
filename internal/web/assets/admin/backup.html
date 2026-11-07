@@ -5,7 +5,7 @@
   {{if .Running}}
   <dl class="facts">
     <dt>Ziel</dt><dd>{{if .Download}}Download im Browser{{else}}{{.Target}}{{end}}</dd>
-    {{if .Preparing}}<dt>Stand</dt><dd>Die Datenpartition wird vorbereitet (kann einige Sekunden dauern).</dd>{{end}}
+    {{if .Preparing}}<dt>Stand</dt><dd>Die Datenpartition wird vorbereitet (das kann einige Minuten dauern).</dd>{{end}}
     {{if .Progress}}<dt>Fortschritt</dt><dd>{{.Progress}} ({{.Percent}} %)</dd>{{end}}
     {{if .Remaining}}<dt>Restzeit</dt><dd>{{.Remaining}}</dd>{{end}}
   </dl>
@@ -15,7 +15,7 @@
     <div class="actions"><button type="submit" class="btn danger">Abbrechen</button></div>
   </form>
   {{else if .Finished}}
-  <p class="msg ok">Die letzte Sicherung ist vollständig{{if .File}}: {{.File}}. Der Stick kann entfernt werden.{{else}} gesendet.{{end}}</p>
+  <p class="msg ok">{{if .File}}Die letzte Sicherung ist fertig: {{.File}}. Der Stick kann entfernt werden.{{else}}Die letzte Sicherung wurde heruntergeladen.{{end}}</p>
   {{else if .LastError}}
   <p class="msg err">Die letzte Sicherung ist fehlgeschlagen: {{.LastError}}</p>
   {{else}}
@@ -26,7 +26,7 @@
 {{if not .Running}}
 <section class="panel stack">
   <h2>Sicherung erstellen</h2>
-  <p class="hint">Kopie im laufenden Betrieb: sie entspricht einem Stand nach Stromausfall. Die Zielkarte muss mindestens 16 GB groß sein. Das Abbild passt auf jede Karte ab 16 GB und wächst beim ersten Start auf die ganze Karte. Es enthält alle Einstellungen, Passwörter und Schlüssel und muss vertraulich aufbewahrt werden. Es passt nur für dasselbe Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.</p>
+  <p class="hint">Kopie im laufenden Betrieb: sie entspricht einem Stand nach Stromausfall. Das Abbild passt auf jede Karte ab 16 GB; die Datenpartition wächst beim ersten Start auf die ganze Karte. Es enthält alle Einstellungen, Passwörter und Schlüssel und muss vertraulich aufbewahrt werden. Es passt nur für dasselbe Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.</p>
   {{if .Problem}}<p class="msg err">{{.Problem}}</p>
   {{else if .Expected}}<p class="hint">Erwartete Rohgröße des Abbilds: {{.Expected}} (entpackt; die Datei ist komprimiert kleiner).</p>{{end}}
   <form method="post" action="/admin/system/backup/download" class="stack" data-confirm="Die Sicherung jetzt als Download starten?">

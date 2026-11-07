@@ -93,7 +93,7 @@ Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesich
 
 **Erstellen** (Menü System, „SD-Sicherung“, Hinweise bestätigen):
 
-1. **Herunterladen:** Die Sicherung wird im Browser gespeichert. Das Terminal baut zuerst die Datenpartition auf (einige Sekunden), dann beginnt der Download. Die Seite zeigt den Fortschritt; „Abbrechen“ beendet ihn.
+1. **Herunterladen:** Die Sicherung wird im Browser gespeichert. Das Terminal baut zuerst die Datenpartition auf (bis zu einigen Minuten), dann beginnt der Download. Die Seite zeigt den Fortschritt; „Abbrechen“ beendet ihn.
 2. **Auf USB-Stick schreiben:** Stick am Terminal einstecken (genau einer), „Auf USB-Stick schreiben“. Erlaubt sind exFAT, ext4 und NTFS; FAT32 wird abgelehnt (Dateien über 4 GB). Es müssen mindestens 4 GB frei sein. Erst bei der Meldung „Der Stick kann entfernt werden“ abziehen.
 
 Während einer Sicherung sind Neustart, Update und Funkeinstellungen gesperrt; es läuft immer nur eine Sicherung. Die Kopie entsteht im laufenden Betrieb: Boot und System sind schreibgeschützt und damit stimmig, `/data` wird nicht eingefroren, die Kopie entspricht einem Stand nach Stromausfall (das Dateisystem wird beim Start geprüft und repariert, die Konfiguration wird atomar geschrieben). Reicht der freie Arbeitsspeicher nicht (Reserve 512 MB) oder sind die Daten zu groß, lehnt das Terminal ab und nennt den Grund.

@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -40,6 +41,11 @@ func (s *Server) CleanupStale(ctx context.Context) {
 	}
 }
 
+// isOwnPart: nur unsere halben Sicherungen (hmikiosk-*.img.gz.part), nie fremde Dateien auf dem Stick.
+func isOwnPart(name string) bool {
+	return strings.HasPrefix(name, "hmikiosk-") && strings.HasSuffix(name, ".img.gz.part")
+}
+
 // removeParts löscht .part-Einträge (Dateien oder Verweise, nie deren Ziele) im Ordner dir.
 func removeParts(dir string) {
 	entries, err := os.ReadDir(dir)
@@ -47,7 +53,7 @@ func removeParts(dir string) {
 		return
 	}
 	for _, en := range entries {
-		if !strings.HasSuffix(en.Name(), ".part") || en.IsDir() {
+		if !isOwnPart(en.Name()) || en.IsDir() {
 			continue
 		}
 		if err := os.Remove(filepath.Join(dir, en.Name())); err != nil {
@@ -70,4 +76,38 @@ func (s *Server) mounted(path string) bool {
 		}
 	}
 	return false
+}
+
+const errWritable = "Der Schreibschutz ist ausgeschaltet. Eine SD-Sicherung ist nur mit eingeschaltetem Schreibschutz möglich, sonst wäre die Kopie unbrauchbar."
+
+// checkReadOnly lehnt ab, wenn Partition 1 oder 2 der Karte irgendwo schreibbar eingehängt ist
+// (Schreibschutz aus): Dann wäre die Rohkopie nicht stimmig. Unter dem Overlay ist die untere
+// Ebene der Wurzel nur lesbar eingehängt.
+func (s *Server) checkReadOnly(devPath string) error {
+	raw, err := os.ReadFile(s.Backup.mountInfo())
+	if err != nil {
+		return errors.New("Die Einhängepunkte der SD-Karte ließen sich nicht prüfen: " + err.Error())
+	}
+	base := filepath.Base(devPath)
+	sep := ""
+	if base != "" && base[len(base)-1] >= '0' && base[len(base)-1] <= '9' {
+		sep = "p"
+	}
+	want := map[string]bool{"/dev/" + base + sep + "1": true, "/dev/" + base + sep + "2": true}
+	for _, line := range strings.Split(string(raw), "\n") {
+		left, right, ok := strings.Cut(line, " - ")
+		if !ok {
+			continue
+		}
+		lf, rf := strings.Fields(left), strings.Fields(right)
+		if len(lf) < 6 || len(rf) < 2 || !want[rf[1]] {
+			continue
+		}
+		for _, o := range strings.Split(lf[5], ",") {
+			if o == "rw" {
+				return errors.New(errWritable)
+			}
+		}
+	}
+	return nil
 }

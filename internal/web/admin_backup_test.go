@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"hmikiosk/internal/helperapi"
 )
@@ -280,7 +281,7 @@ func TestBackupPageShowsExpectedRawSize(t *testing.T) {
 	e, b := newLoggedIn(t)
 	e.backup.info = helperapi.BackupInfo{RawBytes: 3<<30 + 1<<29}
 	body := b.get("/admin/system/backup").Body.String()
-	wantContains(t, body, "Erwartete Rohgröße", "3,5 GB", "mindestens 16 GB")
+	wantContains(t, body, "Erwartete Rohgröße", "3,5 GB", "ab 16 GB")
 	wantNotContains(t, body, "disabled")
 }
 
@@ -316,4 +317,42 @@ func TestBackupPageRunningWithoutTotalShowsPreparation(t *testing.T) {
 	body := b.get("/admin/system/backup").Body.String()
 	wantContains(t, body, "wird vorbereitet", `http-equiv="refresh"`)
 	wantNotContains(t, body, "Fortschritt")
+}
+
+// Vor jedem Schreiben wird die Frist neu gesetzt: ein stehender Browser hält die Verbindung nicht ewig.
+func TestDeadlineWriterSetsDeadlineBeforeEachWrite(t *testing.T) {
+	var log []string
+	var last time.Time
+	dw := deadlineWriter{
+		w:   writerFunc(func(p []byte) (int, error) { log = append(log, "write"); return len(p), nil }),
+		set: func(t time.Time) error { log = append(log, "deadline"); last = t; return nil },
+		d:   time.Minute,
+	}
+	before := time.Now()
+	dw.Write([]byte("a"))
+	dw.Write([]byte("b"))
+	if strings.Join(log, ",") != "deadline,write,deadline,write" {
+		t.Fatalf("Reihenfolge: %v", log)
+	}
+	if d := last.Sub(before); d < 59*time.Second || d > 61*time.Second {
+		t.Errorf("Frist %v", d)
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+func TestBackupPageWording(t *testing.T) {
+	e, b := newLoggedIn(t)
+	body := b.get("/admin/system/backup").Body.String()
+	if n := strings.Count(body, "16 GB"); n != 1 {
+		t.Errorf("16 GB steht %d-mal", n)
+	}
+	e.backup.set(helperapi.BackupStatus{Running: true, Mode: "download", Target: "Browser"})
+	wantContains(t, b.get("/admin/system/backup").Body.String(), "einige Minuten")
+	e.backup.set(helperapi.BackupStatus{Mode: "download", Finished: true})
+	body = b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, "heruntergeladen")
+	wantNotContains(t, body, "vollständig gesendet", "ist vollständig gesendet")
 }

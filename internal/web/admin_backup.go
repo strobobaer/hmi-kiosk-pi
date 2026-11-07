@@ -25,6 +25,8 @@ const (
 	backupCallTimeout = 10 * time.Second
 	backupRefreshSec  = 3
 	// Der Helfer misst /data für die Größe; das dauert bei vielen Dateien.
+	// backupWriteIdle: so lange darf ein Schreibvorgang zum Browser stehen, bevor die Verbindung fällt.
+	backupWriteIdle   = 60 * time.Second
 	backupInfoTimeout = 40 * time.Second
 )
 
@@ -141,7 +143,7 @@ func (a *admin) handleBackupDownload(w http.ResponseWriter, r *http.Request, s s
 	h := w.Header()
 	h.Set("Content-Type", "application/gzip")
 	h.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
-	if _, err := io.Copy(w, body); err != nil {
+	if _, err := io.Copy(deadlineWriter{w: w, set: rc.SetWriteDeadline, d: backupWriteIdle}, body); err != nil {
 		return // der Browser ist weg; der Helfer sieht es am geschlossenen Strom
 	}
 	// Das Ende des Stroms beweist nicht, dass das Abbild vollständig ist (Abbruch im
@@ -199,4 +201,17 @@ func (a *admin) fillBackupInfo(v *backupView) {
 	case info.RawBytes > 0:
 		v.Expected = formatBytes(info.RawBytes)
 	}
+}
+
+// deadlineWriter setzt vor jedem Schreiben eine frische Frist: Die Antwort darf beliebig lange
+// dauern, aber ein stehender Browser hält die Verbindung (und den Strom zum Helfer) nicht fest.
+type deadlineWriter struct {
+	w   io.Writer
+	set func(time.Time) error
+	d   time.Duration
+}
+
+func (dw deadlineWriter) Write(p []byte) (int, error) {
+	_ = dw.set(time.Now().Add(dw.d))
+	return dw.w.Write(p)
 }

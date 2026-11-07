@@ -36,6 +36,11 @@ const (
 	// maxGrowBlocks: bis zu dieser Größe (2 TiB) lässt sich das Dateisystem online vergrößern.
 	maxGrowBlocks = (2 << 40) / fsBlockSize
 
+	// minInodes und inodeRatio: Inodes aus der Zahl der Einträge mit Reserve; feste Dichte,
+	// damit ein vergrößertes Dateisystem keine übergroßen Inode-Tabellen anlegt.
+	minInodes  = 16384
+	inodeRatio = 16384
+
 	tempPrefix = "hmi-kiosk-backup-"
 )
 
@@ -47,6 +52,7 @@ type compactPlan struct {
 	p2end    int64  // Sektoren
 	p3start  int64  // Sektoren, auf 1 MiB ausgerichtet
 	dataSize int64  // Bytes der Datenpartition, ein Vielfaches von 1 MiB
+	inodes   int64  // Zahl der Inodes (-N)
 	owner    dirAttr
 }
 
@@ -61,8 +67,8 @@ func imageSize(used int64) int64 {
 
 // dataUsed summiert die belegten Bytes unter root (Dateigrößen auf Blöcke aufgerundet,
 // Ordner und Verweise je ein Block). Verweise werden nie verfolgt.
-func dataUsed(ctx context.Context, root string) (int64, error) {
-	var total int64
+func dataUsed(ctx context.Context, root string) (int64, int64, error) {
+	var total, entries int64
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
@@ -83,6 +89,7 @@ func dataUsed(ctx context.Context, root string) (int64, error) {
 		if p == root {
 			return nil // die Wurzel steckt im Zuschlag
 		}
+		entries++
 		if fi.Mode().IsRegular() {
 			total += (fi.Size() + fsBlockSize - 1) / fsBlockSize * fsBlockSize
 		} else {
@@ -91,9 +98,9 @@ func dataUsed(ctx context.Context, root string) (int64, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("Die Datenpartition ließ sich nicht ausmessen: %v", err)
+		return 0, 0, fmt.Errorf("Die Datenpartition ließ sich nicht ausmessen: %v", err)
 	}
-	return total, nil
+	return total, entries, nil
 }
 
 func (s *Server) checkImageSystem() error {
@@ -123,6 +130,9 @@ func (s *Server) planCompact(ctx context.Context) (*compactPlan, *os.File, error
 	}
 	path, mustBeDevice, err := s.cardPath()
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.checkReadOnly(path); err != nil {
 		return nil, nil, err
 	}
 	dev, err := openCard(path, mustBeDevice)
@@ -174,7 +184,7 @@ func (s *Server) measure(ctx context.Context, dev *os.File) (*compactPlan, error
 		return nil, errBadPartitionTable
 	}
 
-	used, err := dataUsed(ctx, s.Backup.dataDir())
+	used, entries, err := dataUsed(ctx, s.Backup.dataDir())
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +212,7 @@ func (s *Server) measure(ctx context.Context, dev *os.File) (*compactPlan, error
 		return nil, fmt.Errorf("Die Datenpartition ließ sich nicht lesen: %v", err)
 	}
 	return &compactPlan{
-		mbr: sec, p2end: p2.end(), owner: owner, dataSize: data,
+		mbr: sec, p2end: p2.end(), owner: owner, dataSize: data, inodes: max(2*entries, minInodes),
 		p3start: (p2.end() + alignSectors - 1) / alignSectors * alignSectors,
 	}, nil
 }
@@ -260,6 +270,7 @@ func (s *Server) buildDataImage(ctx context.Context, p *compactPlan, path string
 	// Das Wurzelverzeichnis übernimmt mke2fs nicht aus -d: Besitzer per Option, Rechte danach.
 	opts := fmt.Sprintf("root_owner=%d:%d,resize=%d,lazy_itable_init=1,lazy_journal_init=1", p.owner.uid, p.owner.gid, maxGrowBlocks)
 	if err := s.exec(ctx, "mkfs.ext4", "-q", "-F", "-L", dataLabel, "-b", strconv.Itoa(fsBlockSize), "-I", "256", "-m", "1",
+		"-i", strconv.Itoa(inodeRatio), "-N", strconv.FormatInt(p.inodes, 10),
 		"-E", opts, "-d", s.Backup.dataDir(), path); err != nil {
 		return nil, fmt.Errorf("Die Datenpartition für die Sicherung ließ sich nicht erstellen: %v", err)
 	}

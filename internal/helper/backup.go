@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"sync"
@@ -25,7 +26,7 @@ const (
 
 const (
 	// openTimeout begrenzt den Bau des Abbilds (mkfs aus /data), infoTimeout das Ausmessen.
-	openTimeout = 10 * time.Minute
+	openTimeout = helperapi.BackupOpenTimeout
 	infoTimeout = 30 * time.Second
 )
 
@@ -182,6 +183,12 @@ func (r *backupRun) setTotal(n int64) {
 	r.b.mu.Unlock()
 }
 
+func (r *backupRun) total() int64 {
+	r.b.mu.Lock()
+	defer r.b.mu.Unlock()
+	return r.b.st.TotalBytes
+}
+
 func (r *backupRun) userCancelled() bool {
 	r.b.mu.Lock()
 	defer r.b.mu.Unlock()
@@ -245,6 +252,12 @@ func (s *Server) copyCard(run *backupRun, src io.Reader, w io.Writer) error {
 		if rerr != nil {
 			return errors.New("Die SD-Karte ließ sich nicht lesen: " + rerr.Error())
 		}
+	}
+	if err := run.ctx.Err(); err != nil {
+		return err
+	}
+	if got, want := run.b.read.Load(), run.total(); got != want {
+		return fmt.Errorf("Die SD-Karte lieferte nur %d von %d Bytes.", got, want)
 	}
 	if err := gz.Close(); err != nil {
 		return sinkError{err}

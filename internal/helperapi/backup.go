@@ -24,10 +24,15 @@ const (
 // MaxBackupNameLen ist die längste Terminalbezeichnung im Dateinamen.
 const MaxBackupNameLen = 40
 
+// BackupOpenTimeout begrenzt im Helfer den Bau des Abbilds (mkfs aus /data); der Client wartet
+// auf die Kopfzeile etwas länger.
 const (
-	// Der Helfer baut vor der Kopfzeile die kleine Datenpartition (mkfs aus /data).
-	backupHeaderTimeout = 5 * time.Minute
-	maxHeaderBytes      = 4096
+	BackupOpenTimeout   = 10 * time.Minute
+	BackupHeaderTimeout = BackupOpenTimeout + 30*time.Second
+)
+
+const (
+	maxHeaderBytes = 4096
 )
 
 // BackupStatus ist der Stand der SD-Sicherung im Helfer. Finished heißt: die letzte
@@ -118,7 +123,7 @@ func (c *Client) BackupStream(ctx context.Context) (size int64, body io.ReadClos
 		conn.Close()
 		return 0, nil, e
 	}
-	conn.SetDeadline(time.Now().Add(backupHeaderTimeout))
+	conn.SetDeadline(time.Now().Add(BackupHeaderTimeout))
 	req, _ := json.Marshal(map[string]string{"cmd": CmdBackupStream, "arg": ""})
 	if _, err := conn.Write(append(req, '\n')); err != nil {
 		return fail(c.ioErr(ctx, err))
