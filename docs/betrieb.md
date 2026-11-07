@@ -205,6 +205,30 @@ Solange der Schreibschutz aus ist, meldet die Admin-Seite unter System eine Warn
 3. Das Land für WLAN ist im Abbild nicht gesetzt. Das Funkmodul bleibt gesperrt, bis ein Land eingestellt ist. Dazu ist Zugriff auf das Gerät nötig (SSH-Abbild).
 4. Auch das Abschalten wirkt vollständig erst nach einem Neustart. Bluetooth verhält sich genauso.
 
+### Feste IP-Adresse (Ethernet)
+
+Menü „Netzwerk“, Abschnitt „Ethernet (IPv4)“. Er zeigt die Schnittstelle (auf dem Pi 5 `eth0`), ihre aktuelle Adresse und die gespeicherte Einstellung. „Nicht von dieser Seite verwaltet“ heißt: Es gilt die Einstellung des Systems (im Abbild DHCP).
+
+1. „Feste Adresse“ wählen, IP-Adresse und Präfix eintragen (Standard 24; die Netzmaske, z. B. `255.255.255.0`, geht auch). Gateway und DNS sind freiwillig. Für DHCP „Automatisch (DHCP)“ wählen.
+2. „Übernehmen“. Das Terminal prüft zuerst mit `arping`, ob ein anderes Gerät die Adresse schon benutzt. Wenn ja, bricht es ab: „Die Adresse … wird bereits von einem anderen Gerät benutzt.“ Während einer laufenden SD-Sicherung wird die Änderung abgelehnt.
+3. Nach etwa 2 Sekunden schaltet das Terminal um. Die alte Verbindung zur Admin-Seite bricht dabei ab.
+4. **Innerhalb von 2 Minuten** unter `https://<neue Adresse>:8443/admin/network` anmelden und im gelben Kasten „Bestätigen“ drücken. Erst dann ist die Einstellung gespeichert, auch über einen Neustart hinweg (im Abbild auf der Datenpartition, `/data/system/ethernet.json`). Bei DHCP vergibt der DHCP-Server die neue Adresse; dort nachsehen.
+5. Ohne Bestätigung stellt das Terminal nach 2 Minuten die alte Einstellung wieder her. „Sofort zurücksetzen“ tut das gleich. Startet der Helfer oder das Terminal während der Frist neu, gilt ebenfalls die alte Einstellung.
+
+Danach:
+
+- Andere Terminals kennen dieses Terminal unter seiner Adresse: dort unter „Terminals“ die Adresse ändern.
+- Die HMIs müssen im neuen Netz erreichbar sein (Kacheln prüfen).
+- Der Browser zeigt die bekannte Zertifikatswarnung erneut: Das Terminal ergänzt sein Zertifikat um die neue Adresse.
+- Der Import einer Konfiguration übernimmt die Ethernet-Einstellung nicht (wie WLAN, Bluetooth und NTP); eine feste Adresse gehört zu genau einem Gerät.
+
+**Ausgesperrt?**
+
+- Während der Frist: 2 Minuten warten, dann gilt die alte Adresse wieder.
+- Nach einer Bestätigung mit falschen Werten (z. B. falsches Gateway, Netz später umgebaut): Einen Laptop direkt oder am selben Switch mit einer Adresse im neuen Netz verbinden und die Admin-Seite unter der festen Adresse öffnen; dort „Automatisch (DHCP)“ wählen. Der Browser am Bildschirm des Terminals hilft nicht: Er zeigt wegen der Navigationssperre nur die Kachelseite, nicht `https://localhost:8443`. Auf einem System ohne SD-Abbild (install.sh) mit Desktop-Zugang geht `https://localhost:8443/admin/network` am Gerät selbst.
+- Letzter Ausweg: Die Datei `system/ethernet.json` auf der Datenpartition löschen (Karte an einem Linux-Rechner, oder SSH-Abbild: `sudo rm /data/system/ethernet.json`), danach neu starten. Ohne die Datei gilt die Einstellung des Systems (im Abbild DHCP).
+- Eine dateiweise SD-Sicherung oder ein Abbild nimmt die feste Adresse mit. Die Kopie auf einem zweiten Gerät zuerst getrennt vom Original starten (z. B. direkt am Laptop) und dort DHCP oder eine andere Adresse einstellen, sonst gibt es einen Adresskonflikt.
+
 ### Ersatzkarte
 
 Bei defekter Karte:
