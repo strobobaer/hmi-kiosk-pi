@@ -84,7 +84,10 @@ type AdminDeps struct {
 	Selftest     func(ctx context.Context) []SelftestStep
 	Soak         SoakAPI
 	Backup       BackupAPI
-	Clock        coord.Clock
+	// HardwareID liefert die Kennung des Geräts (leer: nicht lesbar), TLSDir den Ordner des Zertifikats.
+	HardwareID func() string
+	TLSDir     string
+	Clock      coord.Clock
 }
 
 const formBodyLimit = 64 << 10
@@ -215,6 +218,10 @@ func (a *admin) routes() []route {
 		post("/admin/network/bt-off", a.handleBtOff),
 		post("/admin/network/bt-on", a.handleBtOn),
 
+		get(pathMaintenance, a.handleMaintenancePage),
+		post(pathMaintenance+"/replace", a.handleMaintenanceReplace),
+		post(pathMaintenance+"/new", a.handleMaintenanceNew),
+
 		get("/admin/system", a.handleSystemPage),
 		get("/admin/system/log", a.handleLogDownload),
 		get("/admin/system/selftest.txt", a.handleSelftestDownload),
@@ -284,6 +291,10 @@ func (a *admin) wrap(rt route) http.Handler {
 		s, ok := a.sessionFrom(r)
 		if !ok {
 			redirect(w, r, "/admin/login")
+			return
+		}
+		if a.inMaintenance(cfg) && !maintenancePaths[r.URL.Path] {
+			redirect(w, r, pathMaintenance)
 			return
 		}
 		if rt.kind == routeUpload {
@@ -428,7 +439,7 @@ func (a *admin) updateLocked(change func(*config.Config) error) error {
 
 var adminPageNames = []string{
 	"login.html", "setup.html", "hmis.html", "hmi_edit.html", "client.html",
-	"kiosk.html", "terminals.html", "network.html", "system.html", "backup.html",
+	"kiosk.html", "terminals.html", "network.html", "system.html", "backup.html", "maintenance.html",
 }
 
 func parseAdminPages(sub fs.FS) map[string]*template.Template {

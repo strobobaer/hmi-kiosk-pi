@@ -16,14 +16,14 @@
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button type="submit" class="btn ghost">Abmelden</button>
   </form>
-  <nav class="nav" aria-label="Bereiche">
+  {{if ne .Section "maintenance"}}<nav class="nav" aria-label="Bereiche">
     <a href="/admin/hmis"{{if eq .Section "hmis"}} aria-current="page"{{end}}>HMIs</a>
     <a href="/admin/client"{{if eq .Section "client"}} aria-current="page"{{end}}>Client</a>
     <a href="/admin/kiosk"{{if eq .Section "kiosk"}} aria-current="page"{{end}}>Kiosk</a>
     <a href="/admin/terminals"{{if eq .Section "terminals"}} aria-current="page"{{end}}>Terminals</a>
     <a href="/admin/network"{{if eq .Section "network"}} aria-current="page"{{end}}>Netzwerk</a>
     <a href="/admin/system"{{if eq .Section "system"}} aria-current="page"{{end}}>System</a>
-  </nav>
+  </nav>{{end}}
   {{end}}
 </header>
 <main class="main{{if not .LoggedIn}} narrow{{end}}">

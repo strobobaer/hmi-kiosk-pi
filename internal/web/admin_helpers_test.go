@@ -88,6 +88,8 @@ type adminEnv struct {
 	probe    func(context.Context, config.HMI) rfb.ProbeResult
 	selftest func(context.Context) []SelftestStep
 	soak     *fakeSoak
+	hw       string // Hardware-Kennung des Geräts, leer: nicht lesbar
+	tlsDir   string
 	backup   *fakeBackup
 	mu       sync.Mutex
 	applied  []config.Config
@@ -115,7 +117,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		t: t, dir: dir, store: config.Open(dir), box: box,
 		helper: &fakeHelper{}, update: &fakeUpdate{}, soak: &fakeSoak{}, backup: &fakeBackup{},
 		clock: &fakeClock{t: time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)},
-		eth:   true, logDir: t.TempDir(),
+		eth:   true, logDir: t.TempDir(), tlsDir: t.TempDir(),
 	}
 	e.a = newAdmin(AdminDeps{
 		Store: e.store, Box: e.box,
@@ -140,6 +142,8 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		Update:       e.update,
 		Soak:         e.soak,
 		Backup:       e.backup,
+		HardwareID:   func() string { return e.hw },
+		TLSDir:       e.tlsDir,
 		Selftest: func(ctx context.Context) []SelftestStep {
 			if e.selftest != nil {
 				return e.selftest(ctx)

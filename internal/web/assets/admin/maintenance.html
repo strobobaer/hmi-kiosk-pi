@@ -1,0 +1,35 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <p>Die Karte dieses Terminals läuft auf einem anderen Gerät als dem, auf dem sie eingerichtet wurde. Bis hier entschieden ist, sind die Kacheln gesperrt, und das Terminal stimmt sich nicht mit anderen Terminals ab.</p>
+  <p>Bisher eingerichtet als: <strong>{{.OldName}}</strong> ({{.OldRole}})<br>
+  Hardware-Kennung bisher: <code>{{.OldHW}}</code><br>
+  Hardware-Kennung dieses Geräts: <code>{{.NewHW}}</code></p>
+</section>
+
+<form method="post" action="/admin/maintenance/replace" class="panel stack" data-confirm="Dieses Gerät als Ersatz übernehmen? Der Dienst startet neu.">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Als Ersatz für {{.OldName}} übernehmen</h2>
+  <p>Kennung, Name und Rolle bleiben erhalten. Das Terminal tritt an die Stelle des alten Geräts.</p>
+  <p class="msg err">Das alte Gerät muss außer Betrieb sein, sonst arbeiten zwei Terminals mit derselben Kennung.</p>
+  <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das alte Gerät ist außer Betrieb</label>
+  <div class="actions"><button type="submit" class="btn primary">Als Ersatz übernehmen</button></div>
+</form>
+
+<form method="post" action="/admin/maintenance/new" class="panel stack" data-confirm="Dieses Gerät als neues Terminal einrichten? Der Dienst startet neu.">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Als neues Terminal einrichten</h2>
+  <p>Das Gerät bekommt eine neue Kennung und arbeitet neben dem alten. Einstellungen, HMIs und der gemeinsame Schlüssel bleiben. Das alte Terminal trägt der Admin bei Bedarf selbst in die Liste der anderen Terminals ein.</p>
+  <label>Name
+    <input type="text" name="name" value="{{.Name}}" maxlength="120" required>
+  </label>
+  <label>Rolle
+    <select name="role">
+      <option value="normal"{{if eq .Role "normal"}} selected{{end}}>Normal</option>
+      <option value="primary"{{if eq .Role "primary"}} selected{{end}}>Primär</option>
+    </select>
+  </label>
+  <div class="actions"><button type="submit" class="btn primary">Als neues Terminal einrichten</button></div>
+</form>
+{{end}}
+{{end}}
