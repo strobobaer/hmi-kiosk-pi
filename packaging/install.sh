@@ -435,7 +435,7 @@ main() {
 	fi
 	msg "Fertig. Die Admin-Seite ist unter https://<Adresse dieses Geräts>:8443 erreichbar, sobald der Dienst läuft."
 	msg "Kein Schreibschutz und keine eigene Datenpartition: das ist ein System ohne SD-Abbild. Der Watchdog wirkt nach dem nächsten Neustart."
-	msg "Hinweis: Die Netzwerk-Kennung (hmi-kiosk-identity) gibt einer Kopie dieses Systems auf anderer Hardware beim ersten Start eine eigene Maschinen-ID und einen eigenen Rechnernamen; hmi-kiosk-grow-root vergrößert die Wurzel auf einer größeren Karte. Beides wirkt nach dem Neustart."
+	msg "Hinweis: Die Netzwerk-Kennung (hmi-kiosk-identity) gibt einer Kopie dieses Systems auf anderer Hardware beim ersten Start eine eigene Maschinen-ID und einen eigenen Rechnernamen; sie ist bereits eingerichtet. hmi-kiosk-grow-root vergrößert die Wurzel einer Kopie auf einer größeren Karte beim Start."
 }
 
 main

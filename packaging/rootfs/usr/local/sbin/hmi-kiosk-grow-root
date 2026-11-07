@@ -43,10 +43,12 @@ grow_root() {
 	parent=$(dirname "$sysdir")
 	disk=$(basename "$parent")
 	supported=0
+	set -f # Muster nicht gegen den aktuellen Ordner auflösen
 	for pat in $DISKS; do
 		# shellcheck disable=SC2254
 		case $disk in $pat) supported=1 ;; esac
 	done
+	set +f
 	if [ "$supported" != 1 ]; then
 		log "$disk wird nicht unterstützt (nur $DISKS); keine Vergrößerung"
 		return 0
