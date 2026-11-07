@@ -119,7 +119,7 @@ Eine SD-Sicherung läuft auch in einem **anderen** Raspberry Pi: als Ersatz für
    - **Als neues Terminal einrichten:** Das Gerät bekommt eine neue Terminal-Kennung, Name und Rolle werden neu angegeben (Regeln wie unter „Terminals“; der Name darf keinem Eintrag unter „Andere Terminals“ entsprechen). Das alte Terminal wird **nicht** automatisch eingetragen: Bei Bedarf unter „Terminals“ als anderes Terminal ergänzen, und auf dem alten Terminal das neue.
 4. Nach der Wahl wird die Konfiguration gespeichert, das Zertifikat der Admin-Seite neu erzeugt (der Browser warnt einmal erneut) und der Dienst neu gestartet; danach erneut anmelden. Ist der Neustart nicht möglich, steht ein Hinweis da: das Terminal dann neu starten. Der Wartungsmodus endet mit dem Speichern.
 
-**Rechnername und Netzwerk-Kennung:** Zwei Geräte mit demselben Rechnernamen und derselben Maschinen-ID (`/etc/machine-id`, daraus bildet der DHCP-Client seine Kennung) stritten im Netz um dieselbe Adresse. Darum läuft im SD-Abbild bei jedem Start vor dem Netzwerk der Dienst `hmi-kiosk-identity`. Er hält die Identität des Geräts in `/data/system/identity` fest (Seriennummer, Maschinen-ID, Rechnername):
+**Rechnername und Netzwerk-Kennung:** Zwei Geräte mit demselben Rechnernamen und derselben Maschinen-ID (`/etc/machine-id`, daraus bildet der DHCP-Client seine Kennung) würden sich im Netz um dieselbe Adresse streiten. Darum läuft im SD-Abbild bei jedem Start vor dem Netzwerk der Dienst `hmi-kiosk-identity`. Er hält die Identität des Geräts in `/data/system/identity` fest (Seriennummer, Maschinen-ID, Rechnername):
 
 | Fall | Was geschieht |
 |---|---|
@@ -130,6 +130,10 @@ Eine SD-Sicherung läuft auch in einem **anderen** Raspberry Pi: als Ersatz für
 Der Dienst ist unabhängig vom Wartungsmodus und blockiert den Start nie; Meldungen stehen im Journal (`journalctl -u hmi-kiosk-identity`). Die Datei wird nur beachtet, wenn `/data/system` ein echter, root gehörender Ordner ist und die Datei darin ebenso; sonst geschieht nichts. Bei einer Installation mit `install.sh` (kein Abbild, kein Overlay) gibt es diesen Dienst nicht; dort den Rechnernamen von Hand ändern, wenn die Installation geklont wird.
 
 **Der Konfigurations-Export** übernimmt die Hardware-Kennung nicht, sie bleibt lokal wie Name, Kennung und Rolle.
+
+**Sicherungen aus älteren Versionen:** Eine Sicherung, die vor dieser Version erstellt wurde, enthält keine Hardware-Kennung. Auf einem anderen Gerät zurückgespielt, hält das Terminal dieses Gerät beim Start für das Original: Es gibt keinen Wartungsmodus. Soll es ein neues Terminal sein, es von Hand einrichten: unter „Terminals“ neuen Namen setzen und Rolle prüfen (die Terminal-Kennung lässt sich dort nicht ändern; läuft das Original weiter, entspricht das Gerät in der Abstimmung dem Original, bis es als neues Terminal angelegt wird).
+
+**Systeme ohne Raspberry Pi** (PC, Container): Der Dienst liest dort die DMI-Produkt-UUID. Sie ist oft nur für root lesbar oder fehlt; dann gibt es keine Erkennung, und die Seite System zeigt den Hinweis zur nicht lesbaren Hardware-Kennung.
 
 ### Schreibschutz (Overlay) ausschalten
 
