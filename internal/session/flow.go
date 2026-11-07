@@ -127,7 +127,7 @@ func (m *Manager) onProbe(a *attempt, r rfb.ProbeResult) {
 	case r.AuthRejected:
 		a.authRejected = true
 		if m.d.MarkAuthFailed != nil {
-			go m.d.MarkAuthFailed(a.hmi.ID)
+			go m.d.MarkAuthFailed(a.hmi.ID, a.hmi.PasswordEnc)
 		}
 		m.perm.haltForPassword(a.hmi)
 		m.end(a, authFailedNotice, false)

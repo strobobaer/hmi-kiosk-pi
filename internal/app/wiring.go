@@ -245,8 +245,9 @@ func remoteIsWifi(r *http.Request) bool {
 
 // markAuthFailed vermerkt ein abgelehntes VNC-Passwort in der Konfiguration. Es
 // läuft nie in der Zustands-Goroutine des Automaten: Apply ruft ihn selbst.
-// Eine unlesbare oder durch den Rückfall ersetzte Konfiguration bleibt unberührt.
-func (s *service) markAuthFailed(id string) {
+// Eine unlesbare oder durch den Rückfall ersetzte Konfiguration bleibt unberührt,
+// ebenso ein HMI, dessen Passwort sich seit der Prüfung (passwordEnc) geändert hat.
+func (s *service) markAuthFailed(id, passwordEnc string) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	cfg, info, err := s.store.Load()
@@ -256,6 +257,10 @@ func (s *service) markAuthFailed(id string) {
 	}
 	i := slices.IndexFunc(cfg.HMIs, func(h config.HMI) bool { return h.ID == id })
 	if i < 0 || cfg.HMIs[i].AuthFailed {
+		return
+	}
+	if cfg.HMIs[i].PasswordEnc != passwordEnc {
+		log.Printf("Markierung „Passwort abgelehnt“ für HMI %q verworfen: Passwort wurde inzwischen geändert", id)
 		return
 	}
 	cfg.HMIs[i].AuthFailed = true

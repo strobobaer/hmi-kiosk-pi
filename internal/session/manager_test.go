@@ -245,6 +245,7 @@ type harness struct {
 	ramErr      error
 	probes      int
 	marked      []string
+	markedEnc   []string
 	cleanups    int
 	cancelRun   context.CancelFunc
 	onEnd       func(Ended)
@@ -312,10 +313,11 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 		},
 		Screen: func() (int, int) { return 1920, 1080 },
 		OnEnd:  h.onEnd,
-		MarkAuthFailed: func(id string) {
+		MarkAuthFailed: func(id, passwordEnc string) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.marked = append(h.marked, id)
+			h.markedEnc = append(h.markedEnc, passwordEnc)
 			h.cfg.HMIs = slices.Clone(h.cfg.HMIs)
 			for i := range h.cfg.HMIs {
 				if h.cfg.HMIs[i].ID == id {

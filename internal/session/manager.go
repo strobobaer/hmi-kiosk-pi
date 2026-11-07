@@ -47,8 +47,9 @@ type Deps struct {
 	// Blocked liefert eine Meldung, solange kein Sitzungsstart erlaubt ist (Dauerprüfung); nil heißt immer erlaubt.
 	Blocked func() string
 	// MarkAuthFailed vermerkt in der Konfiguration, dass das HMI das Passwort abgelehnt hat; nil heißt nichts.
+	// passwordEnc ist das verschlüsselte Passwort der Prüfung: Ist es inzwischen ein anderes, unterbleibt die Markierung.
 	// Läuft in eigener Goroutine, weil das Speichern die Zustands-Goroutine ruft.
-	MarkAuthFailed func(id string)
+	MarkAuthFailed func(id, passwordEnc string)
 }
 
 // ErrPasswordMissing meldet ein VNC-Passwort, das fehlt oder sich nicht öffnen lässt.

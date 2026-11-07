@@ -57,8 +57,28 @@ func TestMarkAuthFailedIgnoresUnknownHMI(t *testing.T) {
 	f := newFixture(t)
 	f.saveConfig(oneHMI)
 	f.start()
-	f.s.markAuthFailed("gibtsnicht")
+	f.s.markAuthFailed("gibtsnicht", "")
 	if storedHMI(t, f, "presse").AuthFailed {
 		t.Fatal("falsches HMI markiert")
+	}
+}
+
+// Hat der Admin das Passwort geändert, während die Prüfung lief, gilt das neue
+// Passwort nicht als abgelehnt.
+func TestMarkAuthFailedSkipsChangedPassword(t *testing.T) {
+	f := newFixture(t)
+	old, cur := f.seal("alt"), f.seal("neu")
+	f.saveConfig(func(c *config.Config) {
+		oneHMI(c)
+		c.HMIs[0].PasswordEnc = cur
+	})
+	f.start()
+	f.s.markAuthFailed("presse", old)
+	if storedHMI(t, f, "presse").AuthFailed || f.s.config().HMIs[0].AuthFailed {
+		t.Fatal("geändertes Passwort als abgelehnt markiert")
+	}
+	f.s.markAuthFailed("presse", cur)
+	if !storedHMI(t, f, "presse").AuthFailed || !f.s.config().HMIs[0].AuthFailed {
+		t.Fatal("abgelehntes aktuelles Passwort nicht markiert")
 	}
 }

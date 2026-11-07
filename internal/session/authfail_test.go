@@ -181,3 +181,24 @@ func TestLockoutDoesNotGrowReconnectBackoff(t *testing.T) {
 		t.Fatalf("Wartezeit gewachsen: %q", s.Notice)
 	}
 }
+
+// Die Markierung nennt das verschlüsselte Passwort, mit dem geprüft wurde, damit
+// ein inzwischen geändertes Passwort nicht als abgelehnt gilt.
+func TestRejectedPasswordMarkCarriesProbedPassword(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.probe = rejectedProbe()
+		h.cfg.HMIs[0].PasswordEnc = "enc-alt"
+	})
+	h.open("a")
+	h.waitNotice(StateTiles, authFailedNotice)
+	deadline := time.Now().Add(guard)
+	for len(h.markedIDs()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	h.mu.Lock()
+	got := slices.Clone(h.markedEnc)
+	h.mu.Unlock()
+	if !slices.Equal(got, []string{"enc-alt"}) {
+		t.Fatalf("Passwort der Markierung %v", got)
+	}
+}
