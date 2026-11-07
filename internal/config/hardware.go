@@ -15,3 +15,18 @@ func NewTerminalID() string { return newID() }
 func InMaintenance(c Config, currentHardwareID string) bool {
 	return c.Terminal.MaintenanceManual || HardwareChanged(c.Terminal.HardwareID, currentHardwareID)
 }
+
+// HasSealedValues meldet, ob die Konfiguration mit der Schlüsseldatei verschlüsselte
+// Werte enthält (VNC-Passwörter, gemeinsamer Schlüssel); ein neuer Schlüssel machte
+// sie unlesbar.
+func (c Config) HasSealedValues() bool {
+	if c.SharedKeyEnc != "" {
+		return true
+	}
+	for _, h := range c.HMIs {
+		if h.PasswordEnc != "" {
+			return true
+		}
+	}
+	return false
+}

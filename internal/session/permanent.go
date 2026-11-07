@@ -76,6 +76,10 @@ func (m *Manager) afterPermanentEnd(a *attempt, notice string, operator bool, no
 	if !a.permanent {
 		return false
 	}
+	// Gesperrt (Wartungsmodus, Dauerprüfung): zu den Kacheln statt neu verbinden.
+	if m.blocked() {
+		return false
+	}
 	if operator {
 		p.halted = true
 		p.backoff = 0

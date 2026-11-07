@@ -6,21 +6,30 @@
   <p>Bisher eingerichtet als: <strong>{{.OldName}}</strong> ({{.OldRole}})<br>
   Hardware-Kennung bisher: <code>{{.OldHW}}</code><br>
   Hardware-Kennung dieses Geräts: <code>{{.NewHW}}</code></p>
+  {{if .CanCancel}}
+  <form method="post" action="/admin/maintenance/cancel" class="stack" data-confirm="Den Wartungsmodus beenden? Alles bleibt wie bisher.">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="actions"><button type="submit" class="btn">Wartungsmodus beenden</button></div>
+  </form>
+  {{end}}
 </section>
 
 <form method="post" action="/admin/maintenance/replace" class="panel stack" data-confirm="Dieses Gerät als Ersatz übernehmen? Der Dienst startet neu.">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <h2>Als Ersatz für {{.OldName}} übernehmen</h2>
-  <p>Kennung, Name und Rolle bleiben erhalten. Das Terminal tritt an die Stelle des alten Geräts.</p>
+  {{if .Manual}}<p>Kennung, Name und Rolle von {{.OldName}} bleiben erhalten. Dieses Gerät tritt an die Stelle des Terminals, dessen Einstellungen auf dieser Karte liegen.</p>
+  <p class="msg err">Das Terminal {{.OldName}} muss außer Betrieb sein, sonst arbeiten zwei Terminals mit derselben Kennung.</p>
+  <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das Terminal {{.OldName}} ist außer Betrieb</label>
+  {{else}}<p>Kennung, Name und Rolle bleiben erhalten. Das Terminal tritt an die Stelle des alten Geräts.</p>
   <p class="msg err">Das alte Gerät muss außer Betrieb sein, sonst arbeiten zwei Terminals mit derselben Kennung.</p>
-  <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das alte Gerät ist außer Betrieb</label>
+  <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das alte Gerät ist außer Betrieb</label>{{end}}
   <div class="actions"><button type="submit" class="btn primary">Als Ersatz übernehmen</button></div>
 </form>
 
 <form method="post" action="/admin/maintenance/new" class="panel stack" data-confirm="Dieses Gerät als neues Terminal einrichten? Der Dienst startet neu.">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <h2>Als neues Terminal einrichten</h2>
-  <p>Das Gerät bekommt eine neue Kennung und arbeitet neben dem alten. Einstellungen, HMIs und der gemeinsame Schlüssel bleiben. Das alte Terminal trägt der Admin bei Bedarf selbst in die Liste der anderen Terminals ein.</p>
+  <p>Das Gerät bekommt eine neue Kennung und arbeitet neben {{if .Manual}}{{.OldName}}{{else}}dem alten{{end}}. Einstellungen, HMIs und der gemeinsame Schlüssel bleiben. {{if .Manual}}Das Terminal {{.OldName}}{{else}}Das alte Terminal{{end}} trägt der Admin bei Bedarf selbst in die Liste der anderen Terminals ein.</p>
   <label>Name
     <input type="text" name="name" value="{{.Name}}" maxlength="120" required>
   </label>

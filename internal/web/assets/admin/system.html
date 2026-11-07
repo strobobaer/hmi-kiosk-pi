@@ -20,14 +20,15 @@
     <dt>Update-Schlüssel</dt>
     <dd>{{if .Keys.Fingerprint}}Fingerabdruck <code>{{.Keys.Fingerprint}}</code>{{else}}kein Schlüssel eingebaut{{end}}</dd>
   </dl>
-  {{if or .Keys.DeviceMissing .Keys.Affected}}<p class="msg warn">Gespeicherte Passwörter lassen sich mit dem Geräteschlüssel nicht öffnen. <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
+  {{if .Keys.Affected}}<p class="msg warn">Gespeicherte Passwörter lassen sich mit dem Geräteschlüssel nicht öffnen. <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
   {{if not .Keys.Fingerprint}}<p class="msg warn">Ohne eingebauten Update-Schlüssel sind Updates gesperrt.</p>{{end}}
   <h3>Schlüssel der anderen Terminals</h3>
   {{if .Keys.Peers}}
   <ul class="steps">
     {{range .Keys.Peers}}<li class="{{.Class}}"><strong>{{.Name}}: {{.Label}}</strong><span>{{.Address}}{{if .Detail}} – {{.Detail}}{{end}}</span></li>{{end}}
   </ul>
-  {{else}}<p class="hint">keine Terminals eingetragen</p>{{end}}
+  {{else if .Keys.NoPeers}}<p class="hint">keine Terminals eingetragen</p>
+  {{else if not .Keys.PeersChecked}}<p class="hint">Wird beim Aufruf dieser Seite geprüft.</p>{{end}}
 </section>
 
 <section class="panel stack">

@@ -30,6 +30,8 @@ type systemExtras struct {
 	Selftest []SelftestStep
 	Display  *displayFormData
 	Time     string
+	// Peers: Schlüssel der anderen Terminals abfragen (nur beim Aufruf der Seite).
+	Peers bool
 }
 
 type displayFormData struct {
@@ -69,7 +71,7 @@ func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, er
 	if ex.Display != nil {
 		d.Display = *ex.Display
 	}
-	d.Keys = a.keysView(cfg)
+	d.Keys = a.keysView(cfg, ex.Peers)
 	d.LogLines, d.HasLog = logTailLines(a.d.LogDir)
 	a.lastMu.Lock()
 	d.HasSelftestFile = len(a.lastSelf) > 0
@@ -91,7 +93,7 @@ func intOrEmpty(n int) string {
 }
 
 func (a *admin) handleSystemPage(w http.ResponseWriter, _ *http.Request, s sessionRef) {
-	a.renderSystem(w, s, http.StatusOK, "", systemExtras{})
+	a.renderSystem(w, s, http.StatusOK, "", systemExtras{Peers: true})
 }
 
 // formatBytes zeigt GB mit Komma, wie in der Oberfläche üblich.

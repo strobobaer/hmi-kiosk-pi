@@ -229,6 +229,7 @@ func (a *admin) routes() []route {
 		get(pathMaintenance, a.handleMaintenancePage),
 		post(pathMaintenance+"/replace", a.handleMaintenanceReplace),
 		post(pathMaintenance+"/new", a.handleMaintenanceNew),
+		post(pathMaintenance+"/cancel", a.handleMaintenanceCancel),
 
 		get("/admin/system", a.handleSystemPage),
 		get("/admin/system/log", a.handleLogDownload),

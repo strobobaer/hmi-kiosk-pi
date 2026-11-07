@@ -61,10 +61,10 @@ type repairResult struct {
 //     zurück (oder die neue Datei wird entfernt, wenn es keine alte gab).
 //  4. Erst danach übernimmt die Box im Speicher den neuen Schlüssel.
 //
-// Restrisiko: Fällt der Strom genau zwischen 2 und 3, liegt der neue Schlüssel zur alten
-// Konfiguration auf der Platte. Alle Werte sind dann unlesbar, aber der nächste Start
-// erkennt das (scanKeys), und die Reparatur lässt sich wiederholen. Verloren sind dabei
-// nur die Passwörter, die vorher noch lesbar waren; sie müssen neu eingegeben werden.
+// Bis 3 gelingt liegt der alte Schlüssel zusätzlich als secrets.key.old (0600). Fällt der
+// Strom zwischen 2 und 3 aus, liegt der neue Schlüssel zur alten Konfiguration auf der
+// Platte; der nächste Start erkennt das und nimmt die Reparatur zurück
+// (RecoverInterruptedRepair), danach ist alles wie vor dem Versuch.
 func repairKeys(keyPath string, box *secrets.Box, cfg config.Config, save func(config.Config) error) (config.Config, repairResult, error) {
 	var res repairResult
 	newKey, err := secrets.GenerateKey()
@@ -108,7 +108,17 @@ func repairKeys(keyPath string, box *secrets.Box, cfg config.Config, save func(c
 	}
 
 	oldRaw, readErr := os.ReadFile(keyPath)
+	oldCopy := keyPath + oldKeySuffix
+	keepOld := readErr == nil && len(oldRaw) == keySize
+	if keepOld {
+		if err := secrets.WriteKeyFile(oldCopy, oldRaw); err != nil {
+			return cfg, repairResult{}, fmt.Errorf("Der alte Schlüssel konnte nicht gesichert werden, es bleibt alles beim Alten: %w", err)
+		}
+	}
 	if err := secrets.WriteKeyFile(keyPath, newKey); err != nil {
+		if keepOld {
+			_ = os.Remove(oldCopy)
+		}
 		return cfg, repairResult{}, fmt.Errorf("Der neue Schlüssel konnte nicht gespeichert werden, es bleibt alles beim Alten: %w", err)
 	}
 	if err := save(out); err != nil {
@@ -118,7 +128,13 @@ func repairKeys(keyPath string, box *secrets.Box, cfg config.Config, save func(c
 			_ = box.Rekey(newKey)
 			return cfg, repairResult{}, fmt.Errorf("Die Konfiguration konnte nicht gespeichert werden (%v) und der alte Schlüssel nicht wiederhergestellt werden (%v). Die Passwörter sind jetzt unlesbar; die Reparatur bitte wiederholen.", err, rerr)
 		}
+		if keepOld {
+			_ = os.Remove(oldCopy)
+		}
 		return cfg, repairResult{}, fmt.Errorf("Die Konfiguration konnte nicht gespeichert werden, es bleibt alles beim Alten: %w", err)
+	}
+	if keepOld {
+		_ = os.Remove(oldCopy) // best effort; ein Rest wird beim Start aufgeräumt (RecoverInterruptedRepair)
 	}
 	if err := box.Rekey(newKey); err != nil {
 		return out, res, err
@@ -139,3 +155,42 @@ func restoreKey(path string, oldRaw []byte, readErr error) error {
 
 // peerCheckLimit begrenzt die Schlüsselprüfung je Terminal auf der System-Seite.
 var peerCheckLimit = 3 * time.Second
+
+const (
+	oldKeySuffix = ".old"
+	keySize      = 32
+)
+
+// RecoverInterruptedRepair räumt nach einer unterbrochenen Reparatur auf. Liegt
+// secrets.key.old neben der Schlüsseldatei und öffnet es mehr Werte der Konfiguration
+// als der aktuelle Schlüssel, brach die Reparatur zwischen Schlüssel und Konfiguration
+// ab: Der alte Schlüssel kommt zurück (true). Ist die Konfiguration mit dem aktuellen
+// Schlüssel vollständig lesbar, war die Reparatur fertig, und die Kopie wird gelöscht.
+func RecoverInterruptedRepair(keyPath string, box *secrets.Box, cfg config.Config) (bool, error) {
+	oldPath := keyPath + oldKeySuffix
+	raw, err := os.ReadFile(oldPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	oldBox, err := secrets.NewBox(raw)
+	if err != nil { // unbrauchbarer Rest
+		return false, os.Remove(oldPath)
+	}
+	current, previous := len(scanKeys(cfg, box).Names()), len(scanKeys(cfg, oldBox).Names())
+	switch {
+	case current > previous:
+		if err := secrets.WriteKeyFile(keyPath, raw); err != nil {
+			return false, err
+		}
+		if err := box.Rekey(raw); err != nil {
+			return false, err
+		}
+		return true, os.Remove(oldPath)
+	case current == 0:
+		return false, os.Remove(oldPath)
+	}
+	return false, nil
+}

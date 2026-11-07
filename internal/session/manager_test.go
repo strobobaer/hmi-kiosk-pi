@@ -1733,3 +1733,46 @@ func TestMissingPasswordShowsRepairNoticeNoClient(t *testing.T) {
 		t.Fatal("Client oder Prüfung trotz fehlendem Passwort")
 	}
 }
+
+// --- Wartungsmodus beendet laufende Sitzungen ---
+
+func TestEndForMaintenanceStopsRunningSession(t *testing.T) {
+	h := newHarness(t, nil)
+	p := h.connect("a")
+	msg := "Wartungsmodus: Test"
+	h.blocked.Store(&msg)
+	h.m.EndForMaintenance(msg)
+	s := h.waitFor("Kacheln mit Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice == msg })
+	if p.stops.Load() == 0 || h.log.count("release:a") != 1 {
+		t.Fatalf("Client nicht gestoppt oder HMI nicht freigegeben: %v (%+v)", h.log.all(), s)
+	}
+}
+
+func TestEndForMaintenanceEndsPermanentDisplayWithoutReconnect(t *testing.T) {
+	h := newHarness(t, permanentOn("a"))
+	h.waitState(StateStarting)
+	msg := "Wartungsmodus: Test"
+	h.blocked.Store(&msg)
+	h.m.EndForMaintenance(msg)
+	h.waitFor("Kacheln mit Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice == msg })
+	starts := h.runner.count()
+	h.advance(2 * time.Minute)
+	if h.runner.count() != starts || h.m.Snapshot().State != StateTiles {
+		t.Fatalf("Daueranzeige läuft trotz Wartungsmodus weiter: %d Starts, %s", h.runner.count()-starts, h.m.Snapshot().State)
+	}
+	// Nach dem Wartungsmodus startet sie wieder.
+	h.blocked.Store(nil)
+	h.advance(2 * PollEvery)
+	h.waitState(StateStarting)
+}
+
+func TestEndForMaintenanceEndsWaitingPermanentDisplay(t *testing.T) {
+	h := newHarness(t, permanentOn("a"))
+	h.waitState(StateStarting)
+	h.runner.last().exit(errors.New("abgestürzt"))
+	h.waitState(StateReconnecting)
+	msg := "Wartungsmodus: Test"
+	h.blocked.Store(&msg)
+	h.m.EndForMaintenance(msg)
+	h.waitFor("Kacheln mit Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice == msg })
+}

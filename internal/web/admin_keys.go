@@ -18,22 +18,10 @@ var repairPaths = map[string]bool{
 	"/admin/system/log": true,
 }
 
-func hasSealedValues(c config.Config) bool {
-	if c.SharedKeyEnc != "" {
-		return true
-	}
-	for _, h := range c.HMIs {
-		if h.PasswordEnc != "" {
-			return true
-		}
-	}
-	return false
-}
-
 // repairForced: Die Schlüsseldatei fehlt oder ist unlesbar, obwohl verschlüsselte Werte
 // gespeichert sind. Ohne Reparatur ist nichts davon nutzbar.
 func (a *admin) repairForced(c config.Config) bool {
-	return !a.d.Box.Available() && hasSealedValues(c)
+	return !a.d.Box.Available() && c.HasSealedValues()
 }
 
 // --- System-Seite: Abschnitt „Schlüssel“ ---
@@ -47,15 +35,22 @@ type keysView struct {
 	Affected      []string
 	Peers         []peerKeyView
 	Fingerprint   string // leer: kein Update-Schlüssel eingebaut
+	NoPeers       bool   // keine Terminals eingetragen
+	PeersChecked  bool   // die Abfrage lief (nur beim Aufruf der Seite)
 }
 
-func (a *admin) keysView(cfg config.Config) keysView {
-	return keysView{
+func (a *admin) keysView(cfg config.Config, withPeers bool) keysView {
+	v := keysView{
 		DeviceMissing: !a.d.Box.Available(),
 		Affected:      scanKeys(cfg, a.d.Box).Names(),
-		Peers:         a.checkPeers(cfg.Peers),
 		Fingerprint:   a.d.UpdateKeyFingerprint,
+		NoPeers:       len(cfg.Peers) == 0,
+		PeersChecked:  withPeers,
 	}
+	if withPeers {
+		v.Peers = a.checkPeers(cfg.Peers)
+	}
+	return v
 }
 
 // checkPeers fragt alle eingetragenen Terminals gleichzeitig, je mit kurzem Zeitlimit.
@@ -86,11 +81,10 @@ func (a *admin) checkPeer(p config.Peer) peerKeyView {
 		v.Label, v.Class = "nicht erreichbar", "check"
 	case st.KeyOK:
 		v.Label, v.Class = "Schlüssel stimmt", "pass"
+	case st.Err != nil: // erreichbar, aber die Prüfung selbst ging schief: kein Beweis für einen falschen Schlüssel
+		v.Label, v.Class, v.Detail = "Prüfung fehlgeschlagen", "check", st.Err.Error()
 	default:
 		v.Label, v.Class = "Schlüssel falsch", "fail"
-		if st.Err != nil {
-			v.Detail = st.Err.Error()
-		}
 	}
 	return v
 }

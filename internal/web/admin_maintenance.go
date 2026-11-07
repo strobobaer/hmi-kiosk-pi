@@ -25,6 +25,7 @@ var maintenancePaths = map[string]bool{
 	pathMaintenance:              true,
 	pathMaintenance + "/replace": true,
 	pathMaintenance + "/new":     true,
+	pathMaintenance + "/cancel":  true,
 	"/admin/logout":              true,
 	"/admin/system/log":          true,
 }
@@ -46,7 +47,8 @@ func (a *admin) inMaintenance(c config.Config) bool {
 type maintenanceData struct {
 	OldName, OldRole string
 	OldHW, NewHW     string
-	Manual           bool   // von Hand gestartet, nicht durch ein anderes Gerät
+	Manual           bool   // von Hand gestartet
+	CanCancel        bool   // von Hand gestartet, dasselbe Gerät: Beenden möglich
 	Name, Role       string // Eingaben des Formulars „neues Terminal“
 }
 
@@ -74,8 +76,9 @@ func (a *admin) renderMaintenance(w http.ResponseWriter, s sessionRef, status in
 	d := maintenanceData{
 		OldName: cfg.Terminal.Name, OldRole: roleLabel(cfg.Terminal.Role),
 		OldHW: shortHardwareID(cfg.Terminal.HardwareID), NewHW: shortHardwareID(a.hardwareID()),
-		Manual: cfg.Terminal.MaintenanceManual,
-		Role:   string(cfg.Terminal.Role), // der alte Name wird nicht vorgeschlagen: ein neues Terminal braucht einen eigenen
+		Manual:    cfg.Terminal.MaintenanceManual,
+		CanCancel: cfg.Terminal.MaintenanceManual && !config.HardwareChanged(cfg.Terminal.HardwareID, a.hardwareID()),
+		Role:      string(cfg.Terminal.Role), // der alte Name wird nicht vorgeschlagen: ein neues Terminal braucht einen eigenen
 	}
 	if form != nil {
 		d.Name, d.Role = form.Name, form.Role
@@ -102,6 +105,28 @@ func (a *admin) handleMaintenanceReplace(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	a.finishMaintenance(w, r, s, func(*config.Config) error { return nil }, nil)
+}
+
+// handleMaintenanceCancel beendet einen von Hand gestarteten Wartungsmodus. Bei einem
+// anderen Gerät bleibt er bestehen: Dort ist die Entscheidung Ersatz oder neu nötig.
+func (a *admin) handleMaintenanceCancel(w http.ResponseWriter, r *http.Request, s sessionRef) {
+	a.cfgMu.Lock()
+	defer a.cfgMu.Unlock()
+	err := a.updateLocked(func(c *config.Config) error {
+		if config.HardwareChanged(c.Terminal.HardwareID, a.hardwareID()) || !c.Terminal.MaintenanceManual {
+			return errNotInMaintenance
+		}
+		c.Terminal.MaintenanceManual = false
+		return nil
+	})
+	switch {
+	case errors.Is(err, errNotInMaintenance):
+		redirect(w, r, pathMaintenance)
+	case err != nil:
+		a.renderMaintenance(w, s, formStatus(err), err.Error(), nil)
+	default:
+		a.done(w, r, s, "/admin/system", "Wartungsmodus beendet.")
+	}
 }
 
 func (a *admin) handleMaintenanceNew(w http.ResponseWriter, r *http.Request, s sessionRef) {

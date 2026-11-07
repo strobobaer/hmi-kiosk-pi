@@ -357,3 +357,24 @@ func (m *Manager) SetNotice(msg string) {
 		return nil
 	})
 }
+
+// EndForMaintenance beendet eine laufende Sitzung oder Daueranzeige, weil der
+// Wartungsmodus beginnt, und zeigt msg auf den Kacheln. Die Sperre (Deps.Blocked)
+// muss schon gelten, damit die Daueranzeige nicht neu verbindet.
+func (m *Manager) EndForMaintenance(msg string) {
+	_ = m.do(func() error {
+		switch m.state {
+		case StateTiles:
+			m.notice = msg
+		case StateReconnecting:
+			m.clearDeadline()
+			m.state = StateTiles
+			m.notice = msg
+		case StateStopping:
+			m.cur.endNotice = msg
+		default:
+			m.endOrStop(m.cur, msg)
+		}
+		return nil
+	})
+}

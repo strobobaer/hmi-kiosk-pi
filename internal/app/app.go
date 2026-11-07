@@ -155,6 +155,7 @@ func newService(opts Options) (*service, error) {
 	s.hwID = s.detectHardwareID()
 	s.claimHardware()
 	s.openBox()
+	s.recoverInterruptedRepair()
 	s.mu.Lock()
 	s.key, s.keyWarn = s.openKey(s.cfg)
 	cfg, key := s.cfg, s.key
@@ -214,7 +215,7 @@ func (s *service) openBox() {
 	err := os.MkdirAll(s.opts.DataDir, 0o700)
 	if err == nil {
 		var box *secrets.Box
-		box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile), hasSealedValues(s.config()) || s.loadFailed)
+		box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile), s.config().HasSealedValues() || s.loadFailed)
 		if err == nil {
 			s.box = box
 		}
@@ -448,18 +449,4 @@ func closedChan() <-chan struct{} {
 	c := make(chan struct{})
 	close(c)
 	return c
-}
-
-// hasSealedValues meldet, ob die Konfiguration mit der Schlüsseldatei verschlüsselte
-// Werte enthält; ein neuer Schlüssel machte sie dann unlesbar.
-func hasSealedValues(c config.Config) bool {
-	if c.SharedKeyEnc != "" {
-		return true
-	}
-	for _, h := range c.HMIs {
-		if h.PasswordEnc != "" {
-			return true
-		}
-	}
-	return false
 }

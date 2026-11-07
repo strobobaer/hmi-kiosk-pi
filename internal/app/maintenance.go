@@ -75,16 +75,19 @@ func (s *service) sessionBlocked() string {
 // syncMaintenance gleicht Koordinator und Hinweis der Kachelseite an den Zustand an.
 func (s *service) syncMaintenance() {
 	msg := s.maintenanceMessage()
+	started := s.rootCtx() != nil // sonst läuft der Automat noch nicht
+	// Eine laufende Sitzung oder Daueranzeige endet vor der Stille, sonst könnte ein
+	// anderes Terminal das HMI nehmen, während hier noch ein Client darauf läuft.
+	if started && msg != "" {
+		s.mgr.EndForMaintenance(msg)
+	}
 	s.coord.SetStandby(msg != "")
-	if s.rootCtx() == nil { // der Automat läuft noch nicht
+	if !started {
 		return
 	}
 	for _, n := range []string{maintenanceNotice, manualMaintenanceNotice} {
 		if n != msg {
 			s.mgr.ClearNotice(n)
 		}
-	}
-	if msg != "" {
-		s.mgr.SetNotice(msg)
 	}
 }
