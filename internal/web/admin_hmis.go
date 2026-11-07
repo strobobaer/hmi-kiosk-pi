@@ -62,11 +62,13 @@ type hmiFormData struct {
 	ViewOnly, AllowWatch bool
 	HasPassword          bool
 	PasswordNote         string // "lost" oder "unreadable", sonst leer
+	Reach                string
 	Icons, Colors        []option
+	ReachOptions         []option
 }
 
 func newHMIFormData() hmiFormData {
-	return hmiFormData{IsNew: true, Port: "5900", Icon: "monitor", Color: "blue", Order: "0", Takeover: string(config.StyleConfirm), AllowWatch: true, Icons: iconOptions(), Colors: colorOptions()}
+	return hmiFormData{IsNew: true, Port: "5900", Icon: "monitor", Color: "blue", Order: "0", Takeover: string(config.StyleConfirm), AllowWatch: true, Reach: config.ReachPing, Icons: iconOptions(), Colors: colorOptions(), ReachOptions: reachOptions()}
 }
 
 func hmiFormFrom(h config.HMI) hmiFormData {
@@ -74,7 +76,7 @@ func hmiFormFrom(h config.HMI) hmiFormData {
 		ID: h.ID, Name: h.Name, Host: h.Host, Port: strconv.Itoa(h.Port),
 		Icon: h.Icon, Color: h.Color, Order: strconv.Itoa(h.Order),
 		Takeover: string(h.Takeover), ViewOnly: h.ViewOnly, AllowWatch: h.AllowWatch,
-		HasPassword: h.PasswordEnc != "", Icons: iconOptions(), Colors: colorOptions(),
+		HasPassword: h.PasswordEnc != "", Reach: h.ReachMode(), Icons: iconOptions(), Colors: colorOptions(), ReachOptions: reachOptions(),
 	}
 	if h.Mode != nil {
 		f.Mode = string(*h.Mode)
@@ -89,8 +91,8 @@ func hmiFormFromRequest(r *http.Request, id string, isNew, hasPassword bool) hmi
 		Name: strings.TrimSpace(v.Get("name")), Host: strings.TrimSpace(v.Get("host")), Port: strings.TrimSpace(v.Get("port")),
 		Icon: v.Get("icon"), Color: v.Get("color"), Order: strings.TrimSpace(v.Get("order")),
 		Mode: v.Get("mode"), Takeover: v.Get("takeover"),
-		ViewOnly: v.Get("view_only") != "", AllowWatch: v.Get("allow_watch") != "",
-		Icons: iconOptions(), Colors: colorOptions(),
+		ViewOnly: v.Get("view_only") != "", AllowWatch: v.Get("allow_watch") != "", Reach: v.Get("reach"),
+		Icons: iconOptions(), Colors: colorOptions(), ReachOptions: reachOptions(),
 	}
 }
 
@@ -115,6 +117,7 @@ func (f hmiFormData) apply(h *config.HMI) error {
 	h.Name, h.Host, h.Port = f.Name, f.Host, port
 	h.Icon, h.Color, h.Order = f.Icon, f.Color, order
 	h.ViewOnly, h.AllowWatch = f.ViewOnly, f.AllowWatch
+	h.Reach = f.Reach
 	h.Takeover = config.TakeoverStyle(f.Takeover)
 	h.Mode = nil
 	if f.Mode != "" {
@@ -130,13 +133,13 @@ func (a *admin) applyPassword(h *config.HMI, r *http.Request) error {
 	case remove && pw != "":
 		return errors.New("Bitte entweder ein neues Passwort eingeben oder „Passwort entfernen“ wählen.")
 	case remove:
-		h.PasswordEnc, h.PasswordLost = "", false
+		h.PasswordEnc, h.PasswordLost, h.AuthFailed = "", false, false
 	case pw != "":
 		enc, err := a.d.Box.Seal(pw)
 		if err != nil {
 			return fmt.Errorf("Passwort konnte nicht verschlüsselt werden: %w", err)
 		}
-		h.PasswordEnc, h.PasswordLost = enc, false
+		h.PasswordEnc, h.PasswordLost, h.AuthFailed = enc, false, false
 	}
 	return nil
 }
@@ -157,6 +160,8 @@ type hmiCard struct {
 	Icon, Color           string
 	ViewOnly, HasPassword bool
 	PasswordNote          string // "lost" oder "unreadable", sonst leer
+	AuthFailed            bool   // der Server hat das Passwort abgelehnt
+	LockoutHint           string // nur nach einer Prüfung, die in die Sperre des Servers lief
 	Probe                 *rfb.ProbeResult
 }
 
@@ -187,8 +192,12 @@ func hmiCards(c config.Config, probeID string, probe *rfb.ProbeResult) []hmiCard
 			ID: h.ID, Name: h.Name, Host: h.Host, Port: h.Port, Order: h.Order,
 			Icon: h.Icon, Color: h.Color, ViewOnly: h.ViewOnly, HasPassword: h.PasswordEnc != "",
 		}
+		card.AuthFailed = h.AuthFailed
 		if h.ID == probeID {
 			card.Probe = probe
+			if probe != nil && probe.Locked {
+				card.LockoutHint = rfb.LockoutHint
+			}
 		}
 		cards = append(cards, card)
 	}
@@ -345,5 +354,30 @@ func (a *admin) handleHMIProbe(w http.ResponseWriter, r *http.Request, s session
 	ctx, cancel := context.WithTimeout(r.Context(), probeLimit)
 	defer cancel()
 	res := a.d.Probe(ctx, h)
-	a.renderHMIList(w, s, http.StatusOK, "", h.ID, &res)
+	var errMsg string
+	if res.AuthOK && h.AuthFailed {
+		// Das Passwort stimmt wieder: Antippen und Daueranzeige dürfen anmelden.
+		if err := a.update(clearAuthFailed(h.ID)); err != nil {
+			errMsg = "Die Markierung „Passwort abgelehnt“ konnte nicht aufgehoben werden: " + err.Error()
+		}
+	}
+	a.renderHMIList(w, s, http.StatusOK, errMsg, h.ID, &res)
+}
+
+func clearAuthFailed(id string) func(*config.Config) error {
+	return func(c *config.Config) error {
+		if i := slices.IndexFunc(c.HMIs, func(h config.HMI) bool { return h.ID == id }); i >= 0 {
+			c.HMIs[i].AuthFailed = false
+		}
+		return nil
+	}
+}
+
+// reachOptions sind die Prüfarten der Erreichbarkeit; Ping ist der Standard.
+func reachOptions() []option {
+	return []option{
+		{config.ReachPing, "Ping (Standard)"},
+		{config.ReachPort, "VNC-Port"},
+		{config.ReachOff, "aus"},
+	}
 }

@@ -136,6 +136,7 @@ func (a *admin) merge(ex exportFile, cur config.Config) (config.Config, error) {
 	for i := range next.HMIs {
 		h := &next.HMIs[i]
 		h.PasswordEnc = ""
+		h.AuthFailed = false
 		if pw := ex.HMIPasswords[h.ID]; pw != "" {
 			enc, err := a.d.Box.Seal(pw)
 			if err != nil {

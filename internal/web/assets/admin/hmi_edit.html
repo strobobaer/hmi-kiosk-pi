@@ -51,6 +51,12 @@
       </select>
     </label>
   </div>
+  <label>Erreichbarkeit prüfen
+    <select name="reach">
+      {{$v := .Reach}}{{range .ReachOptions}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <span class="hint">Die Kachel zeigt damit, ob das HMI antwortet. VNC-Port kann bei RealVNC zur Sperre führen (zu viele Fehlversuche).</span>
+  </label>
   <label class="check"><input type="checkbox" name="view_only"{{if .ViewOnly}} checked{{end}}> Nur ansehen</label>
   <label class="check"><input type="checkbox" name="allow_watch"{{if .AllowWatch}} checked{{end}}> Mitschauen erlauben</label>
   <div class="actions">

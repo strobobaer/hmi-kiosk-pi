@@ -245,8 +245,9 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 
 | Meldung | Wo | Mögliche Ursache | Was tun |
 |---|---|---|---|
-| Kachel „nicht erreichbar“ | Kachelseite, unter dem Namen des HMI | Das HMI antwortet nicht auf dem VNC-Port. Netzwerkkabel, Adresse, Port, VNC-Server am HMI. | In der Admin-Seite unter HMIs „Verbindung prüfen“. Zeigt es „nicht erreichbar“, Adresse und Port prüfen, Kabel und Schalter prüfen, VNC-Dienst am HMI starten. |
-| „VNC-Passwort falsch“ | Hinweis nach dem Antippen einer Kachel | Das gespeicherte Passwort stimmt nicht mehr mit dem VNC-Server überein. Es wird kein Client gestartet. | Unter HMIs beim HMI „Bearbeiten“, richtiges VNC-Passwort eintragen, speichern, „Verbindung prüfen“. Anmeldung muss „erfolgreich“ zeigen. |
+| Kachel „nicht erreichbar“ | Kachelseite, unter dem Namen des HMI | Das HMI antwortet nicht auf Ping (Standard der Erreichbarkeitsprüfung, siehe unten) oder, je nach Einstellung, nicht auf dem VNC-Port. Netzwerkkabel, Adresse, Strom des HMI; blockiert eine Firewall Ping, am HMI die Prüfart ändern. | In der Admin-Seite unter HMIs „Verbindung prüfen“. Zeigt es „nicht erreichbar“, Adresse und Port prüfen, Kabel und Schalter prüfen, VNC-Dienst am HMI starten. |
+| „VNC-Passwort wurde abgelehnt – bitte in der Admin-Seite prüfen.“, Kachel „Passwort falsch“ | Hinweis nach dem Antippen oder beim Start der Daueranzeige; Kachel | Das gespeicherte Passwort stimmt nicht mit dem VNC-Server überein. Das HMI ist als „Passwort abgelehnt“ markiert: Antippen meldet nicht mehr an, die Daueranzeige versucht es nicht erneut (sonst sperrt der Server die Adresse, siehe unten). Es wird kein Client gestartet. | Unter HMIs beim HMI „Bearbeiten“, richtiges VNC-Passwort eintragen und speichern (löscht die Markierung), dann „Verbindung prüfen“. Anmeldung muss „erfolgreich“ zeigen. Auch eine erfolgreiche Prüfung löscht die Markierung. Der Import übernimmt die Markierung nicht. |
+| „Der VNC-Server hat dieses Terminal vorübergehend gesperrt (zu viele Fehlversuche) …“ | Hinweis auf der Kachelseite, Ergebnis von „Verbindung prüfen“ | RealVNC Server hat die Adresse dieses Terminals gesperrt (Meldung „Too many security failures“). | Siehe „RealVNC-Sperre“ unten. |
 | „belegt durch <Name>“ | Kachel | Ein anderes Terminal hält das HMI und der Modus ist „Sperre“, oder das haltende Terminal ist primär. | Das andere Terminal mit „Zurück“ beenden lassen. Nach wenigen Sekunden ist die Kachel frei. Oder Vorrang bzw. Modus ändern (Inbetriebnahme, Abschnitt 10). |
 | „Schlüssel falsch: <Name>“ | Hinweisleiste oben auf der Kachelseite | Der gemeinsame Schlüssel dieses Terminals ist nicht der des Terminals <Name>. Die Abstimmung läuft dann nicht. | Auf beiden Terminals unter „Terminals“ den Schlüssel prüfen. Am besten auf einem neuen erzeugen und auf dem anderen von Hand eintragen. Danach die Selbstprüfung (`terminals`) wiederholen. |
 | „Nicht erreichbar: <Name>“ | Hinweisleiste oben auf der Kachelseite | Das andere Terminal antwortet nicht. | Adresse unter „Terminals“, Netz und Strom des anderen Terminals prüfen. Die Anzeige bleibt nutzbar, kurzzeitig können zwei Terminals am selben HMI hängen. |
@@ -256,6 +257,18 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 | „Wartungsmodus: Das Terminal wurde auf ein anderes Gerät übertragen.“ | Hinweis auf der Kachelseite, Wartungsseite in der Admin-Seite | Die SD-Karte läuft in einem anderen Raspberry Pi als dem, auf dem sie eingerichtet wurde. | Admin-Seite öffnen und „Als Ersatz übernehmen“ oder „Als neues Terminal einrichten“ wählen (Abschnitt „SD-Sicherung auf ein anderes Gerät“). |
 | „Das Layout dieser SD-Karte wird von der dateiweisen Sicherung nicht unterstützt (…)“ | Seite SD-Sicherung, Knöpfe gesperrt | System ohne Schreibschutz, dessen Karte nicht das Raspberry-Pi-Layout hat (weitere Partitionen, LVM, btrfs, NVMe oder USB als Wurzel). | Konfigurations-Export nutzen (Abschnitt „SD-Sicherung“, Dateiweise Sicherung). |
 | „Dieses HMI gibt es nicht mehr“ | Hinweis | Das HMI wurde gelöscht, während es genutzt wurde. | Kachelseite neu laden lassen. Daueranzeige unter Kiosk prüfen. |
+
+### RealVNC-Sperre und Erreichbarkeitsprüfung
+
+**Ursache.** RealVNC Server (meldet RFB 3.3) zählt jede Verbindung, die ohne Anmeldung endet, als Fehlversuch. Nach wenigen Versuchen sperrt er die Adresse („Too many security failures“), und die Sperrzeit wächst mit jeder weiteren Verbindung. Eine Erreichbarkeitsprüfung, die nur den VNC-Port öffnet und wieder schließt, löst das aus.
+
+**Abhilfe am HMI.** Den VNC-Dienst am HMI neu starten hebt die Sperre auf; alternativ einige Minuten warten. Dauerhaft lässt sich die Schwelle am RealVNC Server anheben (Parameter `BlacklistThreshold`, Sperrzeit `BlacklistTimeout`). Danach unter HMIs „Verbindung prüfen“ und das Passwort kontrollieren. Das Terminal selbst wiederholt eine gesperrte Anmeldung nicht: Die Daueranzeige wartet 5 Minuten, bevor sie es erneut versucht.
+
+**Erreichbarkeitsprüfung je HMI** (Admin-Seite, HMI bearbeiten, „Erreichbarkeit prüfen“; die Kachel zeigt sie als „nicht erreichbar“):
+
+- **Ping (Standard, auch für ältere Konfigurationen):** alle 10 Sekunden ein ICMP-Echo mit 1 Sekunde Frist über das System-`ping` (`ping -n -c 1 -W 1 <Adresse>`; Raspberry Pi OS Trixie erlaubt das ohne root). Es entsteht keine VNC-Verbindung, also keine Sperre. Voraussetzung: Das HMI und das Netz lassen Ping zu.
+- **VNC-Port:** das frühere Verhalten (TCP-Verbindung zum VNC-Port). Nur für Server wählen, die das nicht als Fehlversuch zählen; bei RealVNC führt es zur Sperre.
+- **aus:** keine Prüfung, die Kachel zeigt keinen Erreichbarkeits-Zustand. Das Antippen prüft das HMI trotzdem vorab mit Anmeldung.
 
 ### Admin-Seite und Gerät
 
