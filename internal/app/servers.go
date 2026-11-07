@@ -114,12 +114,7 @@ func (s *service) adminMux() http.Handler {
 }
 
 func (s *service) adminHandler() http.Handler {
-	// Ohne Schlüsseldatei kann die Admin-Seite nichts ver- oder entschlüsseln.
-	if s.box == nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "Die Admin-Seite ist nicht verfügbar: Die Schlüsseldatei auf der Datenpartition ist nicht lesbar. Einzelheiten stehen im Protokoll des Dienstes.", http.StatusServiceUnavailable)
-		})
-	}
+	// Ohne Schlüsseldatei bleibt die Admin-Seite erreichbar: Sie leitet auf die Reparatur um.
 	return web.NewAdmin(web.AdminDeps{
 		Store:        s.store,
 		Box:          s.box,
@@ -137,11 +132,14 @@ func (s *service) adminHandler() http.Handler {
 				return s.helper.Call(ctx, "update-activate", version)
 			},
 		},
-		Selftest:   s.adminSelftest,
-		Soak:       s.soak,
-		Backup:     s.helper,
-		HardwareID: func() string { return s.hwID },
-		TLSDir:     filepath.Join(s.opts.DataDir, tlsDirName),
+		Selftest:             s.adminSelftest,
+		Soak:                 s.soak,
+		Backup:               s.helper,
+		HardwareID:           func() string { return s.hwID },
+		TLSDir:               filepath.Join(s.opts.DataDir, tlsDirName),
+		KeyFile:              filepath.Join(s.opts.DataDir, secretsFile),
+		CheckPeer:            s.checkPeer,
+		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
 	})
 }
 

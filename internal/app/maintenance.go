@@ -12,6 +12,9 @@ import (
 // übertragen wurde (Hardware-Kennung weicht von der gespeicherten ab).
 const maintenanceNotice = "Wartungsmodus: Das Terminal wurde auf ein anderes Gerät übertragen. Einrichtung in der Admin-Seite."
 
+// manualMaintenanceNotice gilt, wenn der Admin den Wartungsmodus selbst gestartet hat.
+const manualMaintenanceNotice = "Wartungsmodus: Von Hand gestartet. Einrichtung in der Admin-Seite."
+
 func (s *service) detectHardwareID() string {
 	if s.opts.HardwareID != nil {
 		return s.opts.HardwareID()
@@ -43,30 +46,45 @@ func (s *service) claimHardware() {
 	s.mu.Unlock()
 }
 
-// maintenance meldet, ob die Karte auf einem anderen Gerät läuft als eingerichtet.
+// maintenance meldet, ob die Karte auf einem anderen Gerät läuft als eingerichtet
+// oder der Admin den Wartungsmodus von Hand gestartet hat.
 func (s *service) maintenance() bool {
-	return config.HardwareChanged(s.config().Terminal.HardwareID, s.hwID)
+	return config.InMaintenance(s.config(), s.hwID)
+}
+
+// maintenanceMessage ist der Hinweis zum gerade geltenden Grund; leer außerhalb des Wartungsmodus.
+func (s *service) maintenanceMessage() string {
+	switch cfg := s.config(); {
+	case cfg.Terminal.MaintenanceManual:
+		return manualMaintenanceNotice
+	case config.HardwareChanged(cfg.Terminal.HardwareID, s.hwID):
+		return maintenanceNotice
+	}
+	return ""
 }
 
 // sessionBlocked sperrt den Start echter Sitzungen im Wartungsmodus und während
 // der Dauerprüfung.
 func (s *service) sessionBlocked() string {
-	if s.maintenance() {
-		return maintenanceNotice
+	if msg := s.maintenanceMessage(); msg != "" {
+		return msg
 	}
 	return s.soakBlocked()
 }
 
 // syncMaintenance gleicht Koordinator und Hinweis der Kachelseite an den Zustand an.
 func (s *service) syncMaintenance() {
-	on := s.maintenance()
-	s.coord.SetStandby(on)
+	msg := s.maintenanceMessage()
+	s.coord.SetStandby(msg != "")
 	if s.rootCtx() == nil { // der Automat läuft noch nicht
 		return
 	}
-	if on {
-		s.mgr.SetNotice(maintenanceNotice)
-	} else {
-		s.mgr.ClearNotice(maintenanceNotice)
+	for _, n := range []string{maintenanceNotice, manualMaintenanceNotice} {
+		if n != msg {
+			s.mgr.ClearNotice(n)
+		}
+	}
+	if msg != "" {
+		s.mgr.SetNotice(msg)
 	}
 }

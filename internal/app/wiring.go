@@ -53,6 +53,15 @@ func (s *service) config() config.Config {
 	return s.cfg
 }
 
+// checkPeer prüft den Schlüssel eines anderen Terminals ohne Seiteneffekt.
+func (s *service) checkPeer(ctx context.Context, p config.Peer) coord.PeerState {
+	st := coord.CheckPeer(ctx, s.peerKey, nil, p)
+	if st.Reachable && len(s.peerKey()) == 0 {
+		st.KeyOK, st.Err = false, errors.New("auf diesem Terminal ist kein gemeinsamer Schlüssel gesetzt")
+	}
+	return st
+}
+
 func (s *service) peerKey() []byte {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -69,7 +78,7 @@ func (s *service) openKey(c config.Config) (key []byte, warning string) {
 		}
 		return nil, warning
 	}
-	if s.box == nil {
+	if !s.box.Available() {
 		return nil, "Ein gemeinsamer Schlüssel ist gesetzt, aber nicht lesbar: Die Abstimmung mit anderen Terminals ist aus."
 	}
 	plain, err := s.box.Open(c.SharedKeyEnc)
@@ -142,15 +151,21 @@ func (s *service) screen() (int, int) {
 	return platform.Resolve(c.Display.OverrideW, c.Display.OverrideH, w, h, found)
 }
 
-// password liest das VNC-Passwort. Kein Geheimtext heißt: kein Passwort gesetzt.
+// password liest das VNC-Passwort. Kein Geheimtext heißt: kein Passwort gesetzt, außer
+// die Reparatur hat es gelöscht. Ein verlorenes oder unlesbares Passwort meldet
+// session.ErrPasswordMissing.
 func (s *service) password(h config.HMI) (string, error) {
 	if h.PasswordEnc == "" {
+		if h.PasswordLost {
+			return "", session.ErrPasswordMissing
+		}
 		return "", nil
 	}
-	if s.box == nil {
-		return "", errors.New("Schlüsseldatei nicht verfügbar")
+	pw, err := s.box.Open(h.PasswordEnc)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", session.ErrPasswordMissing, err)
 	}
-	return s.box.Open(h.PasswordEnc)
+	return pw, nil
 }
 
 // sessionProbe läuft zu Beginn jedes Versuchs außerhalb der Zustands-Goroutine.
@@ -166,6 +181,9 @@ func (s *service) sessionProbe(ctx context.Context, h config.HMI, password strin
 func (s *service) adminProbe(ctx context.Context, h config.HMI) rfb.ProbeResult {
 	pw, err := s.password(h)
 	if err != nil {
+		if h.PasswordLost {
+			return rfb.ProbeResult{Err: "Das Passwort fehlt, bitte neu eingeben"}
+		}
 		return rfb.ProbeResult{Err: "Das gespeicherte Passwort lässt sich nicht entschlüsseln"}
 	}
 	ctx, cancel := context.WithTimeout(ctx, adminProbeLimit)

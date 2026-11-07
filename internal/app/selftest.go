@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,7 +15,6 @@ import (
 	"hmikiosk/internal/browser"
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
-	"hmikiosk/internal/coord"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/selftest"
 	"hmikiosk/internal/session"
@@ -112,13 +110,7 @@ func (s *service) selftestDeps() selftest.Deps {
 	d.Show = s.showSelftestPage
 	d.Touch = s.touch
 	d.ServicePID = os.Getpid
-	d.Peer = func(ctx context.Context, p config.Peer) coord.PeerState {
-		st := coord.CheckPeer(ctx, s.peerKey, nil, p)
-		if st.Reachable && len(s.peerKey()) == 0 {
-			st.KeyOK, st.Err = false, errors.New("auf diesem Terminal ist kein gemeinsamer Schlüssel gesetzt")
-		}
-		return st
-	}
+	d.Peer = s.checkPeer
 	return d
 }
 

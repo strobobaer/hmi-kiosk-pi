@@ -73,7 +73,7 @@ type service struct {
 	store    *config.Store
 	journal  *Journal
 	notify   notifier
-	box      *secrets.Box
+	box      *secrets.Box // nie nil; ohne Schlüssel (Reparaturmodus) nicht verfügbar
 	runner   client.Runner
 	coord    *coord.Coordinator
 	mgr      *session.Manager
@@ -99,6 +99,7 @@ type service struct {
 	cfg      config.Config
 	key      []byte
 	keyWarn  string
+	boxWarn  string // Grund, warum die Schlüsseldatei nicht verfügbar ist
 	cfgWarn  string
 	warnings []string
 }
@@ -209,13 +210,21 @@ func (s *service) loadConfig() {
 }
 
 func (s *service) openBox() {
+	s.box = secrets.Unavailable()
 	err := os.MkdirAll(s.opts.DataDir, 0o700)
 	if err == nil {
-		s.box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile), hasSealedValues(s.config()) || s.loadFailed)
+		var box *secrets.Box
+		box, err = secrets.OpenBox(filepath.Join(s.opts.DataDir, secretsFile), hasSealedValues(s.config()) || s.loadFailed)
+		if err == nil {
+			s.box = box
+		}
 	}
 	if err != nil {
-		s.box = nil
-		s.warn(fmt.Sprintf("Schlüsseldatei nicht verfügbar, VNC-Passwörter sind nicht lesbar: %v", err))
+		warn := fmt.Sprintf("Schlüsseldatei nicht verfügbar, VNC-Passwörter sind nicht lesbar: %v", err)
+		log.Print(warn)
+		s.mu.Lock()
+		s.boxWarn = warn
+		s.mu.Unlock()
 	}
 }
 

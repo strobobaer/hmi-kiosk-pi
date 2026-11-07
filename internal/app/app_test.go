@@ -325,7 +325,7 @@ func TestReadOnlyDataDirStillServesTiles(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(string(body), "Datenpartition") {
+	if resp.StatusCode != http.StatusInternalServerError || !strings.Contains(string(body), "Konfiguration nicht lesbar") {
 		t.Fatalf("Admin %d: %s", resp.StatusCode, body)
 	}
 }
@@ -520,7 +520,7 @@ func TestTruncatedKeyFileIsReplacedOnlyWithoutSealedValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.box == nil {
+	if !s.box.Available() {
 		t.Fatalf("leere Schlüsseldatei ohne verschlüsselte Werte nicht ersetzt: %v", s.Status().Warnings)
 	}
 	s.close()
@@ -537,8 +537,8 @@ func TestTruncatedKeyFileIsReplacedOnlyWithoutSealedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.close()
-	if s.box != nil || !strings.Contains(strings.Join(s.Status().Warnings, " "), "beschädigt") {
-		t.Fatalf("beschädigte Schlüsseldatei bei verschlüsselten Werten: box=%v %v", s.box != nil, s.Status().Warnings)
+	if s.box.Available() || !strings.Contains(strings.Join(s.Status().Warnings, " "), "beschädigt") {
+		t.Fatalf("beschädigte Schlüsseldatei bei verschlüsselten Werten: box=%v %v", s.box.Available(), s.Status().Warnings)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(g.data, "secrets.key")); string(raw) != "kurz" {
 		t.Fatal("beschädigte Schlüsseldatei überschrieben")

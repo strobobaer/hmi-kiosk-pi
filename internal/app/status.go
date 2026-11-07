@@ -27,7 +27,7 @@ func (s *service) warn(msg string) {
 // Status liefert die Anzeigewerte der Admin-Seite.
 func (s *service) Status() web.SystemStatus {
 	s.mu.RLock()
-	cfgWarn, keyWarn := s.cfgWarn, s.keyWarn
+	cfgWarn, keyWarn, boxWarn := s.cfgWarn, s.keyWarn, s.boxWarn
 	warnings := slices.Clone(s.warnings)
 	cfg := s.cfg
 	s.mu.RUnlock()
@@ -40,13 +40,18 @@ func (s *service) Status() web.SystemStatus {
 	}
 	add(cfgWarn)
 	add(keyWarn)
+	if !s.box.Available() {
+		add(boxWarn)
+	}
 	st.Warnings = append(st.Warnings, warnings...)
 	add(s.journal.Warning())
 	switch {
-	case s.hwID == "":
-		add("Die Hardware-Kennung des Geräts ist nicht lesbar: Ein auf ein anderes Gerät übertragenes Terminal würde nicht erkannt.")
+	case cfg.Terminal.MaintenanceManual:
+		add(manualMaintenanceNotice)
 	case config.HardwareChanged(cfg.Terminal.HardwareID, s.hwID):
 		add(maintenanceNotice)
+	case s.hwID == "":
+		add("Die Hardware-Kennung des Geräts ist nicht lesbar: Ein auf ein anderes Gerät übertragenes Terminal würde nicht erkannt.")
 	}
 	if !st.OverlayActive {
 		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
