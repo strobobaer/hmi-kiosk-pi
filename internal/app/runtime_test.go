@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -294,6 +295,30 @@ func TestPeerAndAdminShareTLSPort(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusSeeOther || !strings.Contains(resp.Header.Get("Location"), "/admin/setup") {
 		t.Fatalf("Admin %d %s", resp.StatusCode, resp.Header.Get("Location"))
+	}
+}
+
+func TestAdminPortRootLeadsToAdminPage(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	c := insecureClient()
+	resp, err := c.Get("https://" + f.bound.Admin + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/" {
+		t.Fatalf("Wurzel %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, err = c.Get("https://" + f.bound.Admin + "/gibt-es-nicht")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "Seite nicht gefunden") {
+		t.Fatalf("unbekannter Pfad %d %q", resp.StatusCode, body)
 	}
 }
 

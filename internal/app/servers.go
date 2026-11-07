@@ -102,7 +102,14 @@ func (s *service) loadCert() (tls.Certificate, bool) {
 func (s *service) adminMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/peer/", coord.NewHandlerFunc(s.coord, s.peerKey))
-	mux.Handle("/", s.adminHandler())
+	mux.Handle("/admin/", s.adminHandler())
+	// Die kurze Adresse https://<Gerät>:8443 führt zur Admin-Seite.
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Seite nicht gefunden", http.StatusNotFound)
+	})
 	return mux
 }
 
