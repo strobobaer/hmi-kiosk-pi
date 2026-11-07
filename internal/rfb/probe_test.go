@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,6 +49,45 @@ func TestProbeWrongPassword(t *testing.T) {
 	r = Probe(context.Background(), host, port, "")
 	if !r.Reachable || r.AuthOK || !r.AuthRejected || r.Err == "" {
 		t.Fatalf("ohne Passwort: %+v", r)
+	}
+}
+
+// rejectingServer antwortet mit Version ver und ohne Sicherheitsverfahren samt Begründung.
+func rejectingServer(t *testing.T, ver, reason string) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Write([]byte(ver))
+			io.ReadFull(c, make([]byte, 12))
+			if ver == "RFB 003.003\n" {
+				binary.Write(c, binary.BigEndian, uint32(0))
+			} else {
+				c.Write([]byte{0})
+			}
+			binary.Write(c, binary.BigEndian, uint32(len(reason)))
+			c.Write([]byte(reason))
+			c.Close()
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func TestProbeShowsServerReasonWhenRejected(t *testing.T) {
+	for _, ver := range []string{"RFB 003.008\n", "RFB 003.003\n"} {
+		port := rejectingServer(t, ver, "Too many security failures")
+		r := Probe(context.Background(), "127.0.0.1", port, "")
+		if !r.Reachable || r.AuthOK || !strings.Contains(r.Err, "Too many security failures") || !strings.Contains(r.Err, "lehnt die Verbindung ab") {
+			t.Fatalf("%q: %+v", ver, r)
+		}
 	}
 }
 

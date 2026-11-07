@@ -11,6 +11,7 @@ import (
 	"math/bits"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -132,7 +133,7 @@ func probeHandshake(rw io.ReadWriter, password string, res *ProbeResult) error {
 			return err
 		}
 		if sec == 0 {
-			return errors.New("Der VNC-Server lehnt die Verbindung ab")
+			return rejected(rw)
 		}
 	} else {
 		var n [1]byte
@@ -140,7 +141,7 @@ func probeHandshake(rw io.ReadWriter, password string, res *ProbeResult) error {
 			return err
 		}
 		if n[0] == 0 {
-			return errors.New("Der VNC-Server lehnt die Verbindung ab")
+			return rejected(rw)
 		}
 		types := make([]byte, n[0])
 		if _, err := io.ReadFull(rw, types); err != nil {
@@ -216,6 +217,30 @@ func probeHandshake(rw io.ReadWriter, password string, res *ProbeResult) error {
 	}
 	res.Name = string(name)
 	return nil
+}
+
+// rejected liest die Begründung, die der Server laut RFB nach „keine Verfahren“ schickt.
+func rejected(r io.Reader) error {
+	const base = "Der VNC-Server lehnt die Verbindung ab"
+	var n uint32
+	if err := binary.Read(r, binary.BigEndian, &n); err != nil || n == 0 {
+		return errors.New(base)
+	}
+	if n > 512 {
+		n = 512
+	}
+	buf := make([]byte, n)
+	got, _ := io.ReadFull(r, buf)
+	reason := strings.TrimSpace(strings.Map(func(c rune) rune {
+		if c < 0x20 || c == 0x7f {
+			return ' '
+		}
+		return c
+	}, string(buf[:got])))
+	if reason == "" {
+		return errors.New(base)
+	}
+	return errors.New(base + ": „" + reason + "“")
 }
 
 func readSecurityResult(r io.Reader) error {
