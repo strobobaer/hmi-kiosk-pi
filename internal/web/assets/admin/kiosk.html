@@ -13,6 +13,13 @@
       <option value="4"{{if eq .Layout "4"}} selected{{end}}>4 Spalten</option>
     </select>
   </label>
+  <label>Bedienung
+    <select name="input_mode">
+      <option value="touch"{{if eq .InputMode "touch"}} selected{{end}}>Touch (Mauszeiger ausgeblendet)</option>
+      <option value="mouse"{{if eq .InputMode "mouse"}} selected{{end}}>Maus (Mauszeiger sichtbar)</option>
+    </select>
+  </label>
+  <p class="hint">Die Bedienung wirkt nach dem nächsten Neustart des Terminals (System → Terminal neu starten).</p>
   <fieldset class="stack">
     <legend>Daueranzeige</legend>
     <label>Festes HMI

@@ -60,7 +60,14 @@ type KioskCfg struct {
 	Layout            string `json:"layout"`
 	PermanentHMI      string `json:"permanentHmi"`
 	HideBar           bool   `json:"hideBar"`
+	// InputMode: InputTouch blendet den Mauszeiger aus, InputMouse zeigt ihn (leer = Touch).
+	InputMode string `json:"inputMode"`
 }
+
+const (
+	InputTouch = "touch"
+	InputMouse = "mouse"
+)
 
 type NetworkCfg struct {
 	NTPServer    string `json:"ntpServer"`
@@ -107,6 +114,7 @@ func Default() Config {
 	c.DefaultMode = ModeTakeover
 	c.Client = ClientCfg{Profile: "remmina", Quality: 2, ColorDepth: 32, Scale: true}
 	c.Kiosk.InactivityMinutes = 15
+	c.Kiosk.InputMode = InputTouch
 	c.Display.GraphicsProfile = "labwc"
 	return c
 }

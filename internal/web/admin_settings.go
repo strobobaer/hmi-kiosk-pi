@@ -52,6 +52,9 @@ func checkKiosk(k config.KioskCfg) error {
 	if k.HideBar && k.PermanentHMI == "" {
 		return errors.New(config.ErrHideBarWithoutPermanent)
 	}
+	if k.InputMode != config.InputTouch && k.InputMode != config.InputMouse {
+		return fmt.Errorf("Unbekannte Bedienart: %q", k.InputMode)
+	}
 	switch k.Layout {
 	case "", "auto", "2", "3", "4":
 		return nil
@@ -121,9 +124,9 @@ func (a *admin) handleClientSave(w http.ResponseWriter, r *http.Request, s sessi
 // --- Kiosk ---
 
 type kioskFormData struct {
-	Inactivity, Layout, Permanent string
-	HideBar                       bool
-	HMIs                          []option
+	Inactivity, Layout, Permanent, InputMode string
+	HideBar                                  bool
+	HMIs                                     []option
 }
 
 func (a *admin) renderKiosk(w http.ResponseWriter, s sessionRef, status int, errMsg string, f kioskFormData) {
@@ -142,20 +145,31 @@ func (a *admin) handleKioskForm(w http.ResponseWriter, _ *http.Request, s sessio
 		return
 	}
 	k := cfg.Kiosk
+	mode := k.InputMode
+	if mode == "" {
+		mode = config.InputTouch
+	}
 	a.renderKiosk(w, s, http.StatusOK, "", kioskFormData{
-		Inactivity: strconv.Itoa(k.InactivityMinutes), Layout: k.Layout, Permanent: k.PermanentHMI, HideBar: k.HideBar,
+		Inactivity: strconv.Itoa(k.InactivityMinutes), Layout: k.Layout, Permanent: k.PermanentHMI, HideBar: k.HideBar, InputMode: mode,
 	})
 }
 
 func (a *admin) handleKioskSave(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	v := r.PostForm
-	f := kioskFormData{Inactivity: strings.TrimSpace(v.Get("inactivity")), Layout: v.Get("layout"), Permanent: v.Get("permanent"), HideBar: v.Get("hide_bar") != ""}
+	f := kioskFormData{Inactivity: strings.TrimSpace(v.Get("inactivity")), Layout: v.Get("layout"), Permanent: v.Get("permanent"), HideBar: v.Get("hide_bar") != "", InputMode: v.Get("input_mode")}
 	err := a.update(func(c *config.Config) error {
 		n, err := strconv.Atoi(f.Inactivity)
 		if err != nil {
 			return fmt.Errorf("Rückkehr bei Inaktivität muss eine Zahl sein: %q", f.Inactivity)
 		}
-		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar}
+		mode := f.InputMode
+		if mode == "" { // ältere Formulare ohne das Feld: bisherige Bedienart behalten
+			mode = c.Kiosk.InputMode
+		}
+		if mode == "" {
+			mode = config.InputTouch
+		}
+		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode}
 		if err := checkKiosk(next); err != nil {
 			return err
 		}

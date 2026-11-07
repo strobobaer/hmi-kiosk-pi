@@ -27,6 +27,23 @@ graphics_profile() {
 	echo labwc
 }
 
+# input_mode gibt touch oder mouse aus (Kiosk → Bedienung); ohne Angabe gilt touch.
+input_mode() {
+	for f in "$CONFIG" "$CONFIG.good"; do
+		[ -r "$f" ] || continue
+		m=$(tr -d '\n' <"$f" | grep -o '"inputMode"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/') || m=""
+		case "$m" in
+		touch | mouse)
+			echo "$m"
+			return
+			;;
+		"") ;;
+		*) echo "Unbekannte Bedienart $m in $f, verwende touch" >&2 ;;
+		esac
+	done
+	echo touch
+}
+
 prepare() {
 	profile=$(graphics_profile)
 	mkdir -p "$STATE_DIR"
@@ -40,12 +57,22 @@ prepare() {
 	mv -f "$tmp" "$STATE_DIR/env"
 	printf '%s\n' "$profile" >"$STATE_DIR/.profile.$$"
 	mv -f "$STATE_DIR/.profile.$$" "$STATE_DIR/profile"
-	echo "Grafikprofil: $profile"
+	input=$(input_mode)
+	printf '%s\n' "$input" >"$STATE_DIR/.input.$$"
+	mv -f "$STATE_DIR/.input.$$" "$STATE_DIR/input"
+	echo "Grafikprofil: $profile, Bedienung: $input"
 }
 
 run_session() {
 	profile=$(cat "$STATE_DIR/profile" 2>/dev/null || graphics_profile)
+	input=$(cat "$STATE_DIR/input" 2>/dev/null || input_mode)
 	export XDG_RUNTIME_DIR="$RUNTIME_DIR"
+	nocursor=""
+	if [ "$input" = touch ]; then
+		# Unsichtbares Zeigerthema (labwc) und -nocursor (X11): bei Touch kein Mauszeiger.
+		export XCURSOR_THEME=hmi-blank
+		nocursor=-nocursor
+	fi
 	case "$profile" in
 	labwc)
 		export XDG_SESSION_TYPE=wayland
@@ -55,13 +82,14 @@ run_session() {
 	x11)
 		export XDG_SESSION_TYPE=x11
 		export XAUTHORITY="$STATE_DIR/Xauthority"
-		exec startx "$0" x11-client -- :0 vt1 -keeptty -nolisten tcp -nocursor -s 0 -dpms
+		# shellcheck disable=SC2086 # leeres $nocursor entfällt
+		exec startx "$0" x11-client -- :0 vt1 -keeptty -nolisten tcp $nocursor -s 0 -dpms
 		;;
 	esac
 }
 
 x11_client() {
-	# Bildschirmschoner und Energiesparen aus; -nocursor beim Start blendet den Zeiger aus.
+	# Bildschirmschoner und Energiesparen aus; -nocursor beim Start blendet bei Touch den Zeiger aus.
 	xset s off s noblank -dpms || echo "xset fehlgeschlagen" >&2
 	exec openbox --config-file /etc/xdg/openbox/rc.xml
 }

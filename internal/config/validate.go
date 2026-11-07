@@ -117,6 +117,11 @@ func Validate(c Config) error {
 	if c.Kiosk.InactivityMinutes < 0 {
 		return fmt.Errorf("Rückkehr bei Inaktivität darf nicht negativ sein: %d", c.Kiosk.InactivityMinutes)
 	}
+	switch c.Kiosk.InputMode {
+	case "", InputTouch, InputMouse:
+	default:
+		return fmt.Errorf("Unbekannte Bedienart: %q (erlaubt: Touch oder Maus)", c.Kiosk.InputMode)
+	}
 	return validateClientAndDisplay(c)
 }
 

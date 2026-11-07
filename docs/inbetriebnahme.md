@@ -205,7 +205,7 @@ Wenn ein Terminal dauerhaft ein HMI zeigen soll:
 
 **Für die Selbstprüfung (Abschnitt 7) die Daueranzeige vorübergehend entfernen:** Daueranzeige auf „Keine“ stellen, speichern, Prüfung durchführen, danach wieder eintragen. Die Selbstprüfung läuft sonst nicht, weil sich die Daueranzeige zwischen den Schritten neu startet.
 
-Weitere Einstellungen unter „Kiosk“: Rückkehr zu den Kacheln bei Inaktivität (Minuten, 0 = nie), Kachel-Layout, Leiste ausblenden. Unter „Client“: Profil (Remmina oder TigerVNC), Qualität, Farbtiefe, Skalierung.
+Weitere Einstellungen unter „Kiosk“: Rückkehr zu den Kacheln bei Inaktivität (Minuten, 0 = nie), Kachel-Layout, Bedienung (Touch: Mauszeiger ausgeblendet, Maus: Mauszeiger sichtbar; wirkt nach dem nächsten Neustart des Terminals), Leiste ausblenden. Unter „Client“: Profil (Remmina oder TigerVNC), Qualität, Farbtiefe, Skalierung.
 
 ### 6.6 WLAN und Bluetooth abschalten
 

@@ -387,6 +387,28 @@ func TestSharedKeyByHand(t *testing.T) {
 	}
 }
 
+func TestKioskInputModeTouchOrMouse(t *testing.T) {
+	e, b := newLoggedIn(t)
+	r := b.get("/admin/kiosk")
+	if !strings.Contains(r.Body.String(), `name="input_mode"`) || !strings.Contains(r.Body.String(), `value="touch" selected`) {
+		t.Fatalf("Formular ohne Bedienart oder ohne Touch als Voreinstellung: %s", r.Body.String())
+	}
+	r = b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "input_mode": {"mouse"}})
+	if r.Code != http.StatusSeeOther {
+		t.Fatalf("Maus speichern: %d %s", r.Code, r.Body.String())
+	}
+	if e.cfg().Kiosk.InputMode != config.InputMouse {
+		t.Fatalf("Bedienart %q", e.cfg().Kiosk.InputMode)
+	}
+	if !strings.Contains(b.get("/admin/kiosk").Body.String(), "nach dem nächsten Neustart") {
+		t.Fatal("Hinweis auf Neustart fehlt")
+	}
+	r = b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "input_mode": {"stift"}})
+	if r.Code != http.StatusUnprocessableEntity || e.cfg().Kiosk.InputMode != config.InputMouse {
+		t.Fatalf("unbekannte Bedienart angenommen: %d", r.Code)
+	}
+}
+
 func TestKioskHideBarNeedsPermanentDisplay(t *testing.T) {
 	e, b := newLoggedIn(t)
 	e.addHMI("x", "Presse", "")

@@ -1,5 +1,4 @@
 # Umgebung der labwc-Sitzung im Kiosk.
-# Unsichtbares Zeigerthema aus dem Abbild: bei Bedienung per Touch kein Mauszeiger.
-XCURSOR_THEME=hmi-blank
+# Das Zeigerthema setzt hmi-kiosk-session je nach Bedienart (Touch: unsichtbar, Maus: sichtbar).
 XCURSOR_SIZE=24
 XKB_DEFAULT_LAYOUT=de

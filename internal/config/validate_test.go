@@ -11,6 +11,24 @@ func TestDefaultIsValid(t *testing.T) {
 	}
 }
 
+func TestInputModeDefaultsToTouchAndIsChecked(t *testing.T) {
+	if Default().Kiosk.InputMode != InputTouch {
+		t.Fatalf("Voreinstellung %q", Default().Kiosk.InputMode)
+	}
+	for _, m := range []string{"", InputTouch, InputMouse} {
+		c := sample()
+		c.Kiosk.InputMode = m
+		if err := Validate(c); err != nil {
+			t.Errorf("%q abgelehnt: %v", m, err)
+		}
+	}
+	c := sample()
+	c.Kiosk.InputMode = "stift"
+	if Validate(c) == nil {
+		t.Error("unbekannte Bedienart angenommen")
+	}
+}
+
 func TestValidateRejectsControlCharsInNameAndHost(t *testing.T) {
 	for _, name := range []string{"a\nb", "x\r", "t\x00"} {
 		c := sample()
