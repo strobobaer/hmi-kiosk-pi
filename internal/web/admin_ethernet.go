@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -171,6 +173,14 @@ func (a *admin) handleEthernetConfirm(w http.ResponseWriter, r *http.Request, s 
 		a.renderNetwork(w, s, http.StatusServiceUnavailable, "Die Ethernet-Einstellung ist hier nicht verfügbar.", nil)
 		return
 	}
+	// Eine feste Adresse gilt erst als bewiesen, wenn die Bestätigung über sie ankommt.
+	sctx, scancel := context.WithTimeout(r.Context(), netStatusTimeout)
+	st, err := a.d.Net.NetStatus(sctx)
+	scancel()
+	if err == nil && st.Pending && st.PendingCfg.Method == config.EthStatic && !arrivedOn(r, st.PendingCfg.Address) {
+		a.renderNetwork(w, s, http.StatusConflict, fmt.Sprintf("Bitte über die neue Adresse https://%s:%s/admin/network bestätigen.", st.PendingCfg.Address, adminPort), nil)
+		return
+	}
 	a.cfgMu.Lock()
 	ctx, cancel := context.WithTimeout(r.Context(), helperLimit)
 	e, err := a.d.Net.NetConfirm(ctx)
@@ -217,4 +227,22 @@ func (a *admin) handleEthernetRevert(w http.ResponseWriter, r *http.Request, s s
 		return
 	}
 	a.done(w, r, s, "/admin/network", "Die alte Netzwerkeinstellung wurde wiederhergestellt.")
+}
+
+// arrivedOn sagt, ob die Anfrage an der lokalen Adresse addr angekommen ist.
+func arrivedOn(r *http.Request, addr string) bool {
+	la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr)
+	if !ok {
+		return false
+	}
+	tcp, ok := la.(*net.TCPAddr)
+	if !ok {
+		return false
+	}
+	want, err := netip.ParseAddr(addr)
+	if err != nil {
+		return false
+	}
+	got, ok := netip.AddrFromSlice(tcp.IP)
+	return ok && got.Unmap() == want
 }

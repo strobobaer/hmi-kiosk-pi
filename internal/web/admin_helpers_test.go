@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -252,8 +253,10 @@ func breakSave(e *adminEnv) {
 
 // browser hält die Cookies einer Besucherin. Jeder Browser hat eigene Cookies.
 type browser struct {
-	e   *adminEnv
-	jar map[string]string
+	// local ist die Adresse des Terminals, an der die Anfrage ankommt (leer: unbekannt).
+	local net.Addr
+	e     *adminEnv
+	jar   map[string]string
 }
 
 func (e *adminEnv) browser() *browser { return &browser{e: e, jar: map[string]string{}} }
@@ -269,6 +272,9 @@ func (e *adminEnv) login() *browser {
 }
 
 func (b *browser) do(req *http.Request) *httptest.ResponseRecorder {
+	if b.local != nil {
+		req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, b.local))
+	}
 	for k, v := range b.jar {
 		req.AddCookie(&http.Cookie{Name: k, Value: v})
 	}

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -185,6 +186,7 @@ func TestEthernetPendingBoxConfirmAndRevert(t *testing.T) {
 		`action="/admin/network/ethernet/confirm"`, `action="/admin/network/ethernet/revert"`, `http-equiv="refresh"`} {
 		wantContains(t, body, s)
 	}
+	b.local = &net.TCPAddr{IP: net.ParseIP("192.168.1.50"), Port: 8443}
 	body = b.follow(b.postNet("/admin/network/ethernet/confirm", nil))
 	wantContains(t, body, "bestätigt")
 	if got := e.cfg().Network.Ethernet; !reflect.DeepEqual(got, pend) {
@@ -241,5 +243,32 @@ func TestEthernetPostsNeedCSRF(t *testing.T) {
 	}
 	if e.net.calls() != 0 {
 		t.Fatal("Helfer ohne CSRF gerufen")
+	}
+}
+
+func TestEthernetStaticConfirmNeedsNewAddress(t *testing.T) {
+	e, b := newLoggedIn(t)
+	pend := config.EthernetCfg{Method: config.EthStatic, Address: "192.168.1.50", Prefix: 24}
+	e.net.st = helperapi.NetStatus{Iface: "eth0", Pending: true, PendingCfg: pend, RemainingSec: 100}
+	for _, local := range []net.Addr{nil, &net.TCPAddr{IP: net.ParseIP("192.168.1.20"), Port: 8443}, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8443}} {
+		b.local = local
+		r := b.postNet("/admin/network/ethernet/confirm", nil)
+		if r.Code != http.StatusConflict {
+			t.Fatalf("%v: Status %d", local, r.Code)
+		}
+		wantContains(t, r.Body.String(), "Bitte über die neue Adresse https://192.168.1.50:8443/admin/network bestätigen.")
+	}
+	if e.net.confirms != 0 || e.cfg().Network.Ethernet.Method != "" {
+		t.Fatal("über die alte Adresse bestätigt")
+	}
+}
+
+func TestEthernetDHCPConfirmFromAnyAddress(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.net.st = helperapi.NetStatus{Iface: "eth0", Pending: true, PendingCfg: config.EthernetCfg{Method: config.EthDHCP}, RemainingSec: 100}
+	b.local = &net.TCPAddr{IP: net.ParseIP("192.168.1.20"), Port: 8443}
+	wantContains(t, b.follow(b.postNet("/admin/network/ethernet/confirm", nil)), "bestätigt")
+	if e.net.confirms != 1 || e.cfg().Network.Ethernet.Method != config.EthDHCP {
+		t.Fatal("DHCP nicht bestätigt")
 	}
 }
