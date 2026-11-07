@@ -1,0 +1,71 @@
+#!/bin/sh
+# hmi-kiosk-grow-root: die Systempartition (Partition 2, Wurzel) auf die ganze Karte vergrößern.
+# Läuft bei jedem Start (hmi-kiosk-grow-root.service). Das Abbild einer dateiweisen SD-Sicherung ist nur so
+# groß wie die belegten Daten plus Reserve; auf einer größeren Karte wächst die Wurzel hier online.
+#
+# Nur auf Systemen ohne SD-Abbild (ohne /etc/hmi-kiosk/image-release): Das Abbild hat eine eigene Datenpartition
+# und eine schreibgeschützte Wurzel. Die Wurzel muss ext4 auf der letzten Partition der Karte sein. Fehlen mehr
+# als 16 MiB hinter ihrem Ende, wird die Tabelle erweitert (sfdisk, partx); resize2fs läuft immer, damit der
+# nächste Start einen gescheiterten Schritt nachholt. Ist alles groß genug, ändert sich nichts.
+# Das Skript endet immer mit 0: Fehler stehen nur im Protokoll, das Gerät startet trotzdem.
+#
+# Orte überschreibbar für den Test (test-grow-root.sh).
+ROOT=${HMI_GROW_ROOT_MOUNT:-/}
+RELEASE=${HMI_GROW_ROOT_RELEASE:-/etc/hmi-kiosk/image-release}
+
+log() { echo "hmi-kiosk-grow-root: $*"; }
+fail() {
+	log "FEHLER: $*"
+	return 1
+}
+
+grow_root() {
+	if [ -e "$RELEASE" ]; then
+		log "SD-Abbild-System; die Datenpartition wächst über hmi-kiosk-grow-data, nichts zu tun"
+		return 0
+	fi
+	majmin=$(findmnt -n -o MAJ:MIN "$ROOT" 2>/dev/null | tr -d ' ') || majmin=""
+	fstype=$(findmnt -n -o FSTYPE "$ROOT" 2>/dev/null) || fstype=""
+	sysdir=""
+	if [ -n "$majmin" ]; then sysdir=$(readlink -f "/sys/dev/block/$majmin" 2>/dev/null) || sysdir=""; fi
+	if [ -z "$sysdir" ] || [ ! -f "$sysdir/partition" ]; then
+		log "$ROOT liegt auf keiner Partition; nichts zu vergrößern"
+		return 0
+	fi
+	if [ "$fstype" != ext4 ]; then
+		log "$ROOT ist $fstype statt ext4; nichts zu vergrößern"
+		return 0
+	fi
+	nr=$(cat "$sysdir/partition")
+	name=$(basename "$sysdir")
+	parent=$(dirname "$sysdir")
+	disk=$(basename "$parent")
+	for p in "$parent/$disk"*/partition; do
+		[ -f "$p" ] || continue
+		if [ "$(cat "$p")" -gt "$nr" ]; then
+			log "Partition $nr von $disk ist nicht die letzte; keine Vergrößerung"
+			return 0
+		fi
+	done
+	dev=/dev/$name
+	diskdev=/dev/$disk
+	total=$(blockdev --getsz "$diskdev") || fail "Größe von $diskdev nicht ermittelbar" || return 1
+	start=$(cat "$sysdir/start")
+	size=$(cat "$sysdir/size")
+	# Sektoren zu 512 Byte; höchstens 16 MiB frei dahinter gelten als "am Ende".
+	if [ $((total - start - size)) -le 32768 ]; then
+		log "Partition $nr reicht schon bis zum Ende von $diskdev"
+	else
+		log "Vergrößere $dev ($size Sektoren) bis zum Ende von $diskdev ($total Sektoren)"
+		echo ', +' | sfdisk -N "$nr" --no-reread --quiet "$diskdev" || fail "Partition $nr auf $diskdev nicht vergrößerbar" || return 1
+		partx -u -n "$nr" "$diskdev" || fail "Kernel kennt die neue Größe von $dev nicht" || return 1
+		if command -v udevadm >/dev/null 2>&1; then
+			udevadm settle --timeout=10 || true
+		fi
+	fi
+	resize2fs "$dev" || fail "resize2fs auf $dev gescheitert" || return 1
+	log "Wurzel $dev: $(cat "$sysdir/size") Sektoren"
+}
+
+(grow_root) || log "Die Systempartition wurde nicht vergrößert; das Gerät startet trotzdem"
+exit 0

@@ -1,0 +1,16 @@
+[Unit]
+Description=HMI-Kiosk Systempartition an die Kartengröße anpassen
+# Nur für Systeme ohne SD-Abbild (install.sh). Stammt die Wurzel aus einer dateiweisen SD-Sicherung von einer
+# kleineren Karte, wächst Partition 2 samt ext4 hier online auf die ganze Karte; sonst endet der Dienst sofort.
+# Fehler stehen nur im Protokoll (das Skript endet immer mit 0), Helfer und Dienst starten in jedem Fall danach.
+ConditionPathExists=!/etc/hmi-kiosk/image-release
+After=local-fs.target
+Before=hmi-kiosk-helper.service hmi-kiosk.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hmi-kiosk-grow-root
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target
