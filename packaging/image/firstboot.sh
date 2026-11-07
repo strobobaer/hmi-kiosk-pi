@@ -7,6 +7,9 @@
 #   hmi-kiosk-firstboot finish        richtet /data ein, kopiert die erste Programmversion,
 #                                     schaltet Overlay und schreibgeschützte Boot-Partition ein
 #                                     und startet neu. Läuft, bis die Erledigt-Marke steht.
+#   hmi-kiosk-firstboot grow-data     vergrößert Partition 3 und /data auf die ganze Karte, wenn das
+#                                     Abbild von einer kleineren Karte stammt (kompakte SD-Sicherung).
+#                                     Läuft bei jedem Start, ändert sonst nichts und endet mit 0.
 #
 # Die Erledigt-Marke liegt in /etc/hmi-kiosk (root, untere Ebene des Overlays), nicht auf /data:
 # /data gehört dem Dienst, und eine dort löschbare Marke ließe finish als root erneut in einem
@@ -164,6 +167,53 @@ prepare_data() {
 	add_fstab_entry
 }
 
+# Bei einer Karte, die größer ist als die der Sicherung (kompaktes Abbild, kleine Partition 3):
+# Partition 3 (HMIDATA) bis zum Ende des Geräts vergrößern und das Dateisystem online anpassen.
+# Läuft bei jedem Start vor dem Helfer und dem Dienst; ist alles schon groß genug, ändert sich
+# nichts. Fehler werden nur protokolliert, das Gerät startet trotzdem. resize2fs läuft auch dann,
+# wenn die Partition schon am Ende steht: so holt der nächste Start einen gescheiterten Schritt nach.
+grow_data() {
+	# Das Gerät kommt aus dem Einhängepunkt (die Unit hängt an data.mount), nicht aus blkid -L:
+	# dessen Zwischenspeicher kann eine alte Beschriftung melden. blkid -p liest das Gerät selbst.
+	dev=$(findmnt -n -o SOURCE "$DATA" 2>/dev/null) || dev=""
+	case "$dev" in
+	/dev/*) ;;
+	*)
+		log "Keine Datenpartition unter $DATA eingehängt; nichts zu vergrößern"
+		return 0
+		;;
+	esac
+	fstype=$(blkid -p -o value -s TYPE "$dev" 2>/dev/null || true)
+	label=$(blkid -p -o value -s LABEL "$dev" 2>/dev/null || true)
+	[ "$fstype" = ext4 ] && [ "$label" = "$LABEL" ] || {
+		log "$dev ist nicht $LABEL (ext4, Label $label); nichts zu vergrößern"
+		return 0
+	}
+	name=$(basename "$(readlink -f "$dev")")
+	nr=$(cat "/sys/class/block/$name/partition" 2>/dev/null) || fail "$dev ist keine Partition"
+	[ "$nr" = 3 ] || {
+		log "$dev ist Partition $nr statt 3; keine Vergrößerung"
+		return 0
+	}
+	disk=/dev/$(basename "$(readlink -f "/sys/class/block/$name/..")")
+	total=$(blockdev --getsz "$disk") || fail "Größe von $disk nicht ermittelbar"
+	start=$(cat "/sys/class/block/$name/start")
+	size=$(cat "/sys/class/block/$name/size")
+	# Sektoren zu 512 Byte; höchstens 16 MiB frei dahinter gelten als "am Ende".
+	if [ $((total - start - size)) -le 32768 ]; then
+		log "Partition 3 reicht schon bis zum Ende von $disk"
+	else
+		log "Vergrößere $dev ($size Sektoren) bis zum Ende von $disk ($total Sektoren)"
+		echo ', +' | sfdisk -N 3 --no-reread --quiet "$disk" || fail "Partition 3 auf $disk nicht vergrößerbar"
+		partx -u -n 3 "$disk" || fail "Kernel kennt die neue Größe von $dev nicht"
+		if command -v udevadm >/dev/null 2>&1; then
+			udevadm settle --timeout=10 || true
+		fi
+	fi
+	resize2fs "$dev" || fail "resize2fs auf $dev gescheitert"
+	log "Datenpartition $dev: $(cat "/sys/class/block/$name/size") Sektoren"
+}
+
 image_version() {
 	v=$(sed -n 's/^version=//p' "$RELEASE_FILE" 2>/dev/null | head -n 1)
 	[ -n "$v" ] || fail "Keine Version in $RELEASE_FILE"
@@ -289,8 +339,12 @@ finish() {
 case "${1:-}" in
 prepare-data) prepare_data ;;
 finish) finish ;;
+grow-data)
+	# Jeder Fehler endet hier: das Gerät soll mit der kleinen Partition trotzdem starten.
+	(grow_data) || log "Die Datenpartition wurde nicht vergrößert; das Gerät startet trotzdem"
+	;;
 *)
-	echo "Aufruf: hmi-kiosk-firstboot prepare-data|finish" >&2
+	echo "Aufruf: hmi-kiosk-firstboot prepare-data|finish|grow-data" >&2
 	exit 2
 	;;
 esac

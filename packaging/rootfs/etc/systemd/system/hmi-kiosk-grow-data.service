@@ -1,0 +1,17 @@
+[Unit]
+Description=HMI-Kiosk Datenpartition an die Kartengröße anpassen
+# Bei jedem Start. Stammt das Abbild von einer kleineren Karte (kompakte SD-Sicherung), wächst
+# Partition 3 samt Dateisystem hier auf die ganze Karte; sonst endet der Dienst sofort.
+# RequiresMountsFor= ordnet nach data.mount ein. Fehler stehen nur im Protokoll (das Skript
+# endet immer mit 0), der Dienst und der Helfer starten in jedem Fall danach.
+RequiresMountsFor=/data
+After=hmi-kiosk-firstboot.service
+Before=hmi-kiosk-helper.service hmi-kiosk.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hmi-kiosk-firstboot grow-data
+TimeoutStartSec=15min
+
+[Install]
+WantedBy=multi-user.target

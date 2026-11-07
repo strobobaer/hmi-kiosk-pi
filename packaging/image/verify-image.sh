@@ -13,9 +13,9 @@ set -eu
 
 KIOSK_UID=1100
 REQUIRED_PACKAGES="labwc xwayland chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
-xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk"
+xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
-UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service"
+UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service"
 
 usage() {
 	echo "Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>" >&2
@@ -198,6 +198,21 @@ for l in TimeoutStartSec=15min Conflicts=shutdown.target "Before=local-fs.target
 done
 [ -d "$R/data" ] || msg="$msg; Einhängepunkt /data fehlt"
 if [ -z "$msg" ]; then ok fstab "kein /data-Eintrag im Abbild, firstboot ergänzt ihn ohne nofail mit fsck-Pass 2, fsck.repair=yes"; else bad fstab "${msg#; }"; fi
+
+# Vergrößerung der Datenpartition beim Start (kompakte SD-Sicherung auf größerer Karte)
+msg=""
+g=hmi-kiosk-grow-data.service
+for l in Type=oneshot RequiresMountsFor=/data "Before=hmi-kiosk-helper.service hmi-kiosk.service" \
+	"ExecStart=/usr/local/sbin/hmi-kiosk-firstboot grow-data"; do
+	unit_has "$g" "$l" || msg="$msg; $g ohne $l"
+done
+if grep -q '^Condition' "$S/$g" 2>/dev/null; then msg="$msg; $g hat eine Bedingung (muss bei jedem Start laufen)"; fi
+grep -q '^grow_data()' "$fb" 2>/dev/null || msg="$msg; firstboot hat keine Funktion grow_data"
+grep -q '^grow-data)' "$fb" 2>/dev/null || msg="$msg; firstboot kennt grow-data nicht"
+for t in sfdisk resize2fs mkfs.ext4 debugfs blkid blockdev partx findmnt; do
+	[ -x "$R/usr/sbin/$t" ] || [ -x "$R/usr/bin/$t" ] || msg="$msg; $t fehlt im Abbild"
+done
+if [ -z "$msg" ]; then ok datenpartition-waechst "$g läuft bei jedem Start nach data.mount vor Helfer und Dienst, Werkzeuge vorhanden"; else bad datenpartition-waechst "${msg#; }"; fi
 
 # initramfs des Pi-5-Kernels enthält overlayroot (sonst bliebe das Overlay wirkungslos)
 if [ ! -f "$B/initramfs_2712" ]; then
