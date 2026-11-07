@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Startet den Kiosk-Dienst zum Ausprobieren im Container (kein lokales Go nötig).
+# Kachelseite: http://localhost:8080  Admin-Seite: https://localhost:8443/admin/
+# Ohne root-Helfer und ohne Chromium; Daten bleiben im Docker-Volume hmi-kiosk-devdata.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+case "$(uname -s)" in
+MINGW* | MSYS* | CYGWIN*) root="$(cygpath -m "$root")"; export MSYS_NO_PATHCONV=1 ;;
+esac
+docker rm -f hmi-kiosk-dev >/dev/null 2>&1 || true
+exec docker run --rm --init --name hmi-kiosk-dev \
+  -p 127.0.0.1:8080:8080 -p 127.0.0.1:8443:8443 \
+  -v "$root:/src" -w /src \
+  -v hmi-kiosk-gomod:/go/pkg/mod -v hmi-kiosk-gobuild:/root/.cache/go-build \
+  -v hmi-kiosk-devdata:/devdata \
+  golang:1.24-bookworm \
+  go run ./cmd/hmi-kiosk -data /devdata/data -run /devdata/run \
+  -local 0.0.0.0:8080 -admin 0.0.0.0:8443 -no-chromium
