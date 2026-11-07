@@ -307,3 +307,23 @@ func quietLog(t *testing.T) func() {
 	log.SetOutput(io.Discard)
 	return func() { log.SetOutput(os.Stderr) }
 }
+
+func TestMaintenanceNewTerminalDoesNotPrefillOldName(t *testing.T) {
+	_, b := maintenanceEnv(t)
+	body := b.get("/admin/maintenance").Body.String()
+	wantNotContains(t, body, `name="name" value="Terminal 1"`)
+	wantContains(t, body, `name="name" value=""`)
+}
+
+func TestMaintenanceNewTerminalRejectsOldName(t *testing.T) {
+	e, b := maintenanceEnv(t)
+	before, oldCert := e.cfg(), readCert(t, e)
+	r := b.postVia("/admin/maintenance", "/admin/maintenance/new", url.Values{"name": {" Terminal 1 "}, "role": {"normal"}})
+	if r.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("Status %d: %s", r.Code, r.Body.String())
+	}
+	wantContains(t, r.Body.String(), "vom bisherigen Namen „Terminal 1“ unterscheiden")
+	if e.cfg().Terminal != before.Terminal || readCert(t, e) != oldCert || len(e.helper.got()) != 0 {
+		t.Fatal("trotz Fehler geändert")
+	}
+}

@@ -73,7 +73,7 @@ func (a *admin) renderMaintenance(w http.ResponseWriter, s sessionRef, status in
 	d := maintenanceData{
 		OldName: cfg.Terminal.Name, OldRole: roleLabel(cfg.Terminal.Role),
 		OldHW: shortHardwareID(cfg.Terminal.HardwareID), NewHW: shortHardwareID(a.hardwareID()),
-		Name: cfg.Terminal.Name, Role: string(cfg.Terminal.Role),
+		Role: string(cfg.Terminal.Role), // der alte Name wird nicht vorgeschlagen: ein neues Terminal braucht einen eigenen
 	}
 	if form != nil {
 		d.Name, d.Role = form.Name, form.Role
@@ -105,6 +105,9 @@ func (a *admin) handleMaintenanceReplace(w http.ResponseWriter, r *http.Request,
 func (a *admin) handleMaintenanceNew(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	f := maintenanceData{Name: strings.TrimSpace(r.PostForm.Get("name")), Role: r.PostForm.Get("role")}
 	a.finishMaintenance(w, r, s, func(c *config.Config) error {
+		if f.Name == c.Terminal.Name {
+			return fmt.Errorf("Der Name des neuen Terminals muss sich vom bisherigen Namen „%s“ unterscheiden.", c.Terminal.Name)
+		}
 		c.Terminal.ID = config.NewTerminalID()
 		c.Terminal.Name = f.Name
 		c.Terminal.Role = config.Role(f.Role)
