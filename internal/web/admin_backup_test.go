@@ -23,6 +23,8 @@ type fakeBackup struct {
 	cancelErr error
 	statusErr error
 	status    helperapi.BackupStatus
+	info      helperapi.BackupInfo
+	infoErr   error
 	streams   int
 	starts    []string
 	cancels   int
@@ -72,6 +74,12 @@ func (f *fakeBackup) BackupStatus(context.Context) (helperapi.BackupStatus, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.status, f.statusErr
+}
+
+func (f *fakeBackup) BackupInfo(context.Context) (helperapi.BackupInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.info, f.infoErr
 }
 
 func (f *fakeBackup) set(st helperapi.BackupStatus) {
@@ -200,9 +208,9 @@ func TestBackupPageIdle(t *testing.T) {
 	}
 	body := r.Body.String()
 	wantContains(t, body, "SD-Sicherung", "Herunterladen", "Auf USB-Stick schreiben",
-		"Kopie im laufenden Betrieb", "Passwörter und Schlüssel", "Konfigurations-Export",
+		"Kopie im laufenden Betrieb", "passt auf jede Karte ab 16 GB", "Passwörter und Schlüssel", "Konfigurations-Export",
 		`action="/admin/system/backup/download"`, `action="/admin/system/backup/usb"`)
-	wantNotContains(t, body, `http-equiv="refresh"`, "Abbrechen", "<script>")
+	wantNotContains(t, body, `http-equiv="refresh"`, "Abbrechen", "<script>", "mindestens so groß", "disabled")
 }
 
 func TestBackupPageRunningShowsProgress(t *testing.T) {
@@ -266,4 +274,46 @@ func TestBackupRoutesNeedLogin(t *testing.T) {
 	if e.backup.streams != 0 || len(e.backup.starts) != 0 || e.backup.cancels != 0 {
 		t.Error("Aktion ohne Anmeldung")
 	}
+}
+
+func TestBackupPageShowsExpectedRawSize(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.info = helperapi.BackupInfo{RawBytes: 3<<30 + 1<<29}
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, "Erwartete Rohgröße", "3,5 GB", "mindestens 16 GB")
+	wantNotContains(t, body, "disabled")
+}
+
+func TestBackupPageGreysOutButtonsWhenNotPossible(t *testing.T) {
+	const msg = "Die SD-Sicherung gibt es nur für Systeme aus dem SD-Abbild. Für dieses System den Konfigurations-Export nutzen."
+	e, b := newLoggedIn(t)
+	e.backup.info = helperapi.BackupInfo{Problem: msg}
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, msg, `action="/admin/system/backup/download"`)
+	wantNotContains(t, body, "Erwartete Rohgröße")
+	// Beide Knöpfe und beide Bestätigungsfelder sind gesperrt.
+	if n := strings.Count(body, "disabled"); n != 4 {
+		t.Errorf("gesperrte Elemente: %d, erwartet 4", n)
+	}
+}
+
+func TestBackupPageInfoUnavailableGreysOutButtons(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.infoErr = errors.New("Verbindung zum Helfer gestört (x)")
+	r := b.get("/admin/system/backup")
+	if r.Code != http.StatusOK {
+		t.Fatalf("Status %d", r.Code)
+	}
+	wantContains(t, r.Body.String(), "Verbindung zum Helfer gestört")
+	if n := strings.Count(r.Body.String(), "disabled"); n != 4 {
+		t.Errorf("gesperrte Elemente: %d, erwartet 4", n)
+	}
+}
+
+func TestBackupPageRunningWithoutTotalShowsPreparation(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.set(helperapi.BackupStatus{Running: true, Mode: "download", Target: "Browser"})
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, "wird vorbereitet", `http-equiv="refresh"`)
+	wantNotContains(t, body, "Fortschritt")
 }

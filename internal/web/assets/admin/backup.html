@@ -5,6 +5,7 @@
   {{if .Running}}
   <dl class="facts">
     <dt>Ziel</dt><dd>{{if .Download}}Download im Browser{{else}}{{.Target}}{{end}}</dd>
+    {{if .Preparing}}<dt>Stand</dt><dd>Die Datenpartition wird vorbereitet (kann einige Sekunden dauern).</dd>{{end}}
     {{if .Progress}}<dt>Fortschritt</dt><dd>{{.Progress}} ({{.Percent}} %)</dd>{{end}}
     {{if .Remaining}}<dt>Restzeit</dt><dd>{{.Remaining}}</dd>{{end}}
   </dl>
@@ -25,16 +26,18 @@
 {{if not .Running}}
 <section class="panel stack">
   <h2>Sicherung erstellen</h2>
-  <p class="hint">Kopie im laufenden Betrieb: sie entspricht einem Stand nach Stromausfall. Die Zielkarte muss mindestens so groß sein wie die Quelle (gleiches Modell oder größer). Das Abbild enthält alle Einstellungen, Passwörter und Schlüssel und muss vertraulich aufbewahrt werden. Es passt nur für dasselbe Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.</p>
+  <p class="hint">Kopie im laufenden Betrieb: sie entspricht einem Stand nach Stromausfall. Die Zielkarte muss mindestens 16 GB groß sein. Das Abbild passt auf jede Karte ab 16 GB und wächst beim ersten Start auf die ganze Karte. Es enthält alle Einstellungen, Passwörter und Schlüssel und muss vertraulich aufbewahrt werden. Es passt nur für dasselbe Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.</p>
+  {{if .Problem}}<p class="msg err">{{.Problem}}</p>
+  {{else if .Expected}}<p class="hint">Erwartete Rohgröße des Abbilds: {{.Expected}} (entpackt; die Datei ist komprimiert kleiner).</p>{{end}}
   <form method="post" action="/admin/system/backup/download" class="stack" data-confirm="Die Sicherung jetzt als Download starten?">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <label class="check"><input type="checkbox" name="confirm" value="ja" required> Ich habe die Hinweise gelesen</label>
-    <div class="actions"><button type="submit" class="btn">Herunterladen</button></div>
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required{{if .Problem}} disabled{{end}}> Ich habe die Hinweise gelesen</label>
+    <div class="actions"><button type="submit" class="btn"{{if .Problem}} disabled{{end}}>Herunterladen</button></div>
   </form>
   <form method="post" action="/admin/system/backup/usb" class="stack" data-confirm="Die Sicherung jetzt auf den USB-Stick schreiben?">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <label class="check"><input type="checkbox" name="confirm" value="ja" required> Ich habe die Hinweise gelesen</label>
-    <div class="actions"><button type="submit" class="btn">Auf USB-Stick schreiben</button></div>
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required{{if .Problem}} disabled{{end}}> Ich habe die Hinweise gelesen</label>
+    <div class="actions"><button type="submit" class="btn"{{if .Problem}} disabled{{end}}>Auf USB-Stick schreiben</button></div>
   </form>
 </section>
 {{end}}

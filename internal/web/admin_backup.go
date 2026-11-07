@@ -18,11 +18,14 @@ type BackupAPI interface {
 	BackupUSB(ctx context.Context, terminalName string) error
 	BackupCancel(ctx context.Context) error
 	BackupStatus(ctx context.Context) (helperapi.BackupStatus, error)
+	BackupInfo(ctx context.Context) (helperapi.BackupInfo, error)
 }
 
 const (
 	backupCallTimeout = 10 * time.Second
 	backupRefreshSec  = 3
+	// Der Helfer misst /data für die Größe; das dauert bei vielen Dateien.
+	backupInfoTimeout = 40 * time.Second
 )
 
 type backupView struct {
@@ -35,7 +38,10 @@ type backupView struct {
 	Finished  bool
 	File      string
 	LastError string
-	Unknown   bool // Stand nicht abrufbar
+	Unknown   bool   // Stand nicht abrufbar
+	Preparing bool   // läuft, das Abbild ist noch nicht gebaut (Größe unbekannt)
+	Expected  string // erwartete Rohgröße, leer wenn unbekannt
+	Problem   string // warum jetzt keine Sicherung möglich ist; sperrt die Knöpfe
 }
 
 func (a *admin) backupStatus() (helperapi.BackupStatus, error) {
@@ -56,6 +62,8 @@ func newBackupView(st helperapi.BackupStatus) backupView {
 			rest := st.ElapsedSec * float64(st.TotalBytes-st.ReadBytes) / float64(st.ReadBytes)
 			v.Remaining = formatRemaining(rest)
 		}
+	} else if st.Running {
+		v.Preparing = true
 	}
 	return v
 }
@@ -84,6 +92,8 @@ func (a *admin) renderBackup(w http.ResponseWriter, s sessionRef, status int, er
 		v = newBackupView(st)
 		if v.Running {
 			refresh = backupRefreshSec
+		} else {
+			a.fillBackupInfo(&v)
 		}
 	}
 	a.pageRefresh(w, s, status, "backup.html", "system", "SD-Sicherung", errMsg, refresh, v)
@@ -115,16 +125,17 @@ func (a *admin) handleBackupDownload(w http.ResponseWriter, r *http.Request, s s
 		a.renderBackup(w, s, http.StatusUnprocessableEntity, "Bitte die Sicherheitsabfrage bestätigen.")
 		return
 	}
+	// Der Helfer baut das Abbild vor der ersten Antwort; das dauert länger als die Fristen des Servers.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+	_ = rc.SetReadDeadline(time.Time{})
+
 	_, body, err := a.d.Backup.BackupStream(r.Context())
 	if err != nil {
 		a.renderBackup(w, s, http.StatusConflict, err.Error())
 		return
 	}
 	defer body.Close()
-
-	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Time{})
-	_ = rc.SetReadDeadline(time.Time{})
 
 	name := helperapi.BackupFileName(a.terminalName(), a.d.Clock.Now().Local())
 	h := w.Header()
@@ -172,4 +183,20 @@ func (a *admin) handleBackupCancel(w http.ResponseWriter, r *http.Request, s ses
 		return
 	}
 	a.done(w, r, s, "/admin/system/backup", "Die Sicherung wird abgebrochen.")
+}
+
+// fillBackupInfo fragt beim Helfer, ob und wie groß eine Sicherung würde. Geht es nicht,
+// steht der Grund auf der Seite und die Knöpfe sind gesperrt.
+func (a *admin) fillBackupInfo(v *backupView) {
+	ctx, cancel := context.WithTimeout(context.Background(), backupInfoTimeout)
+	defer cancel()
+	info, err := a.d.Backup.BackupInfo(ctx)
+	switch {
+	case err != nil:
+		v.Problem = err.Error()
+	case info.Problem != "":
+		v.Problem = info.Problem
+	case info.RawBytes > 0:
+		v.Expected = formatBytes(info.RawBytes)
+	}
 }
