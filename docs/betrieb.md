@@ -85,6 +85,27 @@ Eine zurückgeschaltete Version ist nur über erneutes Einspielen wieder erreich
 3. Wiederherstellen: System, „Konfiguration wiederherstellen“ (Passwort der Datei und Datei). Name, Kennung und Rolle des Terminals, Admin-Passwort und Netzwerk-Einstellungen bleiben dabei unverändert.
 4. Das Admin-Passwort ist nicht in der Datei.
 
+### SD-Sicherung
+
+Die SD-Sicherung ist ein Abbild der ganzen Karte als Datei `hmikiosk-<Terminalname>-<Datum>-<Uhrzeit>.img.gz`. Anders als die Konfiguration (oben) enthält sie auch das Betriebssystem und alle installierten Programmversionen. Sie gibt es nur für Systeme aus dem SD-Abbild; bei einer Installation mit `install.sh` ist der Knopf gesperrt, dort den Konfigurations-Export nutzen.
+
+Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesichert, die Datenpartition `/data` wird neu in eine kleine Partition gepackt (belegte Bytes plus 25 % plus 64 MB, höchstens 1 GB). Es passt deshalb auf **jede Karte ab 16 GB**, auch auf eine größere als die Originalkarte. Die Seite zeigt vorab die erwartete Rohgröße; die Datei ist komprimiert kleiner. Dauert etwa so lange, wie die Karte zum Lesen braucht (einige Minuten).
+
+**Erstellen** (Menü System, „SD-Sicherung“, Hinweise bestätigen):
+
+1. **Herunterladen:** Die Sicherung wird im Browser gespeichert. Das Terminal baut zuerst die Datenpartition auf (einige Sekunden), dann beginnt der Download. Die Seite zeigt den Fortschritt; „Abbrechen“ beendet ihn.
+2. **Auf USB-Stick schreiben:** Stick am Terminal einstecken (genau einer), „Auf USB-Stick schreiben“. Erlaubt sind exFAT, ext4 und NTFS; FAT32 wird abgelehnt (Dateien über 4 GB). Es müssen mindestens 4 GB frei sein. Erst bei der Meldung „Der Stick kann entfernt werden“ abziehen.
+
+Während einer Sicherung sind Neustart, Update und Funkeinstellungen gesperrt; es läuft immer nur eine Sicherung. Die Kopie entsteht im laufenden Betrieb: Boot und System sind schreibgeschützt und damit stimmig, `/data` wird nicht eingefroren, die Kopie entspricht einem Stand nach Stromausfall (das Dateisystem wird beim Start geprüft und repariert, die Konfiguration wird atomar geschrieben). Reicht der freie Arbeitsspeicher nicht (Reserve 512 MB) oder sind die Daten zu groß, lehnt das Terminal ab und nennt den Grund.
+
+**Vertraulich aufbewahren:** Das Abbild enthält alle Einstellungen, Passwörter und Schlüssel. Es gehört zu **diesem** Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.
+
+**Zurückspielen:**
+
+1. Raspberry Pi Imager starten, Gerät „Raspberry Pi 5“, Betriebssystem „Eigenes Image“ (unten in der Liste) und die Datei `.img.gz` wählen. Der Imager entpackt sie selbst.
+2. Zielkarte (mindestens 16 GB) wählen. Beim Hinweis auf **OS-Anpassungen** „Nein“ wählen: Das Abbild enthält schon alles; Anpassungen des Imagers gehören nicht hinein.
+3. Schreiben, Karte einsetzen, starten. Beim ersten Start **wächst die Datenpartition automatisch auf die ganze Karte** (Dienst `hmi-kiosk-grow-data`, danach kein weiterer Neustart nötig). Einzelheiten stehen im Journal (`journalctl -u hmi-kiosk-grow-data`); die Boot-Partition ist dann schreibgeschützt, deshalb gibt es dort keine Protokolldatei. Scheitert das Wachsen, startet das Gerät trotzdem mit der kleinen Partition; der nächste Start versucht es erneut.
+
 ### Schreibschutz (Overlay) ausschalten
 
 Das System läuft mit Schreibschutz: Änderungen am Betriebssystem sind nach einem Neustart weg. Nur `/data` bleibt beschreibbar. Der Schreibschutz lässt sich **nur durch eine Änderung an `cmdline.txt` auf einem PC** ausschalten. Die Admin-Seite kann es nicht. `raspi-config` erkennt die Eintragung nicht, weil sie als `overlayroot=tmpfs:recurse=0` geschrieben ist.
