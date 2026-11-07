@@ -18,13 +18,15 @@ const (
 	CmdBackupUSB    = "backup-usb"
 	CmdBackupStatus = "backup-status"
 	CmdBackupCancel = "backup-cancel"
+	CmdBackupInfo   = "backup-info"
 )
 
 // MaxBackupNameLen ist die längste Terminalbezeichnung im Dateinamen.
 const MaxBackupNameLen = 40
 
 const (
-	backupHeaderTimeout = 60 * time.Second
+	// Der Helfer baut vor der Kopfzeile die kleine Datenpartition (mkfs aus /data).
+	backupHeaderTimeout = 5 * time.Minute
 	maxHeaderBytes      = 4096
 )
 
@@ -170,4 +172,24 @@ func (s *streamBody) Read(p []byte) (int, error) { return s.r.Read(p) }
 func (s *streamBody) Close() error {
 	s.stop()
 	return s.conn.Close()
+}
+
+// BackupInfo sagt vorab, ob und wie groß eine Sicherung würde. Problem ist der deutsche
+// Grund, warum jetzt keine möglich ist (kein Abbild-System, zu viele Daten, zu wenig Speicher).
+type BackupInfo struct {
+	RawBytes int64  `json:"raw_bytes,omitempty"` // Rohgröße des Abbilds: Ende von Partition 3
+	Problem  string `json:"problem,omitempty"`
+}
+
+// BackupInfo fragt die erwartete Rohgröße und etwaige Hindernisse ab.
+func (c *Client) BackupInfo(ctx context.Context) (BackupInfo, error) {
+	raw, err := c.callData(ctx, CmdBackupInfo)
+	if err != nil {
+		return BackupInfo{}, err
+	}
+	var info BackupInfo
+	if err := json.Unmarshal(raw, &info); err != nil {
+		return BackupInfo{}, errors.New("Ungültige Antwort des Helfers")
+	}
+	return info, nil
 }

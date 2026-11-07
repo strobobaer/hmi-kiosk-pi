@@ -19,14 +19,20 @@ func (s *Server) handleBackupConn(ctx context.Context, c net.Conn, req request) 
 			return true
 		}
 		s.serveBackupStream(ctx, c)
-	case CmdBackupStatus, CmdBackupCancel:
+	case CmdBackupStatus, CmdBackupCancel, CmdBackupInfo:
 		if req.Arg != "" {
 			reply(c, errors.New("Dieser Befehl nimmt keinen Wert an"))
 			return true
 		}
-		if req.Cmd == CmdBackupStatus {
+		switch req.Cmd {
+		case CmdBackupStatus:
 			replyData(c, s.backup.status(), nil)
-		} else {
+		case CmdBackupInfo:
+			// Misst /data; das kann dauern, hält aber weder Mutex noch Sperre.
+			ictx, cancel := context.WithTimeout(ctx, infoTimeout)
+			replyData(c, s.backupInfo(ictx), nil)
+			cancel()
+		default:
 			reply(c, s.backup.userCancel())
 		}
 	default:
@@ -52,6 +58,10 @@ func (w idleWriter) Write(p []byte) (int, error) {
 // Der Stand wird vor dem Schließen festgehalten, damit der Dienst danach prüfen kann,
 // ob der Strom vollständig war.
 func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
+	if err := s.precheckSource(); err != nil {
+		reply(c, err)
+		return
+	}
 	// Unter dem Mutex, damit kein Befehl zwischen Prüfung und Sperre schlüpft.
 	s.mu.Lock()
 	run, err := s.backup.begin(ctx, "download", "Browser")
@@ -70,7 +80,9 @@ func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
 		if err := s.run(sctx, "sync"); err != nil {
 			return err
 		}
-		f, size, err := s.openCard()
+		octx, ocancel := context.WithTimeout(run.ctx, openTimeout)
+		defer ocancel()
+		f, size, err := s.openCard(octx)
 		if err != nil {
 			return err
 		}

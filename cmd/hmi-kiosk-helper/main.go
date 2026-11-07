@@ -61,6 +61,7 @@ func serveMain() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	srv.CleanupStale(ctx)
 	if err := srv.Serve(ctx); err != nil {
 		log.Fatal(err)
 	}

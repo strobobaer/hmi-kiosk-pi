@@ -57,6 +57,9 @@ func (s *Server) backupUSB(ctx context.Context, name string) (err error) {
 	if !validBackupName(name) {
 		return errors.New("Terminalname ungültig")
 	}
+	if err := s.precheckSource(); err != nil {
+		return err
+	}
 	run, err := s.backup.begin(s.baseCtx(), "usb", "USB-Stick")
 	if err != nil {
 		return err
@@ -70,17 +73,6 @@ func (s *Server) backupUSB(ctx context.Context, name string) (err error) {
 	if s.ExecOut == nil {
 		return errors.New("blkid ist nicht verfügbar")
 	}
-
-	card, size, err := s.openCard()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if !started {
-			card.Close()
-		}
-	}()
-	run.setTotal(size)
 
 	dev, err := s.findUSB(s.diskForExclusion())
 	if err != nil {
@@ -140,8 +132,7 @@ func (s *Server) backupUSB(ctx context.Context, name string) (err error) {
 	s.bgWG.Add(1)
 	go func() {
 		defer s.bgWG.Done()
-		defer card.Close()
-		s.writeUSB(run, card, part, mnt, file)
+		s.writeUSB(run, part, mnt, file)
 	}()
 	return nil
 }
@@ -157,10 +148,10 @@ func (s *Server) diskForExclusion() string {
 
 // writeUSB kopiert in die .part-Datei, schließt sie ab (fsync, umbenennen, sync) und hängt aus.
 // Bei Fehler oder Abbruch verschwindet die .part-Datei.
-func (s *Server) writeUSB(run *backupRun, card io.ReadCloser, part *os.File, mnt, file string) {
+func (s *Server) writeUSB(run *backupRun, part *os.File, mnt, file string) {
 	partPath := part.Name()
 	finalPath := filepath.Join(mnt, file)
-	err := s.copyCard(run, card, part)
+	err := s.copyFromSource(run, part)
 	var se sinkError
 	if errors.As(err, &se) {
 		err = usbWriteErr(se.err)
@@ -222,4 +213,17 @@ func ensureDir(p string) error {
 		return errors.New("kein Ordner")
 	}
 	return nil
+}
+
+// copyFromSource baut die Quelle (das kann dauern) und kopiert sie komprimiert nach w.
+func (s *Server) copyFromSource(run *backupRun, w io.Writer) error {
+	octx, cancel := context.WithTimeout(run.ctx, openTimeout)
+	card, size, err := s.openCard(octx)
+	cancel()
+	if err != nil {
+		return err
+	}
+	defer card.Close()
+	run.setTotal(size)
+	return s.copyCard(run, card, w)
 }

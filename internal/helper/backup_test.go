@@ -36,6 +36,25 @@ func makeCard(t *testing.T, size int) (string, []byte) {
 	return p, data
 }
 
+// rawFileSource liest eine Datei unverändert (statt des kompakten Formats) als Quelle.
+func rawFileSource(path string) OpenSource {
+	return func(context.Context) (io.ReadCloser, int64, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, 0, err
+		}
+		size, err := f.Seek(0, io.SeekEnd)
+		if err == nil {
+			_, err = f.Seek(0, io.SeekStart)
+		}
+		if err != nil {
+			f.Close()
+			return nil, 0, err
+		}
+		return f, size, nil
+	}
+}
+
 func gunzipAll(t *testing.T, r io.Reader) []byte {
 	t.Helper()
 	zr, err := gzip.NewReader(r)
@@ -53,7 +72,7 @@ func backupEnv(t *testing.T) (*env, []byte) {
 	t.Helper()
 	e := newEnv(t, "[all]\n")
 	card, data := makeCard(t, 20<<20)
-	e.srv.Backup.Source = card
+	e.srv.Backup.OpenSource = rawFileSource(card)
 	e.srv.Backup.IdleTimeout = 2 * time.Second
 	return e, data
 }
@@ -259,7 +278,9 @@ func TestBackupStatusInitiallyIdle(t *testing.T) {
 func TestBackupMissingSourceIsReported(t *testing.T) {
 	linuxOnly(t)
 	e, _ := backupEnv(t)
+	e.srv.Backup.OpenSource = nil
 	e.srv.Backup.Source = filepath.Join(t.TempDir(), "fehlt")
+	e.srv.Backup.ImageRelease = imageMarker(t)
 	cl := helperapi.New(startServer(t, e))
 	_, _, err := cl.BackupStream(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "SD-Karte") {

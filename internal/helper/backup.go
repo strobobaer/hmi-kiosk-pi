@@ -20,6 +20,13 @@ const (
 	CmdBackupUSB    = helperapi.CmdBackupUSB
 	CmdBackupStatus = helperapi.CmdBackupStatus
 	CmdBackupCancel = helperapi.CmdBackupCancel
+	CmdBackupInfo   = helperapi.CmdBackupInfo
+)
+
+const (
+	// openTimeout begrenzt den Bau des Abbilds (mkfs aus /data), infoTimeout das Ausmessen.
+	openTimeout = 10 * time.Minute
+	infoTimeout = 30 * time.Second
 )
 
 const (
@@ -41,10 +48,14 @@ var blockedDuringBackup = map[string]bool{
 // BackupConfig sind die Orte und Zeiten der SD-Sicherung; Leeres gilt als Voreinstellung.
 // Tests ersetzen sie durch Ersatzdateien.
 type BackupConfig struct {
-	// Source ersetzt die Erkennung: eine Datei oder ein Gerät, das statt der Karte gelesen wird.
+	// Source ersetzt die Erkennung: eine Datei oder ein Gerät mit MBR, das statt der Karte gelesen wird.
 	Source string
-	// OpenSource ersetzt die Quelle ganz (Nahtstelle für das Abbildformat).
+	// OpenSource ersetzt die Quelle ganz (Nahtstelle für das Abbildformat); Tests nutzen sie.
 	OpenSource    OpenSource
+	DataDir       string // /data
+	RunDir        string // /run (tmpfs für die Temp-Datei)
+	ImageRelease  string // /etc/hmi-kiosk/image-release
+	MemInfo       string // /proc/meminfo
 	MountInfo     string // /proc/self/mountinfo
 	SysClassBlock string // /sys/class/block
 	SysBlock      string // /sys/block
@@ -72,6 +83,11 @@ func (b BackupConfig) sysBlock() string  { return b.or(b.SysBlock, "/sys/block")
 func (b BackupConfig) devDir() string    { return b.or(b.DevDir, "/dev") }
 func (b BackupConfig) bootMount() string { return b.or(b.BootMount, bootMount) }
 func (b BackupConfig) usbMount() string  { return b.or(b.UsbMount, "/run/hmi-kiosk-usb") }
+func (b BackupConfig) dataDir() string   { return b.or(b.DataDir, "/data") }
+func (b BackupConfig) runDir() string    { return b.or(b.RunDir, "/run") }
+func (b BackupConfig) imageRelease() string {
+	return b.or(b.ImageRelease, "/etc/hmi-kiosk/image-release")
+}
 
 func (b BackupConfig) idle() time.Duration {
 	if b.IdleTimeout > 0 {

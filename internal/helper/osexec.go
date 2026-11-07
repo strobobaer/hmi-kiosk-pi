@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-var binaryNames = []string{"mount", "umount", "blkid", "sync", "rfkill", "systemctl", "timedatectl"}
+var binaryNames = []string{"mount", "umount", "blkid", "sync", "rfkill", "systemctl", "timedatectl", "mkfs.ext4", "debugfs"}
 var binaryDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
 
 // NewOSExec löst die benötigten Programme einmalig in festen Verzeichnissen auf
