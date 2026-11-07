@@ -30,13 +30,14 @@ type Coordinator interface {
 // Deps sind die Abhängigkeiten des Managers. TCP meldet eine ESTABLISHED-
 // Verbindung zum HMI (platform.HasEstablished), nicht die Erreichbarkeit.
 type Deps struct {
-	Coord    Coordinator
-	Runner   client.Runner
-	Profile  func() client.Profile
-	TCP      func(host string, port int) bool
-	RAMDir   func() (dir string, cleanup func(), err error)
-	Clock    Clock
-	Config   func() config.Config
+	Coord   Coordinator
+	Runner  client.Runner
+	Profile func() client.Profile
+	TCP     func(host string, port int) bool
+	RAMDir  func() (dir string, cleanup func(), err error)
+	Clock   Clock
+	Config  func() config.Config
+	// Password liefert das VNC-Passwort; ErrPasswordMissing heißt: verloren oder nicht lesbar, neu eingeben.
 	Password func(config.HMI) (string, error)
 	Screen   func() (w, h int)
 	Probe    func(ctx context.Context, h config.HMI, password string) rfb.ProbeResult
@@ -46,6 +47,11 @@ type Deps struct {
 	// Blocked liefert eine Meldung, solange kein Sitzungsstart erlaubt ist (Dauerprüfung); nil heißt immer erlaubt.
 	Blocked func() string
 }
+
+// ErrPasswordMissing meldet ein VNC-Passwort, das fehlt oder sich nicht öffnen lässt.
+var ErrPasswordMissing = errors.New("VNC-Passwort fehlt")
+
+const passwordMissingNotice = "VNC-Passwort fehlt – bitte in der Admin-Seite neu eingeben."
 
 // attempt ist ein Sitzungsversuch vom Touch bis zum Aufräumen. Ein laufender
 // Hintergrundschritt erkennt am Vergleich mit Manager.cur, ob er noch zählt.

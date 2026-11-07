@@ -1718,3 +1718,18 @@ func TestSetNoticeShowsStandingNoticeOnTiles(t *testing.T) {
 		t.Fatalf("Hinweis blieb: %q", got)
 	}
 }
+
+func TestMissingPasswordShowsRepairNoticeNoClient(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.passwordErr = fmt.Errorf("Schlüssel: %w", ErrPasswordMissing) })
+	h.open("a")
+	s := h.waitFor("Hinweis", func(s Snapshot) bool { return s.State == StateTiles && s.Notice != "" })
+	if s.Notice != "VNC-Passwort fehlt – bitte in der Admin-Seite neu eingeben." {
+		t.Fatalf("Hinweis %q", s.Notice)
+	}
+	h.mu.Lock()
+	probes := h.probes
+	h.mu.Unlock()
+	if h.runner.count() != 0 || probes != 0 {
+		t.Fatal("Client oder Prüfung trotz fehlendem Passwort")
+	}
+}

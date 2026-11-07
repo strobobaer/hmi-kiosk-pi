@@ -97,6 +97,10 @@ func (m *Manager) precheck(a *attempt) {
 	pw, err := m.d.Password(a.hmi)
 	if err != nil {
 		log.Printf("Sitzung: Passwort von HMI %q nicht lesbar: %v", a.hmi.ID, err)
+		if errors.Is(err, ErrPasswordMissing) {
+			m.end(a, passwordMissingNotice, false)
+			return
+		}
 		m.end(a, fmt.Sprintf("Passwort von „%s“ lässt sich nicht entschlüsseln", a.hmi.Name), false)
 		return
 	}
