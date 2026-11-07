@@ -6,7 +6,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung und
 
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen
-3. Wartung
+3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand)
 4. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -135,6 +135,27 @@ Der Dienst ist unabhängig vom Wartungsmodus und blockiert den Start nie; Meldun
 
 **Systeme ohne Raspberry Pi** (PC, Container): Der Dienst liest dort die DMI-Produkt-UUID. Sie ist oft nur für root lesbar oder fehlt; dann gibt es keine Erkennung, und die Seite System zeigt den Hinweis zur nicht lesbaren Hardware-Kennung.
 
+### Schlüssel prüfen und reparieren
+
+Auf der Seite **System**, Abschnitt „Schlüssel“, steht bei jedem Aufruf der aktuelle Stand:
+
+- **Geräteschlüssel** (`/data/secrets.key`): „passt“, wenn sich alle gespeicherten Passwörter der HMIs und der gemeinsame Terminal-Schlüssel öffnen lassen. Sonst steht dort die Liste der betroffenen Einträge (HMI-Namen, „Terminal-Schlüssel“) und ein Knopf „Reparieren“.
+- **Schlüssel der anderen Terminals:** je eingetragenem Terminal „Schlüssel stimmt“, „Schlüssel falsch“ oder „nicht erreichbar“. Die Abfrage ändert nichts am anderen Terminal; je Terminal gilt ein Zeitlimit von 3 Sekunden, alle laufen gleichzeitig. Ohne Terminals steht dort „keine Terminals eingetragen“.
+- **Update-Schlüssel:** Fingerabdruck (die ersten 16 Hex-Zeichen des SHA-256) des eingebauten öffentlichen Schlüssels. Steht dort „kein Schlüssel eingebaut“, sind Updates gesperrt.
+
+**Zwei Fälle bei Schlüsselproblemen**
+
+1. *Schlüsseldatei fehlt oder ist beschädigt, obwohl verschlüsselte Werte gespeichert sind.* Die Admin-Seite bleibt erreichbar (die Anmeldung hängt nicht am Geräteschlüssel), leitet aber nach der Anmeldung jede Seite auf `/admin/repair` um. Erreichbar bleiben Abmelden, Protokoll und die Reparaturseite. Die Kachelseite läuft weiter; ein HMI ohne lesbares Passwort zeigt beim Antippen „VNC-Passwort fehlt – bitte in der Admin-Seite neu eingeben.“ und startet keinen Client. Eine fehlende Schlüsseldatei wird **nicht** stillschweigend neu angelegt, solange verschlüsselte Werte vorhanden sind.
+2. *Die Schlüsseldatei ist lesbar, aber einzelne Werte öffnen sich nicht* (zum Beispiel stammt die Datei von einem anderen Gerät). Es gibt keine Umleitung. Die System-Seite, die HMI-Liste und die betroffenen HMI-Seiten zeigen einen Hinweis mit dem Knopf „Reparieren“; das HMI verhält sich beim Antippen wie oben.
+
+**Reparieren:** Auf der Reparaturseite „Neuen Geräteschlüssel erzeugen und betroffene Passwörter löschen“ wählen und bestätigen. Danach gilt ein neuer Schlüssel. Werte, die sich noch öffnen ließen, bleiben erhalten (neu verschlüsselt); alle anderen sind geleert. Die Seite nennt, was neu einzugeben ist, mit Links zu den betroffenen HMIs und zur Seite „Terminals“. In der HMI-Liste steht bei geleerten Passwörtern „Passwort fehlt“ (bei HMIs, die nie ein Passwort hatten, weiter „Ohne Passwort“); das Kennzeichen verschwindet, sobald ein neues Passwort gespeichert oder „Passwort entfernen“ gewählt wird.
+
+**Reihenfolge und Restrisiko bei Stromausfall:** Zuerst entsteht die neue Konfiguration nur im Speicher. Dann wird der neue Schlüssel atomar geschrieben, danach die Konfiguration atomar gespeichert. Scheitert das Speichern, kommt der alte Schlüssel zurück (oder die neue Datei wird entfernt, wenn es keine alte gab), und es bleibt alles beim Alten. Fällt der Strom genau zwischen den beiden Schreibvorgängen aus, liegt der neue Schlüssel zur alten Konfiguration auf der Platte. Das fällt beim nächsten Start auf (alle Werte unlesbar, Hinweis und Reparaturseite), es entsteht kein stiller Zustand; verloren sind dann die Passwörter, die vorher noch lesbar waren, sie sind neu einzugeben. Die Reparatur lässt sich wiederholen.
+
+### Wartungsmodus von Hand starten
+
+Sicherungen aus der Zeit vor der Hardware-Kennung lassen sich nicht automatisch als „auf einem anderen Gerät“ erkennen. Wer eine Sicherung auf einem Ersatzgerät oder als neues Terminal einspielt, startet den Wartungsablauf selbst: Seite **System**, Abschnitt „Wartungsmodus“, Haken setzen, „Wartungsmodus starten“, bestätigen. Das Terminal verhält sich dann wie beim Erkennen eines anderen Geräts: Die Kacheln und die Daueranzeige sind gesperrt, das Terminal stimmt sich nicht mit anderen ab und antwortet ihnen mit 503. Hinweis auf der Kachelseite: „Wartungsmodus: Von Hand gestartet. Einrichtung in der Admin-Seite.“ Die Admin-Seite öffnet die Wartungsseite („Als Ersatz übernehmen“ oder „Als neues Terminal einrichten“, siehe „SD-Sicherung auf ein anderes Gerät“). Das Speichern beendet den Wartungsmodus. Technisch ist es ein eigenes Kennzeichen in der Konfiguration (`terminal.maintenanceManual`); die gespeicherte Hardware-Kennung bleibt unberührt und wird beim Beenden auf die des Geräts gesetzt, sofern sie lesbar ist. Der Konfigurations-Export übernimmt das Kennzeichen nicht.
+
 ### Schreibschutz (Overlay) ausschalten
 
 Das System läuft mit Schreibschutz: Änderungen am Betriebssystem sind nach einem Neustart weg. Nur `/data` bleibt beschreibbar. Der Schreibschutz lässt sich **nur durch eine Änderung an `cmdline.txt` auf einem PC** ausschalten. Die Admin-Seite kann es nicht. `raspi-config` erkennt die Eintragung nicht, weil sie als `overlayroot=tmpfs:recurse=0` geschrieben ist.
@@ -210,7 +231,7 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 | „Nicht erreichbar: <Name>“ | Hinweisleiste oben auf der Kachelseite | Das andere Terminal antwortet nicht. | Adresse unter „Terminals“, Netz und Strom des anderen Terminals prüfen. Die Anzeige bleibt nutzbar, kurzzeitig können zwei Terminals am selben HMI hängen. |
 | „Keine Verbindung zu <HMI> zustande gekommen“ | Hinweis nach dem Antippen | Der Client hat in 15 Sekunden keine Verbindung hergestellt. | HMI prüfen (siehe „nicht erreichbar“). Unter Client das Profil wechseln. |
 | „Verbindung zu <HMI> verloren“ / „beendet“ | Hinweis | Das HMI hat die Verbindung getrennt oder das Netz war weg. | HMI und Netz prüfen. Neu verbinden. |
-| „Passwort von <HMI> lässt sich nicht entschlüsseln“ | Hinweis | Die Schlüsseldatei des Geräts passt nicht zu den gespeicherten Passwörtern. | Passwort des HMI neu eintragen. Tritt es bei allen HMIs auf, Konfiguration aus der Sicherung wiederherstellen. |
+| „VNC-Passwort fehlt – bitte in der Admin-Seite neu eingeben.“ | Hinweis nach dem Antippen einer Kachel | Das Passwort des HMI fehlt oder lässt sich mit dem Schlüssel des Geräts nicht öffnen. Es wird kein Client gestartet. | Passwort des HMI unter „Bearbeiten“ neu eintragen. Betrifft es mehrere HMIs, unter System „Reparieren“ (Abschnitt „Schlüssel prüfen und reparieren“). |
 | „Wartungsmodus: Das Terminal wurde auf ein anderes Gerät übertragen.“ | Hinweis auf der Kachelseite, Wartungsseite in der Admin-Seite | Die SD-Karte läuft in einem anderen Raspberry Pi als dem, auf dem sie eingerichtet wurde. | Admin-Seite öffnen und „Als Ersatz übernehmen“ oder „Als neues Terminal einrichten“ wählen (Abschnitt „SD-Sicherung auf ein anderes Gerät“). |
 | „Dieses HMI gibt es nicht mehr“ | Hinweis | Das HMI wurde gelöscht, während es genutzt wurde. | Kachelseite neu laden lassen. Daueranzeige unter Kiosk prüfen. |
 
@@ -222,7 +243,7 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 | Zertifikatswarnung | Das Gerät erzeugt ein eigenes Zertifikat. | Erwartet, bestätigen (Inbetriebnahme, Abschnitt 5). |
 | Admin-Passwort vergessen | Es gibt keine Rücksetzung in der Admin-Seite. | Neues Abbild schreiben (Ersatzkarte), Admin-Passwort festlegen, **Name und Rolle des Geräts setzen**, danach die gesicherte Konfiguration importieren (auch die eines anderen Terminals: der Import behält Name, Kennung und Rolle des Geräts). Das Admin-Passwort ist nicht in der Sicherung. |
 | Admin-Seite meldet **500 „Konfiguration nicht lesbar“** | Siehe unten. | Siehe unten. |
-| Admin-Seite meldet 503 | Der Schlüssel des Geräts (`secrets.key`) ist nicht lesbar. Die Ursache steht im Protokoll. | Terminal neu starten. Hält es an, Ersatzkarte (Abschnitt 3). |
+| Admin-Seite leitet nach der Anmeldung auf „Schlüssel reparieren“ um | Die Schlüsseldatei (`secrets.key`) fehlt oder ist beschädigt, obwohl verschlüsselte Werte gespeichert sind. | Abschnitt „Schlüssel prüfen und reparieren“. Alternativ aus einer Sicherung wiederherstellen. |
 | Warnung „Der Schreibschutz (Overlay auf /) ist nicht aktiv.“ (System) | Das Overlay ist aus, zum Beispiel nach Wartung. | `overlayroot=tmpfs:recurse=0` in `cmdline.txt` wieder einfügen (Abschnitt 3). |
 | Warnung „Kein Monitor erkannt“ (System) | Bildschirm nicht erkannt, es gilt 1920×1080. | Kabel und Bildschirm prüfen oder unter System die Auflösung fest eintragen. |
 | Warnung zur Konfiguration | Die letzte Konfigurationsdatei war defekt, das Gerät läuft mit der letzten guten Fassung. | Einstellungen prüfen, bei Bedarf aus der Sicherung wiederherstellen. |
