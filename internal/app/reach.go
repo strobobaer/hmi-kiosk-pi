@@ -75,7 +75,7 @@ type reachability struct {
 	hmis      func() []config.HMI
 	inSession func() string
 	check     func(ctx context.Context, host string, port int) bool
-	ping      func(ctx context.Context, host string) bool
+	ping      func(ctx context.Context, host string) (bool, error)
 	nudge     chan struct{}
 
 	mu    sync.Mutex
@@ -151,7 +151,10 @@ func (r *reachability) round(ctx context.Context) {
 			defer func() { <-sem }()
 			cctx, cancel := context.WithTimeout(ctx, reachLimit)
 			defer cancel()
-			ok := r.probe(cctx, h)
+			ok, err := r.probe(cctx, h)
+			if err != nil {
+				ok = true // kein Zustand wie bei „aus“: Die Prüfart selbst fehlt
+			}
 			r.mu.Lock()
 			r.state[h.ID] = ok
 			r.mu.Unlock()
@@ -169,9 +172,12 @@ func (r *reachability) round(ctx context.Context) {
 
 // probe wählt die Prüfart des HMI. Ping ist der Standard: Eine TCP-Verbindung zum
 // VNC-Port zählt RealVNC als Fehlversuch und sperrt die Adresse nach wenigen Malen.
-func (r *reachability) probe(ctx context.Context, h config.HMI) bool {
+func (r *reachability) probe(ctx context.Context, h config.HMI) (bool, error) {
 	if h.ReachMode() == config.ReachPort {
-		return r.check(ctx, h.Host, h.Port)
+		return r.check(ctx, h.Host, h.Port), nil
 	}
-	return r.ping != nil && r.ping(ctx, h.Host)
+	if r.ping == nil {
+		return false, nil
+	}
+	return r.ping(ctx, h.Host)
 }
