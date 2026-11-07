@@ -152,6 +152,13 @@ if grep -q 'x-systemd.growfs' "$R/etc/fstab"; then msg="$msg; fstab enthält x-s
 if installed cloud-init; then msg="$msg; cloud-init installiert"; fi
 if [ -z "$msg" ]; then ok groesse-fest "keine Vergrößerung der Systempartition"; else bad groesse-fest "${msg#; }"; fi
 
+# PCIe-Anschluss für NVMe-SSD (Pi 5)
+if grep -Eq '^dtparam=pciex1[[:space:]]*$' "$B/config.txt"; then
+	ok pcie-nvme "config.txt enthält dtparam=pciex1"
+else
+	bad pcie-nvme "config.txt ohne dtparam=pciex1 (NVMe-SSD würde nicht erkannt)"
+fi
+
 # Erster Start
 msg=""
 [ -x "$R/usr/local/sbin/hmi-kiosk-firstboot" ] || msg="$msg; /usr/local/sbin/hmi-kiosk-firstboot fehlt"

@@ -87,13 +87,9 @@ const errWritable = "Der Schreibschutz ist ausgeschaltet. Eine SD-Sicherung ist 
 // mountinfo, nicht der Quellname: die Wurzel erscheint auf dem Pi auch als /dev/root.
 func (s *Server) checkReadOnly(devPath string) error {
 	base := filepath.Base(devPath)
-	sep := ""
-	if base != "" && base[len(base)-1] >= '0' && base[len(base)-1] <= '9' {
-		sep = "p"
-	}
 	want := map[string]bool{}
-	for _, n := range []string{"1", "2"} {
-		b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), base+sep+n, "dev"))
+	for n := 1; n <= 2; n++ {
+		b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), partName(base, n), "dev"))
 		if err != nil {
 			return errors.New("Die Partitionen der SD-Karte ließen sich nicht prüfen: " + err.Error())
 		}

@@ -28,7 +28,7 @@ const (
 	fatLabelMax     = 11
 )
 
-const msgLayout = "Das Layout dieser SD-Karte wird von der dateiweisen Sicherung nicht unterstützt (%s). Unterstützt ist nur das Raspberry-Pi-Layout: Partition 1 (FAT, /boot/firmware) und Partition 2 (ext4, /), sonst nichts."
+const msgLayout = "Das Layout dieses Datenträgers (SD-Karte, SSD oder USB-Laufwerk) wird von der dateiweisen Sicherung nicht unterstützt (%s). Unterstützt ist nur das Raspberry-Pi-Layout: Partition 1 (FAT, /boot/firmware) und Partition 2 (ext4, /), sonst nichts."
 
 // filesExcludes sind die Ausschlüsse der Kopie von /, verankert an der Wurzel der Quelle.
 // Die Einhängepunkte (proc, sys, dev, run, tmp, mnt, media) legt der Bau danach leer an.
@@ -51,7 +51,7 @@ var filesTools = []struct{ name, pkg string }{
 }
 
 var (
-	diskNameRe = regexp.MustCompile(`^mmcblk[0-9]+$`)
+	diskNameRe = regexp.MustCompile(`^(mmcblk[0-9]+|nvme[0-9]+n[0-9]+|sd[a-z]+)$`)
 	fsLabelRe  = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,16}$`)
 	fatIDRe    = regexp.MustCompile(`^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$`)
 	ext4UUIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -97,7 +97,7 @@ func layoutErr(detail string) error { return fmt.Errorf(msgLayout, detail) }
 
 func checkDiskName(name string) error {
 	if !diskNameRe.MatchString(name) {
-		return layoutErr("die Karte ist kein mmcblk-Gerät, sondern " + name)
+		return layoutErr("das Gerät ist kein mmcblk-, nvme- oder sd-Datenträger, sondern " + name)
 	}
 	return nil
 }
@@ -123,14 +123,6 @@ func checkLayout(es [4]mbrEntry, devSectors int64) error {
 	return nil
 }
 
-func partDevice(card string, n int) string {
-	sep := ""
-	if card != "" && card[len(card)-1] >= '0' && card[len(card)-1] <= '9' {
-		sep = "p"
-	}
-	return fmt.Sprintf("%s%s%d", card, sep, n)
-}
-
 // mountDev liefert major:minor des zuletzt eingehängten Dateisystems auf dem Einhängepunkt.
 func (s *Server) mountDev(point string) (string, bool) {
 	raw, err := os.ReadFile(s.Backup.mountInfo())
@@ -148,7 +140,7 @@ func (s *Server) mountDev(point string) (string, bool) {
 }
 
 func (s *Server) partDevNum(disk string, n int) string {
-	b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), partDevice(disk, n), "dev"))
+	b, err := os.ReadFile(filepath.Join(s.Backup.sysClass(), partName(disk, n), "dev"))
 	if err != nil {
 		return ""
 	}
@@ -288,10 +280,10 @@ func (s *Server) planFiles(ctx context.Context) (*filesPlan, error) {
 		return nil, err
 	}
 	p := &filesPlan{card: card, sector0: sec, oldID: binary.LittleEndian.Uint32(sec[440:]), bootSectors: int64(es[0].Sectors)}
-	if p.boot, err = s.probeFS(ctx, partDevice(card, 1), "vfat", 1); err != nil {
+	if p.boot, err = s.probeFS(ctx, partName(card, 1), "vfat", 1); err != nil {
 		return nil, err
 	}
-	if p.root, err = s.probeFS(ctx, partDevice(card, 2), "ext4", 2); err != nil {
+	if p.root, err = s.probeFS(ctx, partName(card, 2), "ext4", 2); err != nil {
 		return nil, err
 	}
 	used, inodes, err := s.fsUsage(s.Backup.rootDir())

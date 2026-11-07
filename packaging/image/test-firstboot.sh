@@ -22,6 +22,13 @@ bad() {
 	fails=$((fails + 1))
 }
 
+echo "== Partitionsnamen (part_dev) für SD, NVMe und USB"
+eval "$(sed -n '/^part_dev() {/,/^}/p' "$FB")"
+for c in "/dev/mmcblk0 3 /dev/mmcblk0p3" "/dev/nvme0n1 3 /dev/nvme0n1p3" "/dev/sda 3 /dev/sda3"; do
+	set -- $c
+	if [ "$(part_dev "$1" "$2")" = "$3" ]; then ok "part_dev $1 $2 = $3"; else bad "part_dev $1 $2 = $(part_dev "$1" "$2"), erwartet $3"; fi
+done
+
 apt-get update -qq >/dev/null
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends fdisk e2fsprogs dosfstools \
 	overlayroot procps psmisc >/dev/null

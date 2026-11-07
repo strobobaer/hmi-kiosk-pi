@@ -310,7 +310,7 @@ func TestFilesPlanRejectsLayouts(t *testing.T) {
 }
 
 func TestFilesDiskNames(t *testing.T) {
-	for name, ok := range map[string]bool{"mmcblk0": true, "mmcblk10": true, "nvme0n1": false, "sda": false, "mmcblk0p1": false, "loop0": false} {
+	for name, ok := range map[string]bool{"mmcblk0": true, "mmcblk10": true, "nvme0n1": true, "nvme1n2": true, "sda": true, "sdab": true, "mmcblk0p1": false, "nvme0n1p1": false, "nvme0": false, "sda1": false, "sd": false, "loop0": false} {
 		err := checkDiskName(name)
 		if (err == nil) != ok {
 			t.Errorf("%s: %v", name, err)

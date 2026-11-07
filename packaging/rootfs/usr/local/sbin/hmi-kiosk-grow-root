@@ -1,18 +1,18 @@
 #!/bin/sh
-# hmi-kiosk-grow-root: die Systempartition (Partition 2, Wurzel) auf die ganze Karte vergrößern.
+# hmi-kiosk-grow-root: die Systempartition (Partition 2, Wurzel) auf den ganzen Datenträger vergrößern.
 # Läuft bei jedem Start (hmi-kiosk-grow-root.service). Das Abbild einer dateiweisen SD-Sicherung ist nur so
-# groß wie die belegten Daten plus Reserve; auf einer größeren Karte wächst die Wurzel hier online.
+# groß wie die belegten Daten plus Reserve; auf einem größeren Datenträger wächst die Wurzel hier online.
 #
 # Nur auf Systemen ohne SD-Abbild (ohne /etc/hmi-kiosk/image-release): Das Abbild hat eine eigene Datenpartition
-# und eine schreibgeschützte Wurzel. Wie die Sicherung (Layoutprüfung des Helfers) wirkt es nur auf einer Karte
-# oder SSD (mmcblk*, nvme*n*) mit genau zwei Partitionen, deren zweite die ext4-Wurzel ist. Fehlen mehr als
+# und eine schreibgeschützte Wurzel. Wie die Sicherung (Layoutprüfung des Helfers) wirkt es nur auf einer SD-Karte,
+# SSD oder einem USB-Laufwerk (mmcblk*, nvme*n*, sd*) mit genau zwei Partitionen, deren zweite die ext4-Wurzel ist. Fehlen mehr als
 # 16 MiB hinter ihrem Ende, wird die Tabelle erweitert (sfdisk, partx); resize2fs läuft immer, damit der
 # nächste Start einen gescheiterten Schritt nachholt. Ist alles groß genug, ändert sich nichts.
 # Das Skript endet immer mit 0: Fehler stehen nur im Protokoll, das Gerät startet trotzdem.
 #
 # Orte überschreibbar für den Test (test-grow-root.sh).
 ROOT=${HMI_GROW_ROOT_MOUNT:-/}
-DISKS=${HMI_GROW_ROOT_DISKS:-"mmcblk* nvme*n*"}
+DISKS=${HMI_GROW_ROOT_DISKS:-"mmcblk* nvme*n* sd*"}
 RELEASE=${HMI_GROW_ROOT_RELEASE:-/etc/hmi-kiosk/image-release}
 
 log() { echo "hmi-kiosk-grow-root: $*"; }

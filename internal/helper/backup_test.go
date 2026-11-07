@@ -721,3 +721,18 @@ func TestUSBMountOptions(t *testing.T) {
 		}
 	}
 }
+
+// Läuft das System selbst von einem USB-Laufwerk (sda), wird dieses nie als Sicherungsziel angeboten;
+// ein zweiter Stick (sdb) wird gefunden.
+func TestFindUSBSystemOnUSBDrive(t *testing.T) {
+	linuxOnly(t)
+	s, sys := detectEnv(t)
+	sysTree(t, sys, usbPath, "sda", "sda1", "sda2", "sda3")
+	if _, err := s.findUSB("sda"); err == nil || err.Error() != "Kein USB-Stick gefunden. Bitte einen Stick einstecken." {
+		t.Fatalf("Systemlaufwerk angeboten: %v", err)
+	}
+	sysTree(t, sys, "platform/xhci/usb1/1-2/1-2:1.0/host1/target1:0:0/1:0:0:0", "sdb", "sdb1")
+	if dev, err := s.findUSB("sda"); err != nil || dev != "/dev/sdb1" {
+		t.Fatalf("zweiter Stick: %q %v", dev, err)
+	}
+}

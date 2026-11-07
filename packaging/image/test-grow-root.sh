@@ -35,7 +35,7 @@ mkdir -p "$work/bin" "$work/root"
 PATH="$work/bin:$PATH"
 export HMI_GROW_ROOT_MOUNT="$work/root"
 export HMI_GROW_ROOT_RELEASE="$work/kein-image-release"
-export HMI_GROW_ROOT_DISKS="loop*" # sonst nur mmcblk* und nvme*n*
+export HMI_GROW_ROOT_DISKS="loop*" # sonst nur mmcblk*, nvme*n* und sd*
 
 img=$work/karte.img
 truncate -s 600M "$img"
@@ -71,9 +71,9 @@ else
 	bad "SD-Abbild: $(cat "$work/grow.log")"
 fi
 
-echo "== Gerät nicht in der Liste (Standard: mmcblk, nvme): nichts tun"
+echo "== Gerät nicht in der Liste (Standard: mmcblk, nvme, sd): nichts tun"
 before=$(table)
-if env -u HMI_GROW_ROOT_DISKS sh "$GR" >"$work/grow.log" 2>&1 && [ "$(table)" = "$before" ] && grep -q 'nicht unterstützt' "$work/grow.log"; then
+if env -u HMI_GROW_ROOT_DISKS sh "$GR" >"$work/grow.log" 2>&1 && [ "$(table)" = "$before" ] && grep -q 'nicht unterstützt' "$work/grow.log" && grep -qF '(nur mmcblk* nvme*n* sd*)' "$work/grow.log"; then
 	ok "loop-Gerät mit Standardliste: Tabelle unverändert, Exit 0"
 else
 	bad "Standardliste: $(cat "$work/grow.log")"

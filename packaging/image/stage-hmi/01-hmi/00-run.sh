@@ -76,6 +76,13 @@ grep -q 'consoleblank=0' "${CMDLINE}" || sed -i 's/$/ consoleblank=0/' "${CMDLIN
 # fsck.repair=yes (in pi-gen schon gesetzt): systemd-fsck repariert /data ohne Rückfrage beim Start.
 grep -Eq '(^| )fsck.repair=yes( |$)' "${CMDLINE}" || sed -i 's/$/ fsck.repair=yes/' "${CMDLINE}"
 
+# PCIe-Anschluss des Pi 5 einschalten, damit eine NVMe-SSD erkannt wird; ohne SSD harmlos.
+# Ein erneut geöffneter Abschnitt [all] am Dateiende stellt sicher, dass die Zeile für alle Modelle gilt.
+CONFIG="${R}/boot/firmware/config.txt"
+if ! grep -Eq '^dtparam=pciex1[[:space:]]*$' "${CONFIG}"; then
+	printf '\n[all]\n# NVMe-SSD am PCIe-Anschluss des Pi 5\ndtparam=pciex1\n' >>"${CONFIG}"
+fi
+
 # Unsichtbares Zeigerthema für labwc: ein durchsichtiges Bild 1x1 im Xcursor-Format.
 CURSORS="${R}/usr/share/icons/hmi-blank/cursors"
 install -d -m 755 "${CURSORS}"

@@ -88,6 +88,20 @@ Nötig: eine neue SD-Karte und der Raspberry Pi Imager auf dem PC.
 
 Die Beschriftung der neuen Karte: Datum und Version.
 
+### Auf SSD oder USB-Laufwerk installieren
+
+Dasselbe Abbild (`.img.xz`) läuft auf einer SD-Karte, einer NVMe-SSD und einem USB-Laufwerk; es gibt kein eigenes Abbild je Medium. **Auf Hardware ist das noch nicht erprobt** (siehe Abschnitt 12); die folgenden Schritte beruhen auf der Dokumentation von Raspberry Pi und auf Tests mit nachgebildeten Geräten.
+
+1. Abbild schreiben wie oben beschrieben (Raspberry Pi Imager, „Eigenes Image“, **ohne OS-Anpassung**), aber als Speicher die SSD (über einen USB-Adapter am PC) oder das USB-Laufwerk wählen.
+2. **Startreihenfolge des Pi 5 einmalig einstellen**, falls das Gerät nicht schon von SSD oder USB startet. Zwei Wege:
+   - Mit dem Raspberry Pi Imager: „Raspberry Pi Gerät“ Pi 5 wählen, unter „Betriebssystem“ **„Misc utility images“ → „Bootloader (Pi 5 family)“ → „NVMe/USB Boot“** auf eine freie SD-Karte schreiben, diese in den Pi 5 stecken und einmal starten. Der Bootloader schreibt die neue Reihenfolge in seinen Speicher; danach ist die Karte nicht mehr nötig.
+   - Auf einem laufenden Raspberry Pi OS: `sudo raspi-config` → „Advanced Options“ → „Boot Order“ → „NVMe/USB Boot“.
+3. Wenn die Startreihenfolge die SD-Karte vor SSD und USB bevorzugt, die SD-Karte danach aus dem Gerät nehmen. Eine eingesteckte Karte mit einem startfähigen System würde sonst vorgezogen.
+4. SSD oder USB-Laufwerk anschließen (SSD über einen M.2-Aufsatz am PCIe-Anschluss des Pi 5) und das Gerät starten. Das Abbild schaltet den PCIe-Anschluss ein (`dtparam=pciex1` in `config.txt`); ohne SSD schadet das nicht.
+5. Beim ersten Start legt das Gerät die Datenpartition `/data` im freien Rest des Mediums an, genau wie auf der SD-Karte (siehe Abschnitt 4). Die Partitionen heißen je nach Medium `nvme0n1p1` bis `nvme0n1p3`, `sda1` bis `sda3` oder `mmcblk0p1` bis `mmcblk0p3`; das Abbild und der Helfer leiten die Namen selbst ab.
+
+Die SD-Sicherung und das Mitwachsen der Systempartition (siehe `docs/betrieb.md`) arbeiten auf SD-Karte, NVMe-SSD und USB-Laufwerk gleich. Läuft das System von einem USB-Laufwerk, bietet die Sicherung genau dieses Laufwerk nie als Ziel an; ein zweiter USB-Stick wird als Ziel gefunden.
+
 ## 4. Erster Start
 
 Raspi mit Netzwerkkabel, Bildschirm und Strom verbinden.
