@@ -71,7 +71,10 @@
     fetch("/").then(function (r) { return r.text(); }).then(function (html) {
       var doc = new DOMParser().parseFromString(html, "text/html");
       var g = doc.getElementById("grid");
-      if (g && g.innerHTML !== $("grid").innerHTML) { $("grid").innerHTML = g.innerHTML; }
+      if (!g) { return; }
+      // Auch die Spalten-Einstellung (Klasse) übernehmen, sonst gilt ein geändertes Layout erst nach Neuladen.
+      if (g.className !== $("grid").className) { $("grid").className = g.className; }
+      if (g.innerHTML !== $("grid").innerHTML) { $("grid").innerHTML = g.innerHTML; }
     }).catch(function () {});
   }
 
