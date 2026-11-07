@@ -21,6 +21,7 @@ const (
 
 	defaultTimeout = 8 * time.Second
 	maxNameLen     = 4096
+	maxReasonLen   = 4096
 )
 
 // ProbeResult beschreibt das Ergebnis von Probe. Err ist für die Anzeige bestimmt.
@@ -176,7 +177,7 @@ func probeHandshake(rw io.ReadWriter, password string, res *ProbeResult) error {
 	switch sec {
 	case secNone:
 		if minor >= 8 {
-			if err := readSecurityResult(rw); err != nil {
+			if err := readSecurityResult(rw, minor); err != nil {
 				return err
 			}
 		}
@@ -192,7 +193,7 @@ func probeHandshake(rw io.ReadWriter, password string, res *ProbeResult) error {
 		if _, err := rw.Write(resp); err != nil {
 			return err
 		}
-		if err := readSecurityResult(rw); err != nil {
+		if err := readSecurityResult(rw, minor); err != nil {
 			return err
 		}
 	default:
@@ -225,36 +226,60 @@ func probeHandshake(rw io.ReadWriter, password string, res *ProbeResult) error {
 // rejected liest die Begründung, die der Server laut RFB nach „keine Verfahren“ schickt.
 func rejected(r io.Reader) error {
 	const base = "Der VNC-Server lehnt die Verbindung ab"
-	var n uint32
-	if err := binary.Read(r, binary.BigEndian, &n); err != nil || n == 0 {
+	reason := readReason(r, 512)
+	if reason == "" {
 		return errors.New(base)
 	}
-	if n > 512 {
-		n = 512
+	return &rejectError{msg: base + ": „" + reason + "“", locked: isLockout(reason)}
+}
+
+// readReason liest eine RFB-Begründung (uint32 Länge und Text). Fehlt sie oder ist
+// sie kürzer als angekündigt, zählt, was ankam; mehr als max Bytes werden nicht gelesen.
+func readReason(r io.Reader, max uint32) string {
+	var n uint32
+	if err := binary.Read(r, binary.BigEndian, &n); err != nil || n == 0 {
+		return ""
+	}
+	if n > max {
+		n = max
 	}
 	buf := make([]byte, n)
 	got, _ := io.ReadFull(r, buf)
-	reason := strings.TrimSpace(strings.Map(func(c rune) rune {
+	return strings.TrimSpace(strings.Map(func(c rune) rune {
 		if c < 0x20 || c == 0x7f {
 			return ' '
 		}
 		return c
 	}, string(buf[:got])))
-	if reason == "" {
-		return errors.New(base)
-	}
-	return &rejectError{msg: base + ": „" + reason + "“", locked: strings.Contains(strings.ToLower(reason), "too many")}
 }
 
-func readSecurityResult(r io.Reader) error {
+// isLockout erkennt die Sperre nach zu vielen Fehlversuchen (RealVNC: „Too many security failures“).
+func isLockout(reason string) bool {
+	return strings.Contains(strings.ToLower(reason), "too many")
+}
+
+// readSecurityResult wertet SecurityResult aus. Ab RFB 3.8 folgt einem Fehlschlag
+// eine Begründung: „too many …“ ist die Sperre des Servers, alles andere eine Ablehnung.
+func readSecurityResult(r io.Reader, minor int) error {
 	var v uint32
 	if err := binary.Read(r, binary.BigEndian, &v); err != nil {
 		return err
 	}
-	if v != 0 {
+	if v == 0 {
+		return nil
+	}
+	if minor < 8 {
 		return errAuthRejected
 	}
-	return nil
+	reason := readReason(r, maxReasonLen)
+	switch {
+	case reason == "":
+		return errAuthRejected
+	case isLockout(reason):
+		return &rejectError{msg: "Der VNC-Server lehnt die Anmeldung ab: „" + reason + "“", locked: true}
+	default:
+		return fmt.Errorf("%w: „%s“", errAuthRejected, reason)
+	}
 }
 
 // vncAuthResponse verschlüsselt die 16-Byte-Challenge mit DES. Der Schlüssel besteht
@@ -282,7 +307,7 @@ func vncAuthResponse(password string, challenge []byte) ([]byte, error) {
 const LockoutHint = "Der VNC-Server hat dieses Terminal vorübergehend gesperrt (zu viele Fehlversuche). " +
 	"Abhilfe: einige Minuten warten oder den VNC-Dienst am HMI neu starten; danach das Passwort prüfen."
 
-// rejectError ist die Ablehnung vor jeder Anmeldung; locked steht für die Sperre nach zu vielen Fehlversuchen.
+// rejectError ist eine Ablehnung mit Begründung des Servers; locked steht für die Sperre nach zu vielen Fehlversuchen.
 type rejectError struct {
 	msg    string
 	locked bool

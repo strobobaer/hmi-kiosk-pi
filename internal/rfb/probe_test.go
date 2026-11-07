@@ -383,3 +383,75 @@ func TestProbeMarksServerLockout(t *testing.T) {
 		}
 	}
 }
+
+// failingAuthServer spricht RFB 3.8 mit VNC-Passwort und antwortet auf jede Anmeldung
+// mit SecurityResult 1. reason wird mit Länge geschickt; ohne Begründung (nil) trennt
+// er direkt, mit short schickt er eine Länge, aber weniger Bytes.
+func failingAuthServer(t *testing.T, reason []byte, short bool) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Write([]byte("RFB 003.008\n"))
+			io.ReadFull(c, make([]byte, 12))
+			c.Write([]byte{1, secVNC})
+			io.ReadFull(c, make([]byte, 1))
+			c.Write(make([]byte, 16))
+			io.ReadFull(c, make([]byte, 16))
+			binary.Write(c, binary.BigEndian, uint32(1))
+			switch {
+			case reason == nil:
+			case short:
+				binary.Write(c, binary.BigEndian, uint32(len(reason)+100))
+				c.Write(reason)
+			default:
+				binary.Write(c, binary.BigEndian, uint32(len(reason)))
+				c.Write(reason)
+			}
+			c.Close()
+		}
+	}()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+func TestProbeSecurityResultReasonLockout(t *testing.T) {
+	for _, reason := range []string{"Too many security failures", "too MANY authentication failures"} {
+		r := Probe(context.Background(), "127.0.0.1", failingAuthServer(t, []byte(reason), false), "geheim")
+		if !r.Reachable || r.AuthOK || !r.Locked || r.AuthRejected || !strings.Contains(r.Err, reason) {
+			t.Fatalf("%q: %+v", reason, r)
+		}
+	}
+}
+
+func TestProbeSecurityResultReasonRejected(t *testing.T) {
+	r := Probe(context.Background(), "127.0.0.1", failingAuthServer(t, []byte("Authentication failed"), false), "geheim")
+	if !r.Reachable || r.AuthOK || r.Locked || !r.AuthRejected || !strings.Contains(r.Err, "Authentication failed") || !strings.Contains(r.Err, "Anmeldung abgelehnt") {
+		t.Fatalf("%+v", r)
+	}
+	// Zu kurze Begründung: was ankam, zählt.
+	r = Probe(context.Background(), "127.0.0.1", failingAuthServer(t, []byte("Bad password"), true), "geheim")
+	if r.AuthOK || r.Locked || !r.AuthRejected || !strings.Contains(r.Err, "Bad password") {
+		t.Fatalf("kurz: %+v", r)
+	}
+	// Riesige Längenangabe wird gekappt und nicht ausgewertet als Speicherwunsch.
+	big := []byte(strings.Repeat("x", 5000) + " too many")
+	r = Probe(context.Background(), "127.0.0.1", failingAuthServer(t, big, false), "geheim")
+	if r.AuthOK || r.Locked || !r.AuthRejected || len(r.Err) > 4200 {
+		t.Fatalf("lang: Locked=%v Rejected=%v len=%d", r.Locked, r.AuthRejected, len(r.Err))
+	}
+}
+
+func TestProbeSecurityResultWithoutReason(t *testing.T) {
+	r := Probe(context.Background(), "127.0.0.1", failingAuthServer(t, nil, false), "geheim")
+	if !r.Reachable || r.AuthOK || r.Locked || !r.AuthRejected || r.Err != errAuthRejected.Error() {
+		t.Fatalf("%+v", r)
+	}
+}
