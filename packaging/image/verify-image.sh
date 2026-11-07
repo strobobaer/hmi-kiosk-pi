@@ -15,7 +15,7 @@ KIOSK_UID=1100
 REQUIRED_PACKAGES="labwc xwayland chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
 xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
-UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service"
+UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service"
 
 usage() {
 	echo "Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>" >&2
@@ -213,6 +213,23 @@ for t in sfdisk resize2fs mkfs.ext4 debugfs blkid blockdev partx findmnt; do
 	[ -x "$R/usr/sbin/$t" ] || [ -x "$R/usr/bin/$t" ] || msg="$msg; $t fehlt im Abbild"
 done
 if [ -z "$msg" ]; then ok datenpartition-waechst "$g läuft bei jedem Start nach data.mount vor Helfer und Dienst, Werkzeuge vorhanden"; else bad datenpartition-waechst "${msg#; }"; fi
+
+# Netzwerk-Identität: eigene Maschinen-ID und eigener Rechnername auf einem geklonten Gerät
+msg=""
+i=hmi-kiosk-identity.service
+for l in Type=oneshot RequiresMountsFor=/data "Before=network-pre.target NetworkManager.service systemd-networkd.service shutdown.target" \
+	Wants=network-pre.target DefaultDependencies=no "ExecStart=/usr/local/sbin/hmi-kiosk-identity"; do
+	unit_has "$i" "$l" || msg="$msg; $i ohne $l"
+done
+if grep -q '^Condition' "$S/$i" 2>/dev/null; then msg="$msg; $i hat eine Bedingung (muss bei jedem Start laufen)"; fi
+if grep -Eq '^(User|Requires|BindsTo)=' "$S/$i" 2>/dev/null; then msg="$msg; $i nicht als root oder mit harter Abhängigkeit"; fi
+id_script=$R/usr/local/sbin/hmi-kiosk-identity
+if [ ! -x "$id_script" ] || [ "$(stat -c %u:%g:%a "$id_script" 2>/dev/null)" != 0:0:755 ]; then
+	msg="$msg; $id_script fehlt oder nicht root:root 755"
+fi
+grep -q '^enter_dir()' "$id_script" 2>/dev/null || msg="$msg; Identitätsskript prüft /data/system nicht"
+grep -q '^exit 0$' "$id_script" 2>/dev/null || msg="$msg; Identitätsskript endet nicht immer mit 0"
+if [ -z "$msg" ]; then ok netzwerk-identitaet "$i läuft bei jedem Start nach /data vor dem Netzwerk, Skript vorhanden"; else bad netzwerk-identitaet "${msg#; }"; fi
 
 # initramfs des Pi-5-Kernels enthält overlayroot (sonst bliebe das Overlay wirkungslos)
 if [ ! -f "$B/initramfs_2712" ]; then

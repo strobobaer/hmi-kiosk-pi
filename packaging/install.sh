@@ -418,6 +418,7 @@ main() {
 	fi
 	msg "Fertig. Die Admin-Seite ist unter https://<Adresse dieses Geräts>:8443 erreichbar, sobald der Dienst läuft."
 	msg "Kein Schreibschutz und keine eigene Datenpartition: das ist ein System ohne SD-Abbild. Der Watchdog wirkt nach dem nächsten Neustart."
+	msg "Hinweis: Wird dieses System auf ein zweites Gerät kopiert, den Rechnernamen dort von Hand ändern. Die Netzwerk-Identität (hmi-kiosk-identity) gibt es nur im SD-Abbild, hier ändert install.sh nichts automatisch."
 }
 
 main

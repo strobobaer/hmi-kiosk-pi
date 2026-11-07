@@ -87,6 +87,7 @@ files="$pg/stage-hmi/01-hmi/files"
 mkdir -p "$files/bin"
 cp -r packaging/rootfs "$files/rootfs"
 cp packaging/image/firstboot.sh "$files/firstboot.sh"
+cp packaging/image/identity.sh "$files/identity.sh"
 cp "$work/bin/hmi-kiosk" "$work/bin/hmi-kiosk-helper" "$files/bin/"
 printf 'HMI_VERSION=%s\nHMI_ENABLE_SSH=%s\n' "$VERSION" "$ssh" >"$files/build.env"
 # Unter Windows fehlen Ausführungsrechte; docker build übernimmt sie von hier.
