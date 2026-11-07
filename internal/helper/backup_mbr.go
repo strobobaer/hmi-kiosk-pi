@@ -14,7 +14,7 @@ const (
 	alignSectors = 2048
 )
 
-var errBadPartitionTable = errors.New("Die Partitionstabelle der SD-Karte ist nicht lesbar oder hat nicht die erwarteten Partitionen 1 und 2.")
+var errBadPartitionTable = errors.New("Die Partitionstabelle des Datenträgers ist nicht lesbar oder hat nicht die erwarteten Partitionen 1 und 2.")
 
 type mbrEntry struct {
 	Type    byte

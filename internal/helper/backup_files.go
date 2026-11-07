@@ -131,7 +131,7 @@ func (s *Server) openFiles(ctx context.Context, run *backupRun, tgt filesTarget)
 		}
 		free, ferr := s.Backup.free(dir)
 		if ferr != nil {
-			return nil, 0, fmt.Errorf("Der freie Platz auf der SD-Karte ist nicht lesbar: %v", ferr)
+			return nil, 0, fmt.Errorf("Der freie Platz auf dem Datenträger ist nicht lesbar: %v", ferr)
 		}
 		if msg := plan.cacheProblem(free); msg != "" {
 			return nil, 0, errors.New(msg)

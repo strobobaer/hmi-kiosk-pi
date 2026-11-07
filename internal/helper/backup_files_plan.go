@@ -266,7 +266,7 @@ func (s *Server) planFiles(ctx context.Context) (*filesPlan, error) {
 	defer dev.Close()
 	size, err := dev.Seek(0, 2)
 	if err != nil {
-		return nil, errors.New("Die SD-Karte ließ sich nicht öffnen: " + err.Error())
+		return nil, errors.New("Der Datenträger ließ sich nicht öffnen: " + err.Error())
 	}
 	sec := make([]byte, sectorSize)
 	if _, err := dev.ReadAt(sec, 0); err != nil {
@@ -318,7 +318,7 @@ func (p *filesPlan) cacheProblem(free int64) string {
 	if free >= p.cacheNeed() {
 		return ""
 	}
-	return fmt.Sprintf("Auf der SD-Karte ist nicht genug Platz für den Download (%s nötig, %s frei). Die Sicherung lässt sich auf einen USB-Stick schreiben.", fmtSize(p.cacheNeed()), fmtSize(free))
+	return fmt.Sprintf("Auf dem Datenträger ist nicht genug Platz für den Download (%s nötig, %s frei). Die Sicherung lässt sich auf einen USB-Stick schreiben.", fmtSize(p.cacheNeed()), fmtSize(free))
 }
 
 // filesInfo ist die Antwort von backup-info für die dateiweise Sicherung.
@@ -330,7 +330,7 @@ func (s *Server) filesInfo(ctx context.Context) helperapi.BackupInfo {
 	info := helperapi.BackupInfo{Files: true, RawBytes: p.rawSize, NeedCard: p.cacheNeed(), NeedUSB: p.usbNeed()}
 	free, ferr := s.cacheFree()
 	if ferr != nil {
-		info.DownloadProblem = "Der freie Platz auf der SD-Karte ist nicht lesbar: " + ferr.Error()
+		info.DownloadProblem = "Der freie Platz auf dem Datenträger ist nicht lesbar: " + ferr.Error()
 		return info
 	}
 	info.CardFree = free

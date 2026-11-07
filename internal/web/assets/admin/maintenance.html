@@ -2,7 +2,7 @@
 {{with .Body}}
 <section class="panel stack">
   {{if .Manual}}<p>Der Wartungsmodus wurde von Hand gestartet. Bis hier entschieden ist, sind die Kacheln gesperrt, und das Terminal stimmt sich nicht mit anderen Terminals ab.</p>
-  {{else}}<p>Die Karte dieses Terminals läuft auf einem anderen Gerät als dem, auf dem sie eingerichtet wurde. Bis hier entschieden ist, sind die Kacheln gesperrt, und das Terminal stimmt sich nicht mit anderen Terminals ab.</p>{{end}}
+  {{else}}<p>Der Datenträger dieses Terminals läuft auf einem anderen Gerät als dem, auf dem sie eingerichtet wurde. Bis hier entschieden ist, sind die Kacheln gesperrt, und das Terminal stimmt sich nicht mit anderen Terminals ab.</p>{{end}}
   <p>Bisher eingerichtet als: <strong>{{.OldName}}</strong> ({{.OldRole}})<br>
   Hardware-Kennung bisher: <code>{{.OldHW}}</code><br>
   Hardware-Kennung dieses Geräts: <code>{{.NewHW}}</code></p>

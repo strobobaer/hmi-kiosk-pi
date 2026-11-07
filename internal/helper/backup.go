@@ -289,14 +289,14 @@ func (s *Server) copyCard(run *backupRun, src io.Reader, w io.Writer) error {
 			break
 		}
 		if rerr != nil {
-			return errors.New("Die SD-Karte ließ sich nicht lesen: " + rerr.Error())
+			return errors.New("Der Datenträger ließ sich nicht lesen: " + rerr.Error())
 		}
 	}
 	if err := run.ctx.Err(); err != nil {
 		return err
 	}
 	if got, want := run.b.read.Load(), run.total(); got != want {
-		return fmt.Errorf("Die SD-Karte lieferte nur %d von %d Bytes.", got, want)
+		return fmt.Errorf("Der Datenträger lieferte nur %d von %d Bytes.", got, want)
 	}
 	if err := gz.Close(); err != nil {
 		return sinkError{err}

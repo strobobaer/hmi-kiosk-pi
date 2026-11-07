@@ -371,7 +371,7 @@ func TestBackupPageFilesWayShowsNoticeSizesAndDuration(t *testing.T) {
 
 func TestBackupPageFilesWayLockedDownloadKeepsUSB(t *testing.T) {
 	e, b := newLoggedIn(t)
-	e.backup.info = helperapi.BackupInfo{Files: true, RawBytes: 9 << 30, DownloadProblem: "Auf der SD-Karte ist nicht genug Platz für den Download (9,5 GB nötig, 2,0 GB frei)."}
+	e.backup.info = helperapi.BackupInfo{Files: true, RawBytes: 9 << 30, DownloadProblem: "Auf dem Datenträger ist nicht genug Platz für den Download (9,5 GB nötig, 2,0 GB frei)."}
 	body := b.get("/admin/system/backup").Body.String()
 	wantContains(t, body, "nicht genug Platz für den Download")
 	// Nur Bestätigungsfeld und Knopf des Downloads sind gesperrt.
@@ -386,9 +386,9 @@ func TestBackupPageFilesWayLockedDownloadKeepsUSB(t *testing.T) {
 
 func TestBackupPageFilesWayProblemLocksBoth(t *testing.T) {
 	e, b := newLoggedIn(t)
-	e.backup.info = helperapi.BackupInfo{Files: true, Problem: "Das Layout dieser SD-Karte wird von der dateiweisen Sicherung nicht unterstützt (x)."}
+	e.backup.info = helperapi.BackupInfo{Files: true, Problem: "Das Layout dieses Datenträgers wird von der dateiweisen Sicherung nicht unterstützt (x)."}
 	body := b.get("/admin/system/backup").Body.String()
-	wantContains(t, body, "Layout dieser SD-Karte")
+	wantContains(t, body, "Layout dieses Datenträgers")
 	if n := strings.Count(body, "disabled"); n != 4 {
 		t.Errorf("gesperrte Elemente: %d, erwartet 4", n)
 	}
