@@ -12,4 +12,6 @@ type dirAttr struct {
 	perm     uint32
 }
 
+func fsUsage(string) (int64, int64, error) { return 0, 0, errors.New("nur unter Linux") }
+
 func dirAttrOf(string) (dirAttr, error) { return dirAttr{}, errors.New("nur unter Linux") }

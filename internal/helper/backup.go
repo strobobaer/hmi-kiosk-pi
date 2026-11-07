@@ -31,6 +31,15 @@ const (
 	infoTimeout = 30 * time.Second
 )
 
+// Phasen im Status der Sicherung.
+const (
+	PhasePrepare  = "Vorbereiten"
+	PhaseCopy     = "Kopieren"
+	PhaseCompress = "Komprimieren"
+	PhaseTransfer = "Übertragen"
+	PhaseDone     = "Fertig"
+)
+
 const (
 	errBackupBusy   = "Eine SD-Sicherung läuft gerade."
 	msgCancelled    = "Die Sicherung wurde abgebrochen."
@@ -65,12 +74,21 @@ type BackupConfig struct {
 	DevDir        string // /dev
 	BootMount     string // /boot/firmware
 	UsbMount      string // /run/hmi-kiosk-usb
+	RootDir       string // / : Quelle der dateiweisen Sicherung
+	CacheDir      string // /var/cache/hmi-kiosk-backup : Arbeitsordner des Downloads (root, 0700)
+	ImageRunDir   string // /run/hmi-kiosk-image : Einhängepunkte beim Bau (root, 0700)
 	// IdleTimeout: so lange darf ein Schreibvorgang zum Dienst warten.
 	IdleTimeout time.Duration
 	FreeBytes   func(path string) (int64, error)
-	Now         func() time.Time
+	// FsUsage liefert belegte Bytes und belegte Inodes des Dateisystems unter path.
+	FsUsage func(path string) (bytes, inodes int64, err error)
+	// HasTool sagt, ob ein Programm für die dateiweise Sicherung installiert ist (nil: ja).
+	HasTool func(name string) bool
+	Now     func() time.Time
 
 	onChunk func(total int64) // nur Tests
+	// extraBytes ersetzt in Tests den Zuschlag von 512 MiB für das System der dateiweisen Sicherung.
+	extraBytes int64
 }
 
 func (b BackupConfig) or(v, def string) string {
@@ -87,7 +105,12 @@ func (b BackupConfig) devDir() string    { return b.or(b.DevDir, "/dev") }
 func (b BackupConfig) bootMount() string { return b.or(b.BootMount, bootMount) }
 func (b BackupConfig) usbMount() string  { return b.or(b.UsbMount, "/run/hmi-kiosk-usb") }
 func (b BackupConfig) dataDir() string   { return b.or(b.DataDir, "/data") }
-func (b BackupConfig) runDir() string    { return b.or(b.RunDir, "/run") }
+func (b BackupConfig) rootDir() string   { return b.or(b.RootDir, "/") }
+func (b BackupConfig) cacheDir() string  { return b.or(b.CacheDir, "/var/cache/hmi-kiosk-backup") }
+func (b BackupConfig) imageRunDir() string {
+	return b.or(b.ImageRunDir, "/run/hmi-kiosk-image")
+}
+func (b BackupConfig) runDir() string { return b.or(b.RunDir, "/run") }
 func (b BackupConfig) imageRelease() string {
 	return b.or(b.ImageRelease, "/etc/hmi-kiosk/image-release")
 }
@@ -121,6 +144,7 @@ type backupState struct {
 	cancel    context.CancelFunc
 	st        helperapi.BackupStatus
 	started   time.Time
+	phaseAt   time.Time
 	read      atomic.Int64
 }
 
@@ -140,8 +164,9 @@ func (b *backupState) begin(parent context.Context, mode, target string) (*backu
 	ctx, cancel := context.WithCancel(parent)
 	b.running, b.cancelled, b.cancel = true, false, cancel
 	b.started = time.Now()
+	b.phaseAt = b.started
 	b.read.Store(0)
-	b.st = helperapi.BackupStatus{Running: true, Mode: mode, Target: target}
+	b.st = helperapi.BackupStatus{Running: true, Mode: mode, Target: target, Phase: PhasePrepare}
 	return &backupRun{b: b, ctx: ctx}, nil
 }
 
@@ -157,7 +182,7 @@ func (b *backupState) status() helperapi.BackupStatus {
 	st := b.st
 	if b.running {
 		st.ReadBytes = b.read.Load()
-		st.ElapsedSec = time.Since(b.started).Seconds()
+		st.ElapsedSec = time.Since(b.phaseAt).Seconds()
 	}
 	return st
 }
@@ -176,6 +201,14 @@ func (b *backupState) userCancel() error {
 func (r *backupRun) setTarget(t string) {
 	r.b.mu.Lock()
 	r.b.st.Target = t
+	r.b.mu.Unlock()
+}
+
+// setPhase wechselt die Phase; die Restzeit rechnet ab ihrem Beginn.
+func (r *backupRun) setPhase(p string) {
+	r.b.mu.Lock()
+	r.b.st.Phase = p
+	r.b.phaseAt = time.Now()
 	r.b.mu.Unlock()
 }
 
@@ -204,7 +237,8 @@ func (r *backupRun) end(err error, file string) {
 	defer b.mu.Unlock()
 	b.st.Running = false
 	b.st.ReadBytes = b.read.Load()
-	b.st.ElapsedSec = time.Since(b.started).Seconds()
+	b.st.ElapsedSec = time.Since(b.phaseAt).Seconds()
+	b.st.Phase = ""
 	switch {
 	case err != nil && b.cancelled:
 		b.st.Error = msgCancelled
@@ -215,6 +249,7 @@ func (r *backupRun) end(err error, file string) {
 		b.st.File = file
 	default:
 		b.st.Finished, b.st.File = true, file
+		b.st.Phase = PhaseDone
 	}
 	b.running = false
 	b.cancel()

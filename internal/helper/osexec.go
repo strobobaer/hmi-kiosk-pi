@@ -12,6 +12,10 @@ import (
 )
 
 var binaryNames = []string{"mount", "umount", "blkid", "sync", "rfkill", "systemctl", "timedatectl", "mkfs.ext4", "debugfs"}
+
+// optionalBinaryNames werden nur für die dateiweise Sicherung gebraucht. Fehlen sie, startet der Helfer trotzdem;
+// die Sicherung meldet dann, was nachzuinstallieren ist.
+var optionalBinaryNames = []string{"losetup", "rsync", "mkfs.vfat"}
 var binaryDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
 
 // NewOSExec löst die benötigten Programme einmalig in festen Verzeichnissen auf
@@ -30,23 +34,39 @@ func NewOSExec() (Exec, error) {
 // NewOSExecOut ist wie NewOSExec, liefert aber die Standardausgabe (für blkid).
 func NewOSExecOut() (ExecOut, error) { return newOSRunner() }
 
+func lookupBinary(n string) string {
+	for _, d := range binaryDirs {
+		p := filepath.Join(d, n)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+// OSHasTool sagt, ob ein Programm in den festen Verzeichnissen liegt.
+func OSHasTool(name string) bool { return lookupBinary(name) != "" }
+
 func newOSRunner() (ExecOut, error) {
 	paths := map[string]string{}
 	for _, n := range binaryNames {
-		for _, d := range binaryDirs {
-			p := filepath.Join(d, n)
-			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
-				paths[n] = p
-				break
-			}
-		}
-		if paths[n] == "" {
+		if paths[n] = lookupBinary(n); paths[n] == "" {
 			return nil, fmt.Errorf("Programm %s nicht gefunden", n)
+		}
+	}
+	for _, n := range optionalBinaryNames {
+		if p := lookupBinary(n); p != "" {
+			paths[n] = p
 		}
 	}
 	return func(ctx context.Context, name string, args ...string) (string, error) {
 		p, ok := paths[name]
 		if !ok {
+			for _, o := range optionalBinaryNames {
+				if o == name {
+					return "", fmt.Errorf("Programm %s ist nicht installiert", name)
+				}
+			}
 			return "", fmt.Errorf("Programm %q nicht erlaubt", name)
 		}
 		cmd := exec.CommandContext(ctx, p, args...)
@@ -60,7 +80,7 @@ func newOSRunner() (ExecOut, error) {
 				msg = msg[:200]
 			}
 			if msg != "" {
-				return "", fmt.Errorf("%v: %s", err, msg)
+				return "", fmt.Errorf("%w: %s", err, msg)
 			}
 			return "", err
 		}

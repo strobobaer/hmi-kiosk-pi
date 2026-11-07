@@ -110,7 +110,7 @@ func TestBackupStreamRoundTrip(t *testing.T) {
 		t.Fatal("entpackte Daten weichen ab")
 	}
 	st := waitStopped(t, cl)
-	if st.Error != "" || !st.Finished || st.ReadBytes != size || st.TotalBytes != size || st.Mode != "download" {
+	if st.Error != "" || !st.Finished || st.ReadBytes != size || st.TotalBytes != size || st.Mode != "download" || st.Phase != "Fertig" {
 		t.Fatalf("Status: %+v", st)
 	}
 	if calls := e.fx.got(); len(calls) != 1 || calls[0] != "sync" {

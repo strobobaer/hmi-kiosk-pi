@@ -58,6 +58,7 @@ func serveMain() {
 	srv.HealthyMarker = *marker
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
+	srv.Backup.HasTool = helper.OSHasTool
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -57,7 +57,7 @@ func (s *Server) backupUSB(ctx context.Context, name string) (err error) {
 	if !validBackupName(name) {
 		return errors.New("Terminalname ungültig")
 	}
-	if err := s.precheckSource(); err != nil {
+	if err := s.precheckSource(ctx); err != nil {
 		return err
 	}
 	run, err := s.backup.begin(s.baseCtx(), "usb", "USB-Stick")
@@ -110,7 +110,16 @@ func (s *Server) backupUSB(ctx context.Context, name string) (err error) {
 	if ferr != nil {
 		return fmt.Errorf("Der freie Platz des USB-Sticks ist nicht lesbar: %v", ferr)
 	}
-	if free < minUSBFree {
+	if s.sourceKind() == kindFiles {
+		// Rohdatei und komprimierte Datei liegen zugleich auf dem Stick.
+		plan, err := s.planFiles(ctx)
+		if err != nil {
+			return err
+		}
+		if need := plan.usbNeed(); free < need {
+			return fmt.Errorf("Auf dem USB-Stick ist nicht genug Platz (%s nötig, %s frei).", fmtSize(need), fmtSize(free))
+		}
+	} else if free < minUSBFree {
 		return fmt.Errorf("Zu wenig freier Platz auf dem USB-Stick (%d GB frei, mindestens 4 GB nötig).", free>>30)
 	}
 	file := "hmikiosk-" + name + "-" + s.Backup.now().Format("2006-01-02-1504") + ".img.gz"
@@ -151,7 +160,7 @@ func (s *Server) diskForExclusion() string {
 func (s *Server) writeUSB(run *backupRun, part *os.File, mnt, file string) {
 	partPath := part.Name()
 	finalPath := filepath.Join(mnt, file)
-	err := s.copyFromSource(run, part)
+	err := s.copyFromSource(run, part, filesTarget{dir: mnt, name: strings.TrimSuffix(file, ".gz") + ".part"})
 	var se sinkError
 	if errors.As(err, &se) {
 		err = usbWriteErr(se.err)
@@ -216,14 +225,15 @@ func ensureDir(p string) error {
 }
 
 // copyFromSource baut die Quelle (das kann dauern) und kopiert sie komprimiert nach w.
-func (s *Server) copyFromSource(run *backupRun, w io.Writer) error {
+func (s *Server) copyFromSource(run *backupRun, w io.Writer, target filesTarget) error {
 	octx, cancel := context.WithTimeout(run.ctx, openTimeout)
-	card, size, err := s.openCard(octx)
+	card, size, err := s.openCard(octx, run, target)
 	cancel()
 	if err != nil {
 		return err
 	}
 	defer card.Close()
 	run.setTotal(size)
+	run.setPhase(PhaseCompress)
 	return s.copyCard(run, card, w)
 }

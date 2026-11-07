@@ -58,7 +58,7 @@ func (w idleWriter) Write(p []byte) (int, error) {
 // Der Stand wird vor dem Schließen festgehalten, damit der Dienst danach prüfen kann,
 // ob der Strom vollständig war.
 func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
-	if err := s.precheckSource(); err != nil {
+	if err := s.precheckSource(ctx); err != nil {
 		reply(c, err)
 		return
 	}
@@ -95,12 +95,13 @@ func (s *Server) serveBackupStream(ctx context.Context, c net.Conn) {
 		}
 		octx, ocancel := context.WithTimeout(run.ctx, openTimeout)
 		defer ocancel()
-		f, size, err := s.openCard(octx)
+		f, size, err := s.openCard(octx, run, filesTarget{dir: s.Backup.cacheDir(), name: "hmikiosk-download-" + s.Backup.now().Format("20060102-1504") + ".img"})
 		if err != nil {
 			return err
 		}
 		defer f.Close()
 		run.setTotal(size)
+		run.setPhase(PhaseTransfer)
 		head, _ := json.Marshal(struct {
 			OK   bool  `json:"ok"`
 			Size int64 `json:"size"`

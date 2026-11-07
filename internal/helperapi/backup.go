@@ -24,10 +24,11 @@ const (
 // MaxBackupNameLen ist die längste Terminalbezeichnung im Dateinamen.
 const MaxBackupNameLen = 40
 
-// BackupOpenTimeout begrenzt im Helfer den Bau des Abbilds (mkfs aus /data); der Client wartet
-// auf die Kopfzeile etwas länger.
+// BackupOpenTimeout begrenzt im Helfer den Bau des Abbilds (mkfs aus /data oder die dateiweise Kopie,
+// die auf einer langsamen Karte 40 Minuten und mehr dauern kann); der Client wartet auf die Kopfzeile
+// etwas länger.
 const (
-	BackupOpenTimeout   = 10 * time.Minute
+	BackupOpenTimeout   = 90 * time.Minute
 	BackupSyncTimeout   = 30 * time.Second // sync vor dem Bau, wie commandTimeout im Helfer
 	BackupHeaderTimeout = BackupOpenTimeout + BackupSyncTimeout + 30*time.Second
 )
@@ -42,9 +43,10 @@ type BackupStatus struct {
 	Running    bool    `json:"running"`
 	Mode       string  `json:"mode,omitempty"` // "download" oder "usb"
 	Target     string  `json:"target,omitempty"`
+	Phase      string  `json:"phase,omitempty"` // Vorbereiten, Kopieren, Komprimieren, Übertragen, Fertig
 	ReadBytes  int64   `json:"read_bytes"`
 	TotalBytes int64   `json:"total_bytes"`
-	ElapsedSec float64 `json:"elapsed_sec"`
+	ElapsedSec float64 `json:"elapsed_sec"` // seit Beginn der aktuellen Phase
 	Finished   bool    `json:"finished,omitempty"`
 	File       string  `json:"file,omitempty"`
 	Error      string  `json:"error,omitempty"`
@@ -183,8 +185,16 @@ func (s *streamBody) Close() error {
 // BackupInfo sagt vorab, ob und wie groß eine Sicherung würde. Problem ist der deutsche
 // Grund, warum jetzt keine möglich ist (kein Abbild-System, zu viele Daten, zu wenig Speicher).
 type BackupInfo struct {
-	RawBytes int64  `json:"raw_bytes,omitempty"` // Rohgröße des Abbilds: Ende von Partition 3
+	RawBytes int64  `json:"raw_bytes,omitempty"` // Rohgröße des Abbilds
 	Problem  string `json:"problem,omitempty"`
+	// Files: das Abbild wird dateiweise gebaut (System ohne SD-Abbild). Dann nennen NeedCard und CardFree
+	// den Platz auf der Karte für den Download, NeedUSB den Platz auf dem Stick. DownloadProblem sperrt
+	// nur den Download (zu wenig Platz auf der Karte), nicht den Weg über den Stick.
+	Files           bool   `json:"files,omitempty"`
+	CardFree        int64  `json:"card_free,omitempty"`
+	NeedCard        int64  `json:"need_card,omitempty"`
+	NeedUSB         int64  `json:"need_usb,omitempty"`
+	DownloadProblem string `json:"download_problem,omitempty"`
 }
 
 // BackupInfo fragt die erwartete Rohgröße und etwaige Hindernisse ab.

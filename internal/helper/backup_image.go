@@ -223,6 +223,9 @@ func (s *Server) measure(ctx context.Context, dev *os.File) (*compactPlan, error
 
 // backupInfo meldet die erwartete Rohgröße oder den Grund, warum keine Sicherung möglich ist.
 func (s *Server) backupInfo(ctx context.Context) helperapi.BackupInfo {
+	if s.sourceKind() == kindFiles {
+		return s.filesInfo(ctx)
+	}
 	p, dev, err := s.planCompact(ctx)
 	if err != nil {
 		return helperapi.BackupInfo{Problem: err.Error()}

@@ -12,6 +12,7 @@ import (
 // CleanupStale räumt nach einem Absturz auf: ein hängengebliebener USB-Mount samt .part-Datei
 // und Arbeitsordner der kompakten Sicherung unter /run. Fehler werden nur protokolliert.
 func (s *Server) CleanupStale(ctx context.Context) {
+	s.cleanupFilesStale(ctx)
 	mnt := s.Backup.usbMount()
 	removeParts(mnt)
 	if s.mounted(mnt) {
@@ -43,7 +44,7 @@ func (s *Server) CleanupStale(ctx context.Context) {
 
 // isOwnPart: nur unsere halben Sicherungen (hmikiosk-*.img.gz.part), nie fremde Dateien auf dem Stick.
 func isOwnPart(name string) bool {
-	return strings.HasPrefix(name, "hmikiosk-") && strings.HasSuffix(name, ".img.gz.part")
+	return strings.HasPrefix(name, "hmikiosk-") && (strings.HasSuffix(name, ".img.gz.part") || strings.HasSuffix(name, ".img.part"))
 }
 
 // removeParts löscht .part-Einträge (Dateien oder Verweise, nie deren Ziele) im Ordner dir.

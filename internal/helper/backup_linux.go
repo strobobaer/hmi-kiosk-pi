@@ -22,6 +22,15 @@ type dirAttr struct {
 	perm     uint32 // Unix-Rechtebits, auch setgid/sticky
 }
 
+// fsUsage liefert die belegten Bytes und Inodes des Dateisystems unter path.
+func fsUsage(path string) (bytes, inodes int64, err error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, 0, err
+	}
+	return int64(st.Blocks-st.Bfree) * int64(st.Bsize), int64(st.Files - st.Ffree), nil
+}
+
 func dirAttrOf(path string) (dirAttr, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {

@@ -551,16 +551,18 @@ func TestCompactBackupClientAbortRemovesTemp(t *testing.T) {
 	dirEmpty(t, c.run)
 }
 
-func TestCompactBackupRefusedOnPlainInstall(t *testing.T) {
+func TestPlainInstallTakesTheFilesWay(t *testing.T) {
 	c := newCompactEnv(t)
 	c.srv.Backup.ImageRelease = filepath.Join(t.TempDir(), "fehlt")
+	c.srv.ExecOut = func(context.Context, string, ...string) (string, error) { return "TYPE=ext4\n", nil }
 	cl := helperapi.New(startServer(t, c.env))
+	// Die Ersatzkarte hat drei Partitionen: das Layout der dateiweisen Sicherung passt nicht.
 	_, _, err := cl.BackupStream(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "nur für Systeme aus dem SD-Abbild") {
+	if err == nil || !strings.Contains(err.Error(), "Layout") || !strings.Contains(err.Error(), "weitere Partitionen") {
 		t.Fatalf("Download: %v", err)
 	}
 	err = cl.BackupUSB(context.Background(), "T1")
-	if err == nil || !strings.Contains(err.Error(), "nur für Systeme aus dem SD-Abbild") {
+	if err == nil || !strings.Contains(err.Error(), "weitere Partitionen") {
 		t.Fatalf("USB: %v", err)
 	}
 	if st := waitStopped(t, cl); st.Running || st.Finished {
@@ -588,8 +590,9 @@ func TestBackupInfo(t *testing.T) {
 		t.Fatalf("Info %+v, Größe %d", info, size)
 	}
 	c.srv.Backup.ImageRelease = filepath.Join(t.TempDir(), "fehlt")
+	c.srv.ExecOut = func(context.Context, string, ...string) (string, error) { return "TYPE=ext4\n", nil }
 	info, err = cl.BackupInfo(context.Background())
-	if err != nil || info.RawBytes != 0 || !strings.Contains(info.Problem, "nur für Systeme aus dem SD-Abbild") {
+	if err != nil || info.RawBytes != 0 || !info.Files || !strings.Contains(info.Problem, "Layout") {
 		t.Fatalf("Info ohne Abbild: %+v %v", info, err)
 	}
 }
