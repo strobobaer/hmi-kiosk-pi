@@ -5,7 +5,8 @@
   {{if .Running}}
   <dl class="facts">
     <dt>Ziel</dt><dd>{{if .Download}}Download im Browser{{else}}{{.Target}}{{end}}</dd>
-    {{if .Preparing}}<dt>Stand</dt><dd>Die Datenpartition wird vorbereitet (das kann einige Minuten dauern).</dd>{{end}}
+    {{if .Phase}}<dt>Phase</dt><dd>{{.Phase}}</dd>{{end}}
+    {{if .Preparing}}<dt>Stand</dt><dd>Das Abbild wird vorbereitet (das kann einige Minuten dauern).</dd>{{end}}
     {{if .Progress}}<dt>Fortschritt</dt><dd>{{.Progress}} ({{.Percent}} %)</dd>{{end}}
     {{if .Remaining}}<dt>Restzeit</dt><dd>{{.Remaining}}</dd>{{end}}
   </dl>
@@ -26,13 +27,20 @@
 {{if not .Running}}
 <section class="panel stack">
   <h2>Sicherung erstellen</h2>
+  {{if .Files}}
+  <p class="hint">Dieses System hat keinen Schreibschutz. Die Sicherung wird dateiweise erstellt und enthält alle Daten des Systems, auch Benutzerordner, gespeicherte Passwörter und Schlüssel. Vertraulich aufbewahren. Das Erstellen kann 15 bis 40 Minuten dauern; das System läuft dabei weiter, die Kopie entspricht einem Stand im laufenden Betrieb. Beim Download wartet der Browser, bis das Abbild fertig ist; den Stand zeigt diese Seite in einem zweiten Browser-Tab. Es passt nur für dasselbe Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.</p>
+  {{if .Problem}}<p class="msg err">{{.Problem}}</p>
+  {{else if .Expected}}<p class="hint">Benötigte Größe (Rohgröße des Abbilds): {{.Expected}} (entpackt; die Datei ist komprimiert kleiner). Auf dem USB-Stick müssen {{.NeedUSB}} frei sein. Für den Download braucht die SD-Karte {{.NeedCard}} frei (jetzt frei: {{.CardFree}}).</p>
+  {{if .DownloadProblem}}<p class="msg err">{{.DownloadProblem}}</p>{{end}}{{end}}
+  {{else}}
   <p class="hint">Kopie im laufenden Betrieb: sie entspricht einem Stand nach Stromausfall. Das Abbild passt auf jede Karte ab 16 GB; die Datenpartition wächst beim ersten Start auf die ganze Karte. Es enthält alle Einstellungen, Passwörter und Schlüssel und muss vertraulich aufbewahrt werden. Es passt nur für dasselbe Terminal; für ein anderes Terminal den Konfigurations-Export nutzen.</p>
   {{if .Problem}}<p class="msg err">{{.Problem}}</p>
   {{else if .Expected}}<p class="hint">Erwartete Rohgröße des Abbilds: {{.Expected}} (entpackt; die Datei ist komprimiert kleiner).</p>{{end}}
+  {{end}}
   <form method="post" action="/admin/system/backup/download" class="stack" data-confirm="Die Sicherung jetzt als Download starten?">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
-    <label class="check"><input type="checkbox" name="confirm" value="ja" required{{if .Problem}} disabled{{end}}> Ich habe die Hinweise gelesen</label>
-    <div class="actions"><button type="submit" class="btn"{{if .Problem}} disabled{{end}}>Herunterladen</button></div>
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required{{if or .Problem .DownloadProblem}} disabled{{end}}> Ich habe die Hinweise gelesen</label>
+    <div class="actions"><button type="submit" class="btn"{{if or .Problem .DownloadProblem}} disabled{{end}}>Herunterladen</button></div>
   </form>
   <form method="post" action="/admin/system/backup/usb" class="stack" data-confirm="Die Sicherung jetzt auf den USB-Stick schreiben?">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">

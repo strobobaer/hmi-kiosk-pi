@@ -356,3 +356,47 @@ func TestBackupPageWording(t *testing.T) {
 	wantContains(t, body, "heruntergeladen")
 	wantNotContains(t, body, "vollständig gesendet", "ist vollständig gesendet")
 }
+
+// System ohne Schreibschutz: statt einer Ablehnung der Hinweis auf die dateiweise Sicherung.
+func TestBackupPageFilesWayShowsNoticeSizesAndDuration(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.info = helperapi.BackupInfo{Files: true, RawBytes: 9 << 30, NeedCard: 9<<30 + 512<<20, CardFree: 20 << 30, NeedUSB: 9<<30 + 9<<30/10}
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body,
+		"Dieses System hat keinen Schreibschutz. Die Sicherung wird dateiweise erstellt und enthält alle Daten des Systems, auch Benutzerordner, gespeicherte Passwörter und Schlüssel. Vertraulich aufbewahren.",
+		"kann 15 bis 40 Minuten dauern",
+		"Benötigte Größe", "9,0 GB", "9,9 GB", "20,0 GB")
+	wantNotContains(t, body, "passt auf jede Karte ab 16 GB", "nur für Systeme aus dem SD-Abbild", "disabled")
+}
+
+func TestBackupPageFilesWayLockedDownloadKeepsUSB(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.info = helperapi.BackupInfo{Files: true, RawBytes: 9 << 30, DownloadProblem: "Auf der SD-Karte ist nicht genug Platz für den Download (9,5 GB nötig, 2,0 GB frei)."}
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, "nicht genug Platz für den Download")
+	// Nur Bestätigungsfeld und Knopf des Downloads sind gesperrt.
+	if n := strings.Count(body, "disabled"); n != 2 {
+		t.Errorf("gesperrte Elemente: %d, erwartet 2", n)
+	}
+	i := strings.Index(body, `action="/admin/system/backup/usb"`)
+	if i < 0 || strings.Contains(body[i:], "disabled") {
+		t.Error("USB-Weg gesperrt")
+	}
+}
+
+func TestBackupPageFilesWayProblemLocksBoth(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.info = helperapi.BackupInfo{Files: true, Problem: "Das Layout dieser SD-Karte wird von der dateiweisen Sicherung nicht unterstützt (x)."}
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, "Layout dieser SD-Karte")
+	if n := strings.Count(body, "disabled"); n != 4 {
+		t.Errorf("gesperrte Elemente: %d, erwartet 4", n)
+	}
+}
+
+func TestBackupPageShowsPhase(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.backup.set(helperapi.BackupStatus{Running: true, Mode: "usb", Target: "USB-Stick (exFAT)", Phase: "Kopieren", ReadBytes: 1 << 30, TotalBytes: 4 << 30, ElapsedSec: 60})
+	body := b.get("/admin/system/backup").Body.String()
+	wantContains(t, body, "Phase", "Kopieren", "1,0 GB von 4,0 GB")
+}

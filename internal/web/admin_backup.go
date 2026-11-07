@@ -44,6 +44,14 @@ type backupView struct {
 	Preparing bool   // läuft, das Abbild ist noch nicht gebaut (Größe unbekannt)
 	Expected  string // erwartete Rohgröße, leer wenn unbekannt
 	Problem   string // warum jetzt keine Sicherung möglich ist; sperrt die Knöpfe
+	Phase     string // Vorbereiten, Kopieren, Komprimieren, Übertragen, Fertig
+
+	// Dateiweise Sicherung (System ohne Schreibschutz)
+	Files           bool
+	NeedUSB         string // so viel muss auf dem Stick frei sein
+	NeedCard        string // so viel muss auf der Karte für den Download frei sein
+	CardFree        string
+	DownloadProblem string // sperrt nur den Download
 }
 
 func (a *admin) backupStatus() (helperapi.BackupStatus, error) {
@@ -55,7 +63,7 @@ func (a *admin) backupStatus() (helperapi.BackupStatus, error) {
 func newBackupView(st helperapi.BackupStatus) backupView {
 	v := backupView{
 		Running: st.Running, Download: st.Mode == "download", Target: st.Target,
-		Finished: st.Finished, File: st.File, LastError: st.Error,
+		Finished: st.Finished, File: st.File, LastError: st.Error, Phase: st.Phase,
 	}
 	if st.Running && st.TotalBytes > 0 {
 		v.Progress = formatBytes(st.ReadBytes) + " von " + formatBytes(st.TotalBytes)
@@ -200,6 +208,11 @@ func (a *admin) fillBackupInfo(v *backupView) {
 		v.Problem = info.Problem
 	case info.RawBytes > 0:
 		v.Expected = formatBytes(info.RawBytes)
+	}
+	v.Files = info.Files
+	if info.Files {
+		v.NeedUSB, v.NeedCard, v.CardFree = formatBytes(info.NeedUSB), formatBytes(info.NeedCard), formatBytes(info.CardFree)
+		v.DownloadProblem = info.DownloadProblem
 	}
 }
 
