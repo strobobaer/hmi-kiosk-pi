@@ -79,6 +79,7 @@ type service struct {
 	mgr      *session.Manager
 	hosts    *hostCache
 	reach    *reachability
+	cfgMu    sync.Mutex // wie die Admin-Seite: Laden, Ändern, Speichern der Konfiguration als Einheit
 	helper   *helperapi.Client
 	lookPath func(string) (string, error)
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
@@ -243,18 +244,19 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		func(ip net.IP, port int) (bool, error) { return platform.HasEstablished(procRoot, ip, port) },
 	)
 	s.mgr = session.New(session.Deps{
-		Coord:    s.coord,
-		Runner:   s.runner,
-		Profile:  s.profile,
-		TCP:      s.hosts.tcp,
-		RAMDir:   s.ramDir,
-		Clock:    session.SystemClock{},
-		Config:   s.config,
-		Password: s.password,
-		Screen:   s.screen,
-		Probe:    s.sessionProbe,
-		OnEnd:    s.onSessionEnd,
-		Blocked:  s.sessionBlocked,
+		Coord:          s.coord,
+		Runner:         s.runner,
+		Profile:        s.profile,
+		TCP:            s.hosts.tcp,
+		RAMDir:         s.ramDir,
+		Clock:          session.SystemClock{},
+		Config:         s.config,
+		Password:       s.password,
+		Screen:         s.screen,
+		Probe:          s.sessionProbe,
+		OnEnd:          s.onSessionEnd,
+		Blocked:        s.sessionBlocked,
+		MarkAuthFailed: s.markAuthFailed,
 	})
 	s.reach = newReachability(
 		func() []config.HMI { return s.config().HMIs },

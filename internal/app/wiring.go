@@ -205,7 +205,7 @@ func (s *service) tiles() []web.TileView {
 	occupied := s.coord.Occupancy()
 	tiles := make([]web.TileView, 0, len(hmis))
 	for _, h := range hmis {
-		tile := web.TileView{ID: h.ID, Name: h.Name, Icon: h.Icon, Color: h.Color, Reachable: s.reach.reachable(h.ID)}
+		tile := web.TileView{ID: h.ID, Name: h.Name, Icon: h.Icon, Color: h.Color, Reachable: s.reach.reachable(h.ID), AuthFailed: h.AuthFailed}
 		if holder, ok := occupied[h.ID]; ok {
 			tile.BusyBy = holder.Name
 		}
@@ -241,4 +241,27 @@ func remoteIsWifi(r *http.Request) bool {
 	}
 	_, wifi := platform.InterfaceForIP(addr.IP)
 	return wifi
+}
+
+// markAuthFailed vermerkt ein abgelehntes VNC-Passwort in der Konfiguration. Es
+// läuft nie in der Zustands-Goroutine des Automaten: Apply ruft ihn selbst.
+// Eine unlesbare oder durch den Rückfall ersetzte Konfiguration bleibt unberührt.
+func (s *service) markAuthFailed(id string) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	cfg, info, err := s.store.Load()
+	if err != nil || info.UsedFallback {
+		log.Printf("Markierung „Passwort abgelehnt“ für HMI %q nicht gespeichert: Konfiguration nicht lesbar", id)
+		return
+	}
+	i := slices.IndexFunc(cfg.HMIs, func(h config.HMI) bool { return h.ID == id })
+	if i < 0 || cfg.HMIs[i].AuthFailed {
+		return
+	}
+	cfg.HMIs[i].AuthFailed = true
+	if err := s.store.Save(cfg); err != nil {
+		log.Printf("Markierung „Passwort abgelehnt“ für HMI %q nicht gespeichert: %v", id, err)
+		return
+	}
+	s.Apply(cfg)
 }

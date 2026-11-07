@@ -119,6 +119,7 @@ func (s *service) adminHandler() http.Handler {
 		Store:        s.store,
 		Box:          s.box,
 		Apply:        s.Apply,
+		ConfigMu:     &s.cfgMu,
 		Probe:        s.adminProbe,
 		Helper:       s.helper,
 		Status:       s.Status,

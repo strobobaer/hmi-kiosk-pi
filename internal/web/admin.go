@@ -93,6 +93,8 @@ type AdminDeps struct {
 	CheckPeer            func(ctx context.Context, p config.Peer) coord.PeerState
 	UpdateKeyFingerprint string
 	Clock                coord.Clock
+	// ConfigMu schützt Laden, Ändern und Speichern der Konfiguration auch gegenüber dem Dienst (leer: eigener Mutex).
+	ConfigMu *sync.Mutex
 }
 
 const formBodyLimit = 64 << 10
@@ -135,7 +137,7 @@ type admin struct {
 	// parallele Anfragen die Sperre und belegen je 64 MB.
 	authSlot chan struct{}
 	// cfgMu hält Laden, Ändern, Speichern und Apply als eine Einheit zusammen.
-	cfgMu      sync.Mutex
+	cfgMu      *sync.Mutex
 	updateMu   sync.Mutex
 	selftestMu sync.Mutex
 	lastMu     sync.Mutex
@@ -157,8 +159,12 @@ func newAdmin(d AdminDeps) *admin {
 	if err != nil {
 		panic(err)
 	}
+	if d.ConfigMu == nil {
+		d.ConfigMu = new(sync.Mutex)
+	}
 	a := &admin{
 		d: d, static: sub, sessions: newSessionStore(), authSlot: make(chan struct{}, 1),
+		cfgMu: d.ConfigMu,
 		pages: parseAdminPages(sub),
 	}
 	mux := http.NewServeMux()

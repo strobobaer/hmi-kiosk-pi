@@ -30,6 +30,7 @@ type SessionAPI interface {
 type TileView struct {
 	ID, Name, Icon, Color string
 	Reachable             bool
+	AuthFailed            bool
 	BusyBy                string
 	Disabled              bool
 }
