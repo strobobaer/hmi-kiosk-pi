@@ -33,7 +33,8 @@ EOF
 
 # Systemdateien aus packaging/rootfs, jede mit festem Modus und root als Besitzer.
 for u in hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service \
-	hmi-kiosk-firstboot.service hmi-kiosk-firstboot-data.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service; do
+	hmi-kiosk-firstboot.service hmi-kiosk-firstboot-data.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service \
+	hmi-kiosk-network.service; do
 	install -m 644 -o root -g root "${FS}/etc/systemd/system/${u}" "${R}/etc/systemd/system/${u}"
 done
 install -d -m 755 "${R}/etc/systemd/system.conf.d"
@@ -110,7 +111,7 @@ on_chroot <<EOF
 set -e
 systemctl enable hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service \
 	hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-firstboot-data.service \
-	hmi-kiosk-grow-data.service hmi-kiosk-identity.service
+	hmi-kiosk-grow-data.service hmi-kiosk-identity.service hmi-kiosk-network.service
 # tty1 gehört der Kiosk-Sitzung.
 systemctl disable getty@tty1.service || true
 systemctl mask getty@tty1.service

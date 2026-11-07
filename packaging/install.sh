@@ -32,7 +32,7 @@ DISABLE_DESKTOP=0
 KIOSK_USER=hmikiosk
 KIOSK_UID_WISH=1100
 KIOSK_GROUPS=input,video,render
-UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service"
+UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service hmi-kiosk-network.service"
 
 msg() { echo "install.sh: $*"; }
 die() {
@@ -310,7 +310,7 @@ RequiresMountsFor=
 RequiresMountsFor=$DATA_DIR
 [Service]
 ExecStart=
-ExecStart=/usr/local/bin/hmi-kiosk-helper -uid $KIOSK_UID -gid $(id -g "$KIOSK_USER") -socket $sock -root $DATA_DIR -ntp-state $DATA_DIR/system/ntp-server"
+ExecStart=/usr/local/bin/hmi-kiosk-helper -uid $KIOSK_UID -gid $(id -g "$KIOSK_USER") -socket $sock -root $DATA_DIR -ntp-state $DATA_DIR/system/ntp-server -net-saved $DATA_DIR/system/ethernet.json"
 
 	write_dropin hmi-kiosk-update-guard.service "# Von install.sh erzeugt: Datenordner dieses Systems.
 [Unit]
@@ -333,6 +333,16 @@ RequiresMountsFor=
 RequiresMountsFor=$DATA_DIR
 [Service]
 Environment=HMI_IDENTITY_DIR=$DATA_DIR/system"
+
+	# Bestätigte Ethernet-Einstellung der Admin-Seite: Ohne Overlay bleibt das Profil ohnehin stehen; der Dienst
+	# entfernt aber ein Profil einer unbestätigten Änderung, die ein Neustart während der Frist unterbrochen hat.
+	write_dropin hmi-kiosk-network.service "# Von install.sh erzeugt: Datenordner dieses Systems.
+[Unit]
+RequiresMountsFor=
+RequiresMountsFor=$DATA_DIR
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/hmi-kiosk-helper net-boot -saved $DATA_DIR/system/ethernet.json"
 }
 
 # --- Datenordner und Programmversion ---

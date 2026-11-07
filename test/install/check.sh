@@ -90,7 +90,7 @@ for p in raspi-config overlayroot; do
 	check "Abbild-Paket $p nicht installiert" bash -c "! dpkg-query -W -f='\${db:Status-Abbrev}\n' $p 2>/dev/null | grep -q '^ii'"
 done
 
-for u in hmi-kiosk hmi-kiosk-helper hmi-kiosk-session hmi-kiosk-update-guard hmi-kiosk-identity; do
+for u in hmi-kiosk hmi-kiosk-helper hmi-kiosk-session hmi-kiosk-update-guard hmi-kiosk-identity hmi-kiosk-network; do
 	check "Unit $u.service" test -f /etc/systemd/system/$u.service
 	check "Drop-in $u" test -f /etc/systemd/system/$u.service.d/10-install.conf
 done
@@ -102,6 +102,13 @@ for s in hmi-kiosk-grow-root hmi-kiosk-identity; do
 done
 check "identity-Drop-in nennt Datenordner und Pfad der Kennung" bash -c "grep -q 'RequiresMountsFor=$DATA$' /etc/systemd/system/hmi-kiosk-identity.service.d/10-install.conf && grep -q 'HMI_IDENTITY_DIR=$DATA/system$' /etc/systemd/system/hmi-kiosk-identity.service.d/10-install.conf"
 check "grow-root und identity in der Aktivierungsliste" bash -c "grep -q 'UNITS=.*hmi-kiosk-grow-root.service' /bundle/install.sh && grep -q 'UNITS=.*hmi-kiosk-identity.service' /bundle/install.sh"
+check "network-Drop-in nennt Datenordner und Datei der Ethernet-Einstellung" bash -c "grep -q 'RequiresMountsFor=$DATA$' /etc/systemd/system/hmi-kiosk-network.service.d/10-install.conf && grep -q 'ExecStart=/usr/local/bin/hmi-kiosk-helper net-boot -saved $DATA/system/ethernet.json$' /etc/systemd/system/hmi-kiosk-network.service.d/10-install.conf"
+check "Helfer-Drop-in nennt -net-saved" grep -q -- "-net-saved $DATA/system/ethernet.json" /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf
+check "network in der Aktivierungsliste" grep -q 'UNITS=.*hmi-kiosk-network.service' /bundle/install.sh
+check "net-boot ohne Einstellung endet mit 0" /usr/local/bin/hmi-kiosk-helper net-boot -saved $DATA/system/ethernet.json
+for t in arping ping; do
+	check "$t installiert" bash -c "command -v $t >/dev/null || test -x /usr/sbin/$t || test -x /usr/bin/$t"
+done
 check "keine Erststart-Unit" test ! -e /etc/systemd/system/hmi-kiosk-firstboot.service
 check "Helfer root:root 755" test "$(stat -c '%U:%G %a' /usr/local/bin/hmi-kiosk-helper)" = "root:root 755"
 check "Dienst in app/$V" test -x $DATA/app/$V/hmi-kiosk
@@ -121,7 +128,7 @@ check "Dienst-Drop-in nennt Datenordner und Kennung" bash -c "grep -q 'ExecStart
 check "Helfer-Drop-in nennt -uid $uid und -root $DATA" bash -c "grep -q -- '-uid $uid .* -root $DATA ' /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf"
 check "Dienstprogramm startet (Flaggen)" bash -c "$DATA/app/current/hmi-kiosk -h 2>&1 | grep -q -- '-data'"
 check "Gruppe hmikiosk genau einmal" bash -c '[ "$(getent group hmikiosk | wc -l)" = 1 ]'
-check "systemd-analyze verify der Dienste samt Drop-ins" systemd-analyze verify hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service
+check "systemd-analyze verify der Dienste samt Drop-ins" systemd-analyze verify hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service hmi-kiosk-network.service
 
 # 7. Neuere Bundle-Version: current wechselt, die alte bleibt als previous, Konfiguration bleibt.
 rm -rf /tmp/b4 && cp -r /bundle /tmp/b4
@@ -210,6 +217,7 @@ rc=$?
 if [ $rc -eq 0 ]; then ok "mit systemd: Exit 0"; else bad "mit systemd: Exit $rc"; echo "$out" | tail -n 5; fi
 check "identity wird nach dem Aktivieren gestartet" bash -c "grep -q '^enable .*hmi-kiosk-identity.service' /tmp/systemctl.log && grep -q '^start hmi-kiosk-identity.service\$' /tmp/systemctl.log"
 check "grow-root wird aktiviert" grep -q '^enable .*hmi-kiosk-grow-root.service' /tmp/systemctl.log
+check "network wird aktiviert" grep -q '^enable .*hmi-kiosk-network.service' /tmp/systemctl.log
 check "identity wird vor dem Dienst-Neustart gestartet" bash -c "[ \$(grep -n '^start hmi-kiosk-identity.service\$' /tmp/systemctl.log | head -n1 | cut -d: -f1) -lt \$(grep -n '^restart hmi-kiosk-helper.service\$' /tmp/systemctl.log | head -n1 | cut -d: -f1) ]"
 rm -rf /run/systemd/system /tmp/fakebin
 

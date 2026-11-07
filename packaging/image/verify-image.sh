@@ -13,9 +13,10 @@ set -eu
 
 KIOSK_UID=1100
 REQUIRED_PACKAGES="labwc xwayland chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
-xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs"
+xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs
+iputils-arping iputils-ping network-manager"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
-UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service"
+UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service hmi-kiosk-network.service"
 
 usage() {
 	echo "Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>" >&2
@@ -238,6 +239,24 @@ fi
 grep -q '^enter_dir()' "$id_script" 2>/dev/null || msg="$msg; Identitätsskript prüft /data/system nicht"
 grep -q '^exit 0$' "$id_script" 2>/dev/null || msg="$msg; Identitätsskript endet nicht immer mit 0"
 if [ -z "$msg" ]; then ok netzwerk-identitaet "$i läuft bei jedem Start nach /data vor dem Netzwerk, Skript vorhanden"; else bad netzwerk-identitaet "${msg#; }"; fi
+
+# Ethernet-Einstellung: bestätigte feste Adresse aus /data vor NetworkManager als Profil herstellen
+msg=""
+n=hmi-kiosk-network.service
+for l in Type=oneshot RequiresMountsFor=/data "Before=network-pre.target NetworkManager.service shutdown.target" \
+	Wants=network-pre.target DefaultDependencies=no "ExecStart=/usr/local/bin/hmi-kiosk-helper net-boot"; do
+	unit_has "$n" "$l" || msg="$msg; $n ohne $l"
+done
+if grep -q '^Condition' "$S/$n" 2>/dev/null; then msg="$msg; $n hat eine Bedingung (muss bei jedem Start laufen)"; fi
+if grep -Eq '^(User|Requires|BindsTo)=' "$S/$n" 2>/dev/null; then msg="$msg; $n nicht als root oder mit harter Abhängigkeit"; fi
+[ -d "$R/etc/NetworkManager/system-connections" ] || msg="$msg; /etc/NetworkManager/system-connections fehlt"
+if [ -e "$R/etc/NetworkManager/system-connections/hmi-kiosk-eth.nmconnection" ]; then
+	msg="$msg; Profil hmi-kiosk-eth steht schon im Abbild (jedes Gerät bekäme dieselbe Adresse)"
+fi
+for t in nmcli arping; do
+	[ -x "$R/usr/bin/$t" ] || [ -x "$R/usr/sbin/$t" ] || [ -x "$R/bin/$t" ] || [ -x "$R/sbin/$t" ] || msg="$msg; $t fehlt im Abbild"
+done
+if [ -z "$msg" ]; then ok ethernet-einstellung "$n läuft bei jedem Start nach /data vor NetworkManager, nmcli und arping vorhanden"; else bad ethernet-einstellung "${msg#; }"; fi
 
 # initramfs des Pi-5-Kernels enthält overlayroot (sonst bliebe das Overlay wirkungslos)
 if [ ! -f "$B/initramfs_2712" ]; then

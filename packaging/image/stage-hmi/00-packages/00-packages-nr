@@ -24,3 +24,6 @@ rfkill
 raspi-config
 overlayroot
 fdisk
+# Ethernet-Einstellung: Adresskonflikt-Prüfung (arping); Erreichbarkeitsprüfung der HMIs (ping)
+iputils-arping
+iputils-ping

@@ -1,0 +1,22 @@
+[Unit]
+Description=HMI-Kiosk bestätigte Ethernet-Einstellung vor NetworkManager herstellen
+# Bei jedem Start, nach /data und vor dem Netzwerk. Das Wurzeldateisystem des SD-Abbilds ist ein
+# tmpfs-Overlay; die auf der Admin-Seite bestätigte Einstellung liegt deshalb auf der Datenpartition
+# (/data/system/ethernet.json) und wird hier zum Profil hmi-kiosk-eth für NetworkManager. Ohne Datei
+# oder bei ungültiger Datei ändert der Dienst nichts und meldet es im Journal. Er endet immer mit 0,
+# nichts hängt hart von ihm ab (bei install.sh sorgt ein Drop-in für den Datenordner).
+DefaultDependencies=no
+Conflicts=shutdown.target
+RequiresMountsFor=/data
+After=hmi-kiosk-identity.service
+Before=network-pre.target NetworkManager.service shutdown.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/hmi-kiosk-helper net-boot
+TimeoutStartSec=30s
+
+[Install]
+WantedBy=multi-user.target
