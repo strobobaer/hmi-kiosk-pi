@@ -368,3 +368,18 @@ func TestVNCAuthKnownAnswer(t *testing.T) {
 		t.Fatalf("Antwort %x", got)
 	}
 }
+
+func TestProbeMarksServerLockout(t *testing.T) {
+	for _, ver := range []string{"RFB 003.008\n", "RFB 003.003\n"} {
+		for _, reason := range []string{"Too many security failures", "Too many authentication failures"} {
+			r := Probe(context.Background(), "127.0.0.1", rejectingServer(t, ver, reason), "")
+			if !r.Locked || r.AuthRejected || r.AuthOK || !strings.Contains(r.Err, reason) {
+				t.Fatalf("%q %q: %+v", ver, reason, r)
+			}
+		}
+		r := Probe(context.Background(), "127.0.0.1", rejectingServer(t, ver, "Zugriff nicht erlaubt"), "")
+		if r.Locked {
+			t.Fatalf("%q: andere Begründung als Sperre gewertet: %+v", ver, r)
+		}
+	}
+}

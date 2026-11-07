@@ -240,3 +240,23 @@ func TestValidateRejectsHideBarWithoutPermanentHMI(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestReachModeIsCheckedAndDefaultsToPing(t *testing.T) {
+	for _, m := range []string{"", ReachPing, ReachPort, ReachOff} {
+		c := sample()
+		c.HMIs[0].Reach = m
+		if err := Validate(c); err != nil {
+			t.Errorf("%q abgelehnt: %v", m, err)
+		}
+	}
+	c := sample()
+	c.HMIs[0].Reach = "tcp"
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "Erreichbarkeit") {
+		t.Errorf("unbekannte Prüfart angenommen: %v", err)
+	}
+	for in, want := range map[string]string{"": ReachPing, "ping": ReachPing, "port": ReachPort, "off": ReachOff} {
+		if got := (HMI{Reach: in}).ReachMode(); got != want {
+			t.Errorf("ReachMode(%q) = %q, erwartet %q", in, got, want)
+		}
+	}
+}

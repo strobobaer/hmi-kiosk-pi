@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/rfb"
 )
 
 // permanentState führt die Daueranzeige über einzelne Versuche hinweg.
@@ -16,6 +17,14 @@ type permanentState struct {
 	backoff        time.Duration
 	waitingID      string
 	waitingName    string
+
+	// Nach abgelehntem Passwort bleibt die Daueranzeige stehen, bis die Konfiguration
+	// ein anderes Passwort oder eine aufgehobene Markierung zeigt (das Speichern der
+	// Markierung läuft nebenher).
+	authHalt    bool
+	authEnc     string
+	authSeen    bool
+	authNoticed bool
 }
 
 // checkPermanent startet die Daueranzeige, sobald nichts anderes läuft. Ein
@@ -48,6 +57,11 @@ func (m *Manager) checkPermanent(cfg config.Config) {
 		case target == "" || p.halted:
 		case !exists:
 			m.noticeMissing()
+		case m.passwordHalted(h):
+			if !p.authNoticed {
+				p.authNoticed = true
+				m.notice = authFailedNotice
+			}
 		default:
 			p.missingNoticed = false
 			if m.blocked() {
@@ -93,6 +107,13 @@ func (m *Manager) afterPermanentEnd(a *attempt, notice string, operator bool, no
 	if cfg.Kiosk.PermanentHMI != a.hmi.ID {
 		return false
 	}
+	if a.authRejected {
+		return false
+	}
+	if a.locked {
+		m.scheduleWait(a.hmi, notice, LockoutPause)
+		return true
+	}
 	if heldLongEnough(a, now) {
 		p.backoff = 0
 	}
@@ -115,9 +136,15 @@ func (m *Manager) scheduleReconnect(h config.HMI, reason string) {
 	p := &m.perm
 	wait := max(p.backoff, ReconnectMin)
 	p.backoff = min(2*wait, ReconnectMax)
+	m.scheduleWait(h, reason, wait)
+}
+
+// scheduleWait plant den nächsten Versuch der Daueranzeige nach wait.
+func (m *Manager) scheduleWait(h config.HMI, reason string, wait time.Duration) {
+	p := &m.perm
 	p.waitingID, p.waitingName = h.ID, h.Name
 	m.state = StateReconnecting
-	m.notice = fmt.Sprintf("Neuer Versuch in %d s", int(wait/time.Second))
+	m.notice = "Neuer Versuch in " + waitText(wait)
 	if reason != "" {
 		m.notice = reason + " – " + m.notice
 	}
@@ -133,6 +160,11 @@ func (m *Manager) retryPermanent(id string) {
 		m.noticeMissing()
 		return
 	}
+	if h.AuthFailed {
+		m.state = StateTiles
+		m.notice = authFailedNotice
+		return
+	}
 	// Gesperrt (Dauerprüfung): weiter warten, ohne die Wartezeit wachsen zu lassen.
 	if m.blocked() {
 		m.setDeadline(m.d.Clock.Now().Add(PollEvery), func() { m.retryPermanent(id) })
@@ -144,4 +176,46 @@ func (m *Manager) retryPermanent(id string) {
 // blocked meldet, ob gerade kein Sitzungsstart erlaubt ist (Deps.Blocked).
 func (m *Manager) blocked() bool {
 	return m.d.Blocked != nil && m.d.Blocked() != ""
+}
+
+// LockoutPause ist die Wartezeit der Daueranzeige, wenn der VNC-Server dieses
+// Terminal wegen zu vieler Fehlversuche sperrt.
+const LockoutPause = 5 * time.Minute
+
+func waitText(d time.Duration) string {
+	if d >= 2*time.Minute {
+		return fmt.Sprintf("%d min", int(d/time.Minute))
+	}
+	return fmt.Sprintf("%d s", int(d/time.Second))
+}
+
+func (p *permanentState) haltForPassword(h config.HMI) {
+	if p.target == h.ID {
+		p.authHalt, p.authEnc, p.authSeen, p.authNoticed = true, h.PasswordEnc, false, true
+	}
+}
+
+// passwordHalted meldet, ob die Daueranzeige wegen eines abgelehnten Passworts ruht.
+func (m *Manager) passwordHalted(h config.HMI) bool {
+	p := &m.perm
+	if p.authHalt {
+		switch {
+		case h.AuthFailed:
+			p.authSeen = true
+		case p.authSeen || h.PasswordEnc != p.authEnc:
+			p.authHalt = false
+		}
+	}
+	halted := h.AuthFailed || p.authHalt
+	if !halted {
+		p.authNoticed = false
+	}
+	return halted
+}
+
+func lockoutNotice(reason string) string {
+	if reason == "" {
+		return rfb.LockoutHint
+	}
+	return rfb.LockoutHint + " " + reason
 }

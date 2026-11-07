@@ -46,12 +46,17 @@ type Deps struct {
 	OnEnd func(Ended)
 	// Blocked liefert eine Meldung, solange kein Sitzungsstart erlaubt ist (Dauerprüfung); nil heißt immer erlaubt.
 	Blocked func() string
+	// MarkAuthFailed vermerkt in der Konfiguration, dass das HMI das Passwort abgelehnt hat; nil heißt nichts.
+	// Läuft in eigener Goroutine, weil das Speichern die Zustands-Goroutine ruft.
+	MarkAuthFailed func(id string)
 }
 
 // ErrPasswordMissing meldet ein VNC-Passwort, das fehlt oder sich nicht öffnen lässt.
 var ErrPasswordMissing = errors.New("VNC-Passwort fehlt")
 
 const passwordMissingNotice = "VNC-Passwort fehlt – bitte in der Admin-Seite neu eingeben."
+
+const authFailedNotice = "VNC-Passwort wurde abgelehnt – bitte in der Admin-Seite prüfen."
 
 // attempt ist ein Sitzungsversuch vom Touch bis zum Aufräumen. Ein laufender
 // Hintergrundschritt erkennt am Vergleich mit Manager.cur, ob er noch zählt.
@@ -80,6 +85,9 @@ type attempt struct {
 	takenNotice string
 	endNotice   string
 	operator    bool
+
+	authRejected bool // der Server hat das Passwort abgelehnt
+	locked       bool // der Server sperrt dieses Terminal vorübergehend
 }
 
 // Manager: Öffentliche Methoden schicken nur Befehle an die Goroutine von Run.
@@ -204,6 +212,10 @@ func (m *Manager) Open(hmiID string) error {
 		if !ok {
 			m.notice = "Dieses HMI gibt es nicht mehr"
 			return fmt.Errorf("HMI %q ist nicht bekannt", hmiID)
+		}
+		if h.AuthFailed {
+			m.notice = authFailedNotice
+			return errors.New(authFailedNotice)
 		}
 		m.begin(h, cfg, false)
 		return nil

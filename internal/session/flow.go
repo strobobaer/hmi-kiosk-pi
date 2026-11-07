@@ -121,8 +121,16 @@ func (m *Manager) onProbe(a *attempt, r rfb.ProbeResult) {
 	switch {
 	case !r.Reachable:
 		m.end(a, fmt.Sprintf("„%s“ nicht erreichbar", a.hmi.Name), false)
+	case r.Locked:
+		a.locked = true
+		m.end(a, lockoutNotice(r.Err), false)
 	case r.AuthRejected:
-		m.end(a, "VNC-Passwort falsch", false)
+		a.authRejected = true
+		if m.d.MarkAuthFailed != nil {
+			go m.d.MarkAuthFailed(a.hmi.ID)
+		}
+		m.perm.haltForPassword(a.hmi)
+		m.end(a, authFailedNotice, false)
 	case !r.AuthOK:
 		notice := r.Err
 		if notice == "" {

@@ -244,6 +244,7 @@ type harness struct {
 	password    string
 	ramErr      error
 	probes      int
+	marked      []string
 	cleanups    int
 	cancelRun   context.CancelFunc
 	onEnd       func(Ended)
@@ -311,6 +312,17 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 		},
 		Screen: func() (int, int) { return 1920, 1080 },
 		OnEnd:  h.onEnd,
+		MarkAuthFailed: func(id string) {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			h.marked = append(h.marked, id)
+			h.cfg.HMIs = slices.Clone(h.cfg.HMIs)
+			for i := range h.cfg.HMIs {
+				if h.cfg.HMIs[i].ID == id {
+					h.cfg.HMIs[i].AuthFailed = true
+				}
+			}
+		},
 		Blocked: func() string {
 			if s := h.blocked.Load(); s != nil {
 				return *s
@@ -700,8 +712,8 @@ func TestProbeWrongPasswordShowsNoticeNoClient(t *testing.T) {
 		h.probe = rfb.ProbeResult{Reachable: true, AuthRejected: true, Err: "Anmeldung abgelehnt"}
 	})
 	h.open("a")
-	s := h.waitNotice(StateTiles, "VNC-Passwort falsch")
-	if s.Notice != "VNC-Passwort falsch" {
+	s := h.waitNotice(StateTiles, authFailedNotice)
+	if s.Notice != authFailedNotice {
 		t.Fatalf("Hinweis %q", s.Notice)
 	}
 	if h.runner.count() != 0 {
@@ -859,7 +871,7 @@ func TestTakeOverDoesNotKickHolderWhenProbeFails(t *testing.T) {
 		h.probe = rfb.ProbeResult{Reachable: true, AuthRejected: true}
 	})
 	h.open("a")
-	h.waitNotice(StateTiles, "VNC-Passwort falsch")
+	h.waitNotice(StateTiles, authFailedNotice)
 	if h.log.count("takeover:a") != 0 {
 		t.Fatalf("Halter verdrängt: %v", h.log.all())
 	}

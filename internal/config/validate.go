@@ -85,6 +85,9 @@ func Validate(c Config) error {
 		if h.Takeover != "" && h.Takeover != StyleConfirm && h.Takeover != StyleImmediate {
 			return fmt.Errorf("HMI %q: Übernahmeart ungültig: %q", h.ID, h.Takeover)
 		}
+		if h.Reach != "" && !slices.Contains([]string{ReachPing, ReachPort, ReachOff}, h.Reach) {
+			return fmt.Errorf("HMI %q: Erreichbarkeitsprüfung ungültig: %q (erlaubt: ping, port, off)", h.ID, h.Reach)
+		}
 		if h.Icon != "" && !slices.Contains(HMIIcons, h.Icon) {
 			return fmt.Errorf("HMI %q: unbekanntes Symbol %q", h.ID, h.Icon)
 		}

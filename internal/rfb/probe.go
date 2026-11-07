@@ -27,6 +27,7 @@ const (
 type ProbeResult struct {
 	Reachable, AuthOK bool
 	AuthRejected      bool // der Server hat die Anmeldung abgelehnt
+	Locked            bool // der Server sperrt wegen zu vieler Fehlversuche
 	Width, Height     int
 	Name, Err         string
 }
@@ -72,6 +73,8 @@ func Probe(ctx context.Context, host string, port int, password string) ProbeRes
 	res := ProbeResult{Reachable: true}
 	if err := probeHandshake(conn, password, &res); err != nil {
 		res.AuthRejected = errors.Is(err, errAuthRejected)
+		var re *rejectError
+		res.Locked = errors.As(err, &re) && re.locked
 		if ctx.Err() != nil || isTimeout(err) {
 			res.Err = "Zeitüberschreitung beim VNC-Handshake"
 		} else {
@@ -240,7 +243,7 @@ func rejected(r io.Reader) error {
 	if reason == "" {
 		return errors.New(base)
 	}
-	return errors.New(base + ": „" + reason + "“")
+	return &rejectError{msg: base + ": „" + reason + "“", locked: strings.Contains(strings.ToLower(reason), "too many")}
 }
 
 func readSecurityResult(r io.Reader) error {
@@ -274,3 +277,15 @@ func vncAuthResponse(password string, challenge []byte) ([]byte, error) {
 	c.Encrypt(out[8:], challenge[8:])
 	return out, nil
 }
+
+// LockoutHint erklärt dem Bediener die Sperre durch den VNC-Server (RealVNC: „Too many security failures“).
+const LockoutHint = "Der VNC-Server hat dieses Terminal vorübergehend gesperrt (zu viele Fehlversuche). " +
+	"Abhilfe: einige Minuten warten oder den VNC-Dienst am HMI neu starten; danach das Passwort prüfen."
+
+// rejectError ist die Ablehnung vor jeder Anmeldung; locked steht für die Sperre nach zu vielen Fehlversuchen.
+type rejectError struct {
+	msg    string
+	locked bool
+}
+
+func (e *rejectError) Error() string { return e.msg }

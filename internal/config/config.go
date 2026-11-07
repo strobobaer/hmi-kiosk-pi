@@ -43,6 +43,10 @@ type HMI struct {
 	AllowWatch  bool          `json:"allowWatch"`
 	// PasswordLost: Das Passwort ging bei einer Schlüsselreparatur verloren und muss neu eingegeben werden.
 	PasswordLost bool `json:"passwordLost,omitempty"`
+	// AuthFailed: Der VNC-Server hat das Passwort abgelehnt. Bis zur Änderung des Passworts oder einer erfolgreichen Prüfung gibt es keine weiteren Anmeldeversuche.
+	AuthFailed bool `json:"authFailed,omitempty"`
+	// Reach wählt die Erreichbarkeitsprüfung für die Kachel: ReachPing (Standard, auch leer), ReachPort oder ReachOff.
+	Reach string `json:"reach,omitempty"`
 }
 
 type Peer struct {
@@ -141,3 +145,18 @@ var (
 	HMIIcons  = []string{"monitor", "press", "tank", "conveyor", "gear", "bolt"}
 	HMIColors = []string{"blue", "green", "amber", "red", "gray", "violet"}
 )
+
+const (
+	ReachPing = "ping"
+	ReachPort = "port"
+	ReachOff  = "off"
+)
+
+// ReachMode liefert die Prüfart; leer oder unbekannt (alte Konfiguration) heißt Ping.
+func (h HMI) ReachMode() string {
+	switch h.Reach {
+	case ReachPort, ReachOff:
+		return h.Reach
+	}
+	return ReachPing
+}
