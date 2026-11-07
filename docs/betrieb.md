@@ -87,7 +87,12 @@ Eine zurückgeschaltete Version ist nur über erneutes Einspielen wieder erreich
 
 ### SD-Sicherung
 
-Die SD-Sicherung ist ein Abbild der ganzen Karte als Datei `hmikiosk-<Terminalname>-<Datum>-<Uhrzeit>.img.gz`. Anders als die Konfiguration (oben) enthält sie auch das Betriebssystem und alle installierten Programmversionen. Sie gibt es nur für Systeme aus dem SD-Abbild; bei einer Installation mit `install.sh` ist der Knopf gesperrt, dort den Konfigurations-Export nutzen.
+Die SD-Sicherung ist ein Abbild der ganzen Karte als Datei `hmikiosk-<Terminalname>-<Datum>-<Uhrzeit>.img.gz`. Anders als die Konfiguration (oben) enthält sie auch das Betriebssystem und alle installierten Programmversionen. Es gibt zwei Wege; das Terminal wählt den passenden selbst:
+
+- **SD-Abbild-System** (aus dem fertigen Abbild, mit Schreibschutz): der schnelle Weg, unten „Kompaktes Abbild“.
+- **System ohne Schreibschutz** (Installation mit `install.sh`, z. B. Raspberry Pi OS Desktop): das Abbild wird dateiweise neu gebaut, unten „Dateiweise Sicherung“.
+
+#### Kompaktes Abbild (SD-Abbild-System)
 
 Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesichert, die Datenpartition `/data` wird neu in eine kleine Partition gepackt (belegte Bytes plus 512 Byte je Datei und Ordner für die Dateisystem-Tabellen, davon 25 % und 64 MB mehr, höchstens 1 GB). Es passt deshalb auf **jede Karte ab 16 GB**, auch auf eine größere als die Originalkarte. Die Seite zeigt vorab die erwartete Rohgröße; die Datei ist komprimiert kleiner. Dauert etwa so lange, wie die Karte zum Lesen braucht (einige Minuten).
 
@@ -97,6 +102,21 @@ Das Abbild ist **kompakt**: Boot- und Systempartition werden unverändert gesich
 2. **Auf USB-Stick schreiben:** Stick am Terminal einstecken (genau einer), „Auf USB-Stick schreiben“. Erlaubt sind exFAT, ext4 und NTFS; FAT32 wird abgelehnt (Dateien über 4 GB). Es müssen mindestens 4 GB frei sein. Erst bei der Meldung „Der Stick kann entfernt werden“ abziehen.
 
 Während einer Sicherung sind Neustart, Update und Funkeinstellungen gesperrt; es läuft immer nur eine Sicherung. Die Kopie entsteht im laufenden Betrieb: Boot und System sind schreibgeschützt und damit stimmig, `/data` wird nicht eingefroren, die Kopie entspricht einem Stand nach Stromausfall (das Dateisystem wird beim Start geprüft und repariert, die Konfiguration wird atomar geschrieben). Reicht der freie Arbeitsspeicher nicht (Reserve 512 MB) oder sind die Daten zu groß, lehnt das Terminal ab und nennt den Grund.
+
+#### Dateiweise Sicherung (System ohne Schreibschutz)
+
+Ein System ohne Schreibschutz läuft mit beschreibbarem Dateisystem; eine Rohkopie der Karte wäre nicht stimmig. Der Helfer baut deshalb ein **neues Abbild** und kopiert die Dateien hinein: Partitionstabelle mit neuer Disk-ID, FAT für `/boot/firmware` und ext4 für `/` (Beschriftung und Kennungen der Quelle bleiben), Kopie mit `rsync -aHAXx` (Besitzer, Rechte, feste Verweise und erweiterte Attribute bleiben). In `cmdline.txt` und `/etc/fstab` des Abbilds steht danach die neue Disk-ID (`PARTUUID=`). Nicht kopiert werden `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/mnt`, `/media`, `/lost+found`, `/var/tmp/*`, Auslagerungsdateien und der Arbeitsordner der Sicherung; die leeren Einhängeordner legt das Terminal im Abbild an.
+
+- **Unterstützt** ist nur das Raspberry-Pi-Layout: Partition 1 FAT (`/boot/firmware`), Partition 2 ext4 (`/`) auf der SD-Karte (`mmcblk`), sonst nichts. Andere Layouts (weitere Partitionen, LVM, btrfs, NVMe oder USB als Wurzel) lehnt das Terminal mit einer Meldung ab; dann den Konfigurations-Export nutzen.
+- **Größe:** belegte Bytes von `/` plus 25 % plus 512 MB, die Boot-Partition so groß wie die Quelle, dazu 4 MB Vorlauf. Die Seite zeigt diese Rohgröße und den nötigen und freien Platz.
+- **Dauer:** kann 15 bis 40 Minuten dauern (Kopie der Dateien, danach Komprimieren). Die Seite zeigt die Phasen „Vorbereiten“, „Kopieren“, „Komprimieren“ oder „Übertragen“ und „Fertig“ mit Fortschritt; „Abbrechen“ räumt alles auf.
+- **Auf USB-Stick schreiben:** Das Terminal baut das Abbild als Rohdatei (`.img.part`) direkt auf dem Stick und komprimiert es dann zu `.img.gz`; die Rohdatei wird gelöscht. Auf dem Stick müssen die Rohgröße plus 10 % frei sein, sonst lehnt das Terminal vorab ab und nennt die nötige Größe.
+- **Herunterladen:** Das Abbild entsteht zuerst als Rohdatei in `/var/cache/hmi-kiosk-backup` auf der Karte (nur root, wird immer gelöscht); frei sein müssen Rohgröße plus 512 MB. Erst danach beginnt die Übertragung zum Browser: Der Browser wartet bis dahin ohne Fortschrittsanzeige, den Stand zeigt die Seite in einem zweiten Browser-Tab. Bei wenig freiem Platz auf der Karte ist nur der Download gesperrt, der Stick-Weg bleibt.
+- **Programme:** `rsync`, `dosfstools`, `fdisk`, `e2fsprogs` und `util-linux` (`losetup`) bringt `install.sh` mit. Fehlt eines, nennt die Seite das Paket zum Nachinstallieren (`sudo apt install ...`).
+- **Im laufenden Betrieb:** Die Dateien werden kopiert, während das System läuft. Dateien, die sich währenddessen ändern, können in einem Zwischenstand landen (wie nach einem Stromausfall); das Dateisystem wird beim Start geprüft. Dateien, die verschwinden, sind kein Fehler.
+- **Vertraulich:** Das Abbild enthält **alle Daten des Systems**, auch Benutzerordner, gespeicherte Passwörter und Schlüssel. Vertraulich aufbewahren.
+
+Beim Zurückspielen (Raspberry Pi Imager wie unten, „Eigenes Image“, ohne OS-Anpassungen) **wächst die Systempartition beim ersten Start auf die ganze Karte**: `install.sh` richtet dafür den Dienst `hmi-kiosk-grow-root` ein, der bei jedem Start die letzte Partition online vergrößert und `resize2fs` ausführt (idempotent, Fehler nur im Journal: `journalctl -u hmi-kiosk-grow-root`). Auch die Netzwerk-Kennung (`hmi-kiosk-identity`) ist dort eingerichtet; auf anderer Hardware bekommt die Kopie eine eigene Maschinen-ID und einen eigenen Rechnernamen (ohne Overlay werden `/etc/machine-id` und `/etc/hostname` dauerhaft geschrieben, die Kennung liegt im Datenordner unter `system/identity`). Die Wartungsmodus-Erkennung des Dienstes (Hardware-Kennung) wirkt wie beim SD-Abbild. Gesichert werden kann erst, nachdem `install.sh` dieser Fassung gelaufen ist (die Dienste müssen im Quellsystem vorhanden sein, damit sie in jeder Kopie stecken).
 
 **Vertraulich aufbewahren:** Das Abbild enthält alle Einstellungen, Passwörter und Schlüssel. Es gehört zu **diesem** Terminal. Auf einem anderen Gerät läuft es im Wartungsmodus (Abschnitt „SD-Sicherung auf ein anderes Gerät“); nur die Einstellungen überträgt der Konfigurations-Export.
 
@@ -233,6 +253,7 @@ Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist
 | „Verbindung zu <HMI> verloren“ / „beendet“ | Hinweis | Das HMI hat die Verbindung getrennt oder das Netz war weg. | HMI und Netz prüfen. Neu verbinden. |
 | „VNC-Passwort fehlt – bitte in der Admin-Seite neu eingeben.“ | Hinweis nach dem Antippen einer Kachel | Das Passwort des HMI fehlt oder lässt sich mit dem Schlüssel des Geräts nicht öffnen. Es wird kein Client gestartet. | Passwort des HMI unter „Bearbeiten“ neu eintragen. Betrifft es mehrere HMIs, unter System „Reparieren“ (Abschnitt „Schlüssel prüfen und reparieren“). |
 | „Wartungsmodus: Das Terminal wurde auf ein anderes Gerät übertragen.“ | Hinweis auf der Kachelseite, Wartungsseite in der Admin-Seite | Die SD-Karte läuft in einem anderen Raspberry Pi als dem, auf dem sie eingerichtet wurde. | Admin-Seite öffnen und „Als Ersatz übernehmen“ oder „Als neues Terminal einrichten“ wählen (Abschnitt „SD-Sicherung auf ein anderes Gerät“). |
+| „Das Layout dieser SD-Karte wird von der dateiweisen Sicherung nicht unterstützt (…)“ | Seite SD-Sicherung, Knöpfe gesperrt | System ohne Schreibschutz, dessen Karte nicht das Raspberry-Pi-Layout hat (weitere Partitionen, LVM, btrfs, NVMe oder USB als Wurzel). | Konfigurations-Export nutzen (Abschnitt „SD-Sicherung“, Dateiweise Sicherung). |
 | „Dieses HMI gibt es nicht mehr“ | Hinweis | Das HMI wurde gelöscht, während es genutzt wurde. | Kachelseite neu laden lassen. Daueranzeige unter Kiosk prüfen. |
 
 ### Admin-Seite und Gerät
