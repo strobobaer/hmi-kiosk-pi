@@ -42,6 +42,7 @@ type systemData struct {
 	HasLog          bool
 	HasSelftestFile bool
 	HasSoak         bool
+	BackupRunning   bool
 	Soak            soakView
 	Now             string
 	Time            string
@@ -72,6 +73,11 @@ func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, er
 	d.HasSelftestFile = len(a.lastSelf) > 0
 	a.lastMu.Unlock()
 	d.Soak, d.HasSoak = a.soakView()
+	if a.d.Backup != nil {
+		if st, err := a.backupStatus(); err == nil {
+			d.BackupRunning = st.Running
+		}
+	}
 	a.page(w, s, status, "system.html", "system", "System", errMsg, d)
 }
 

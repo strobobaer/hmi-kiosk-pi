@@ -13,6 +13,12 @@
 </section>
 
 <section class="panel stack">
+  <h2>SD-Sicherung</h2>
+  {{if .BackupRunning}}<p class="msg warn">Eine SD-Sicherung läuft gerade.</p>{{end}}
+  <p><a class="btn" href="/admin/system/backup">SD-Sicherung öffnen</a></p>
+</section>
+
+<section class="panel stack">
   <h2>Selbstprüfung</h2>
   {{if .Selftest}}
   <ul class="steps">

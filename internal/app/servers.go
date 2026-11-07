@@ -139,6 +139,7 @@ func (s *service) adminHandler() http.Handler {
 		},
 		Selftest: s.adminSelftest,
 		Soak:     s.soak,
+		Backup:   s.helper,
 	})
 }
 

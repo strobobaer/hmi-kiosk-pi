@@ -83,6 +83,7 @@ type AdminDeps struct {
 	Update       UpdateAPI
 	Selftest     func(ctx context.Context) []SelftestStep
 	Soak         SoakAPI
+	Backup       BackupAPI
 	Clock        coord.Clock
 }
 
@@ -224,6 +225,10 @@ func (a *admin) routes() []route {
 		post("/admin/system/selftest", a.handleSelftest),
 		post("/admin/system/soak/start", a.handleSoakStart),
 		post("/admin/system/soak/stop", a.handleSoakStop),
+		get("/admin/system/backup", a.handleBackupPage),
+		post("/admin/system/backup/download", a.handleBackupDownload),
+		post("/admin/system/backup/usb", a.handleBackupUSB),
+		post("/admin/system/backup/cancel", a.handleBackupCancel),
 		get("/admin/system/soak.jsonl", a.handleSoakLog),
 		get("/admin/system/soak.txt", a.handleSoakSummary),
 		post("/admin/system/password", a.handleChangePassword),
@@ -423,7 +428,7 @@ func (a *admin) updateLocked(change func(*config.Config) error) error {
 
 var adminPageNames = []string{
 	"login.html", "setup.html", "hmis.html", "hmi_edit.html", "client.html",
-	"kiosk.html", "terminals.html", "network.html", "system.html",
+	"kiosk.html", "terminals.html", "network.html", "system.html", "backup.html",
 }
 
 func parseAdminPages(sub fs.FS) map[string]*template.Template {
@@ -442,6 +447,7 @@ type adminView struct {
 	LoggedIn       bool
 	TerminalName   string
 	Notice, Error  string
+	Refresh        int
 	Body           any
 }
 
@@ -459,13 +465,18 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 // page rendert eine Seite für eine angemeldete Besucherin und holt dabei die
 // einmalige Meldung der vorigen Aktion ab.
 func (a *admin) page(w http.ResponseWriter, s sessionRef, status int, page, section, title, errMsg string, body any) {
+	a.pageRefresh(w, s, status, page, section, title, errMsg, 0, body)
+}
+
+// pageRefresh lädt die Seite nach refresh Sekunden selbst neu (0: nie; ohne Skript, wegen der CSP).
+func (a *admin) pageRefresh(w http.ResponseWriter, s sessionRef, status int, page, section, title, errMsg string, refresh int, body any) {
 	name := ""
 	if cfg, _, err := a.d.Store.Load(); err == nil {
 		name = cfg.Terminal.Name
 	}
 	a.writePage(w, status, page, adminView{
 		Title: title, Section: section, CSRF: s.csrf, LoggedIn: true, TerminalName: name,
-		Notice: a.sessions.takeFlash(s), Error: errMsg, Body: body,
+		Notice: a.sessions.takeFlash(s), Error: errMsg, Refresh: refresh, Body: body,
 	})
 }
 
