@@ -125,6 +125,9 @@ func Validate(c Config) error {
 	default:
 		return fmt.Errorf("Unbekannte Bedienart: %q (erlaubt: Touch oder Maus)", c.Kiosk.InputMode)
 	}
+	if err := ValidateEthernet(c.Network.Ethernet); err != nil {
+		return fmt.Errorf("Ethernet: %w", err)
+	}
 	return validateClientAndDisplay(c)
 }
 

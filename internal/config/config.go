@@ -79,6 +79,8 @@ type NetworkCfg struct {
 	NTPServer    string `json:"ntpServer"`
 	WifiOff      bool   `json:"wifiOff"`
 	BluetoothOff bool   `json:"bluetoothOff"`
+	// Ethernet wirkt über den Helfer (Rückfallfrist) und wird erst nach der Bestätigung gespeichert.
+	Ethernet EthernetCfg `json:"ethernet"`
 }
 
 type DisplayCfg struct {
