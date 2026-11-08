@@ -68,6 +68,9 @@ type KioskCfg struct {
 	HideBar           bool   `json:"hideBar"`
 	// InputMode: InputTouch blendet den Mauszeiger aus, InputMouse zeigt ihn (leer = Touch).
 	InputMode string `json:"inputMode"`
+	// NetworkTiles gibt die Kachelseite für Tests im Netz frei (Port 8080 auf allen
+	// Adressen). Sie gehört zum Gerät: Der Import übernimmt sie nicht.
+	NetworkTiles bool `json:"networkTiles,omitempty"`
 }
 
 const (
