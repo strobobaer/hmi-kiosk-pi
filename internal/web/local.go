@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -40,6 +42,9 @@ var heartbeat = 15 * time.Second
 // allowedHosts schützt gegen DNS-Rebinding: Nur die lokalen Namen sind gültig.
 var allowedHosts = map[string]bool{"127.0.0.1:8080": true, "localhost:8080": true}
 
+// tilePort ist der Port der Kachelseite; im Netz gilt nur er.
+const tilePort = "8080"
+
 var allowedOrigins = map[string]bool{
 	"http://127.0.0.1:8080": true,
 	"http://localhost:8080": true,
@@ -58,6 +63,9 @@ type local struct {
 type LocalExtras struct {
 	// TouchHit nimmt den Treffer eines Ziels der Touch-Seite an; false lehnt ihn ab.
 	TouchHit func(target int) bool
+	// Network meldet, ob die Kachelseite im Netz freigegeben ist (nur für Tests).
+	// Dann gelten zusätzlich IP-Adressen mit Port 8080 als Host, nie Namen. nil heißt aus.
+	Network func() bool
 }
 
 // NewLocal baut den Handler der Kachelseite. layout liefert "auto" oder die
@@ -91,23 +99,29 @@ func NewLocalWith(s SessionAPI, tiles func() []TileView, layout func() string, e
 	mux.HandleFunc("POST /api/confirm", l.handleConfirm)
 	mux.HandleFunc("POST /api/cancel", func(w http.ResponseWriter, _ *http.Request) { l.s.Cancel(); noContent(w) })
 	mux.HandleFunc("POST /api/back", func(w http.ResponseWriter, _ *http.Request) { l.s.Back(); noContent(w) })
-	return secure(mux)
+	return secureWith(mux, ex.Network)
 }
 
-// SecureLocal setzt Host- und Origin-Prüfung der lokalen Seite vor weitere lokale Routen.
+// SecureLocal setzt Host- und Origin-Prüfung der lokalen Seite vor weitere lokale
+// Routen. Sie gilt immer nur lokal, auch wenn die Kachelseite im Netz freigegeben ist.
 func SecureLocal(next http.Handler) http.Handler { return secure(next) }
 
-func secure(next http.Handler) http.Handler {
+func secure(next http.Handler) http.Handler { return secureWith(next, nil) }
+
+// secureWith prüft Host und Origin. Mit Netzfreigabe gilt zusätzlich ein IP-Host mit
+// Port 8080, und ein POST darf nur von genau diesem Host kommen (gleicher Ursprung).
+func secureWith(next http.Handler, network func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cache-Control", "no-store")
-		if !allowedHosts[r.Host] {
+		netHost := !allowedHosts[r.Host] && network != nil && network() && ipHost(r.Host)
+		if !allowedHosts[r.Host] && !netHost {
 			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
 			return
 		}
-		if r.Method == http.MethodPost && !originAllowed(r) {
+		if r.Method == http.MethodPost && !originAllowed(r, netHost) {
 			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
 			return
 		}
@@ -115,14 +129,35 @@ func secure(next http.Handler) http.Handler {
 	})
 }
 
-// originAllowed verlangt Origin oder Referer; fehlen beide, wird abgelehnt.
-func originAllowed(r *http.Request) bool {
+// ipHost lässt nur eine IP-Adresse (IPv6 in Klammern, ohne Zone) mit Port 8080 zu.
+// Namen bleiben gesperrt: Sie könnte ein fremder DNS-Server auf das Terminal zeigen lassen.
+func ipHost(hostport string) bool {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port != tilePort {
+		return false
+	}
+	if strings.Contains(host, ":") && !strings.HasPrefix(hostport, "[") {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.Zone() == ""
+}
+
+// originAllowed verlangt Origin oder Referer; fehlen beide, wird abgelehnt. Bei
+// einem Host aus dem Netz (netHost) gilt nur der eigene Ursprung http://<Host>.
+func originAllowed(r *http.Request, netHost bool) bool {
+	ok := func(origin string) bool {
+		if netHost {
+			return origin == "http://"+r.Host
+		}
+		return allowedOrigins[origin]
+	}
 	if o := r.Header.Get("Origin"); o != "" {
-		return allowedOrigins[o]
+		return ok(o)
 	}
 	if ref := r.Header.Get("Referer"); ref != "" {
 		u, err := url.Parse(ref)
-		return err == nil && allowedOrigins[u.Scheme+"://"+u.Host]
+		return err == nil && ok(u.Scheme+"://"+u.Host)
 	}
 	return false
 }
