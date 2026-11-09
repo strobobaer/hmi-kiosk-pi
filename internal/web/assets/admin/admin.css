@@ -58,6 +58,8 @@ h2 { font-size: 1.1rem; margin: 0; }
   margin: 0 0 16px;
 }
 .stack { display: flex; flex-direction: column; gap: 12px; }
+/* hidden muss gegen display-Regeln wie .stack gewinnen (Art im HMI-Formular). */
+[hidden] { display: none !important; }
 .stack > form { margin: 0; }
 .row { display: flex; flex-wrap: wrap; gap: 12px; }
 .grow { flex: 1 1 200px; min-width: 0; }

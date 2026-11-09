@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -186,5 +187,15 @@ func TestExportImportCarriesWebTiles(t *testing.T) {
 	}
 	if got, err := dst.box.Open(dst.hmi("x").PasswordEnc); err != nil || got != "vnc-geheim" {
 		t.Fatalf("VNC-Passwort: %q %v", got, err)
+	}
+}
+
+// Die Formularteile tragen class="stack" (display:flex); ohne eigene Regel gewönne
+// sie gegen das hidden-Attribut, und beide Arten wären sichtbar.
+func TestAdminCSSHonoursHidden(t *testing.T) {
+	_, b := newLoggedIn(t)
+	css := b.get("/admin/admin.css").Body.String()
+	if !regexp.MustCompile(`\[hidden\]\s*\{\s*display:\s*none\s*!important;?\s*\}`).MatchString(css) {
+		t.Fatal("admin.css ohne [hidden] { display: none !important }")
 	}
 }
