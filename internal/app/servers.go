@@ -44,7 +44,7 @@ func newAdminServer(h http.Handler, getCert func(*tls.ClientHelloInfo) (*tls.Cer
 // Terminal-API, bleibt das Terminal bedienbar und meldet es.
 func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, admin *http.Server, localErr <-chan error, bound Bound, err error) {
 	bound = Bound{Status: s.Status, Snapshot: s.mgr.Snapshot}
-	l, err := net.Listen("tcp", s.opts.LocalAddr)
+	l, err := s.listenTilesAtStart()
 	if err != nil {
 		return nil, nil, nil, bound, fmt.Errorf("Kachelseite: %w", err)
 	}
@@ -61,6 +61,24 @@ func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, 
 
 	admin, bound.Admin = s.startAdmin(wg)
 	return local, admin, errs, bound, nil
+}
+
+// listenTilesAtStart bindet die Kachelseite nach der Einstellung. Ist der Port im Netz
+// nicht frei, läuft sie lokal weiter: Das Terminal muss bedienbar bleiben.
+func (s *service) listenTilesAtStart() (*tileListener, error) {
+	s.tileMu.Lock()
+	defer s.tileMu.Unlock()
+	want := tileAddr(s.opts.LocalAddr, s.config().Kiosk.NetworkTiles)
+	l, err := listenTiles(want)
+	if err != nil && want != s.opts.LocalAddr {
+		s.warn(fmt.Sprintf("Kachelseite nicht im Netz freigegeben, sie läuft nur lokal: %v", err))
+		l, err = listenTiles(s.opts.LocalAddr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.tileLn = l
+	return l, nil
 }
 
 func (s *service) startAdmin(wg *sync.WaitGroup) (*http.Server, string) {
@@ -141,6 +159,7 @@ func (s *service) adminHandler() http.Handler {
 		Backup:               s.helper,
 		Net:                  s.helper,
 		HardwareID:           func() string { return s.hwID },
+		TileURLs:             s.tileURLs,
 		TLSDir:               filepath.Join(s.opts.DataDir, tlsDirName),
 		KeyFile:              filepath.Join(s.opts.DataDir, secretsFile),
 		CheckPeer:            s.checkPeer,

@@ -84,6 +84,9 @@ type service struct {
 	lookPath func(string) (string, error)
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
 
+	tileMu sync.Mutex    // schützt tileLn und das Umschalten der Kachelseite
+	tileLn *tileListener // Port der Kachelseite, ab startServers
+
 	selftestMu   sync.Mutex
 	soak         *soakJob
 	ctxMu        sync.Mutex
