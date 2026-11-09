@@ -54,6 +54,7 @@ type local struct {
 	s      SessionAPI
 	tiles  func() []TileView
 	layout func() string
+	ex     LocalExtras
 	page   *template.Template
 	bar    *template.Template
 	static fs.FS
@@ -66,7 +67,28 @@ type LocalExtras struct {
 	// Network meldet, ob die Kachelseite im Netz freigegeben ist (nur für Tests).
 	// Dann gelten zusätzlich IP-Adressen mit Port 8080 als Host, nie Namen. nil heißt aus.
 	Network func() bool
+	// Keyboard blendet die Bildschirmtastatur ein und aus (nil: keine).
+	Keyboard KeyboardAPI
+	// InputMode liefert die Bedienart (touch, mouse); bei mouse zeigt sich die
+	// Tastatur nie von selbst, nur über den Knopf der Leiste.
+	InputMode func() string
+	// TilesShown meldet, dass Chromium am Terminal die Kachelseite geladen hat
+	// (lokaler Host); die Admin-Seite am Terminal ist dann geschlossen.
+	TilesShown func()
 }
+
+// KeyboardAPI steuert die Bildschirmtastatur (keyboard.Controller).
+type KeyboardAPI interface {
+	Show() error
+	Hide() error
+	Toggle() error
+}
+
+// Adressen der Admin-Seite am Terminal (nur Loopback, HTTP) und der Kachelseite.
+const (
+	LocalAdminURL = "http://127.0.0.1:8081/admin/"
+	KioskURL      = "http://127.0.0.1:8080/"
+)
 
 // NewLocal baut den Handler der Kachelseite. layout liefert "auto" oder die
 // Spaltenzahl "2", "3", "4".
@@ -82,7 +104,7 @@ func NewLocalWith(s SessionAPI, tiles func() []TileView, layout func() string, e
 	}
 	funcs := template.FuncMap{"icon": iconSVG, "color": colorClass}
 	l := &local{
-		s: s, tiles: tiles, layout: layout, static: sub,
+		s: s, tiles: tiles, layout: layout, ex: ex, static: sub,
 		page: template.Must(template.New("tiles.html").Funcs(funcs).ParseFS(sub, "tiles.html")),
 		bar:  template.Must(template.New("bar.html").Funcs(funcs).ParseFS(sub, "bar.html")),
 	}
@@ -91,6 +113,9 @@ func NewLocalWith(s SessionAPI, tiles func() []TileView, layout func() string, e
 	mux.HandleFunc("GET /bar", l.handleBar)
 	mux.HandleFunc("GET /kiosk.css", l.asset("kiosk.css", "text/css; charset=utf-8"))
 	mux.HandleFunc("GET /kiosk.js", l.asset("kiosk.js", "text/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /keyboard.js", l.asset("keyboard.js", "text/javascript; charset=utf-8"))
+	// Die Tastatur bleibt lokal, auch bei Netzfreigabe: Niemand im Netz soll sie bedienen.
+	mux.Handle("POST /api/keyboard/{action}", onlyLocalHost(KeyboardHandler(ex.Keyboard)))
 	mux.HandleFunc("GET /selftest/touch", l.asset("selftest.html", "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /selftest.js", l.asset("selftest.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("POST /api/selftest/touch", touchHit(ex.TouchHit))
@@ -174,12 +199,61 @@ func (l *local) asset(name, ctype string) http.HandlerFunc {
 	}
 }
 
-type tilesPage struct {
-	Tiles  []TileView
-	Layout string
+// onlyLocalHost lässt nur die lokalen Namen der Kachelseite zu.
+func onlyLocalHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !allowedHosts[r.Host] {
+			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
-func (l *local) handleTiles(w http.ResponseWriter, _ *http.Request) {
+// KeyboardHandler bedient POST …/{action} mit show, hide oder toggle. Host und
+// Ursprung prüft der Aufrufer.
+func KeyboardHandler(kb KeyboardAPI) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if kb == nil {
+			writeError(w, http.StatusServiceUnavailable, "Bildschirmtastatur nicht verfügbar")
+			return
+		}
+		var err error
+		switch r.PathValue("action") {
+		case "show":
+			err = kb.Show()
+		case "hide":
+			err = kb.Hide()
+		case "toggle":
+			err = kb.Toggle()
+		default:
+			writeError(w, http.StatusNotFound, "Unbekannte Aktion")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "Bildschirmtastatur nicht verfügbar")
+			return
+		}
+		noContent(w)
+	})
+}
+
+// oskMode: „auto“ zeigt die Tastatur bei Eingabefeldern, „manual“ nur über den Knopf.
+func oskMode(inputMode func() string) string {
+	if inputMode != nil && inputMode() == "mouse" {
+		return "manual"
+	}
+	return "auto"
+}
+
+type tilesPage struct {
+	Tiles    []TileView
+	Layout   string
+	AdminURL string
+	OSK      string
+}
+
+func (l *local) handleTiles(w http.ResponseWriter, r *http.Request) {
 	var tiles []TileView
 	if l.tiles != nil {
 		tiles = l.tiles()
@@ -188,7 +262,25 @@ func (l *local) handleTiles(w http.ResponseWriter, _ *http.Request) {
 	if l.layout != nil {
 		layout = l.layout()
 	}
-	render(w, l.page, "tiles.html", tilesPage{Tiles: tiles, Layout: layoutClass(layout)})
+	if allowedHosts[r.Host] && l.ex.TilesShown != nil {
+		l.ex.TilesShown()
+	}
+	render(w, l.page, "tiles.html", tilesPage{
+		Tiles: tiles, Layout: layoutClass(layout), AdminURL: adminURLFor(r.Host), OSK: oskMode(l.ex.InputMode),
+	})
+}
+
+// adminURLFor: Am Terminal führt das Zahnrad zur Loopback-Admin-Seite; von einem
+// PC aus (Netzfreigabe, IP-Host) zur Admin-Seite über HTTPS unter derselben Adresse.
+func adminURLFor(hostport string) string {
+	if allowedHosts[hostport] {
+		return LocalAdminURL
+	}
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return LocalAdminURL
+	}
+	return "https://" + net.JoinHostPort(host, adminPort) + "/admin/"
 }
 
 func layoutClass(v string) string {

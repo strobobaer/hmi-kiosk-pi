@@ -154,6 +154,38 @@ button { font: inherit; color: inherit; cursor: default; }
   border-radius: 0;
 }
 .bar-back:active { background: #1a5fc4; }
+.bar-osk {
+  margin-left: auto;
+  height: 48px;
+  min-width: 120px;
+  padding: 0 20px;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-left: 1px solid #2f3b4a;
+  border-radius: 0;
+}
+.bar-osk:active { background: #1a2532; }
+.bar-osk + .bar-back { margin-left: 0; }
+
+/* Zahnrad zur Admin-Seite: unauffällig oben rechts, Trefferfläche 56 × 56 px */
+.gear {
+  position: fixed;
+  top: 4px;
+  right: 4px;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  opacity: .6;
+  border-radius: 50%;
+}
+.gear svg { width: 28px; height: 28px; }
+.gear:active { opacity: 1; background: var(--panel); }
 
 /* Touch-Seite der Selbstprüfung */
 .page-selftest { margin: 0; background: #0f141b; color: #e6edf3; font-family: system-ui, sans-serif; }
