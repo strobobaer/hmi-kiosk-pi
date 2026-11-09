@@ -28,6 +28,10 @@ const (
 	backoffMin    = time.Second
 	backoffMax    = 30 * time.Second
 	stableAfter   = 60 * time.Second
+	// startGrace: So lange nach dem Start schickt der Steuerer keine Signale. wvkbd richtet
+	// seine Signalbehandlung erst beim Start ein; vorher beendete SIGUSR1/2 das Programm.
+	// Wünsche aus dieser Zeit gelten danach (der letzte gewinnt).
+	startGrace = 300 * time.Millisecond
 	defaultHeight = 360 // ein Drittel von 1080
 	// layers: wvkbd hat kein deutsches Layout. „full“ ist QWERTY mit Ziffernreihe, Umlaute
 	// und ß über die Taste „Cmp“ und den Grundbuchstaben (a, o, u, s); „special“ für Zeichen.
@@ -72,8 +76,16 @@ type Supervisor struct {
 	mu      sync.Mutex
 	enabled bool
 	proc    client.Process
-	visible bool
+	visible bool // zuletzt gesendet
+	want    bool // gewünscht; weicht nur in der Anlaufzeit von visible ab
+	ready   bool // Anlaufzeit vorbei
 	wake    chan struct{}
+}
+
+func (k *Supervisor) isReady() bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.ready
 }
 
 // New baut den Steuerer. find sucht das Programm bei jedem Start (nil: Find im Pfad),
@@ -135,7 +147,7 @@ func (k *Supervisor) Visible() bool {
 func (k *Supervisor) Show() error { return k.set(func(bool) bool { return true }) }
 func (k *Supervisor) Hide() error { return k.set(func(bool) bool { return false }) }
 
-// Toggle wechselt nach dem zuletzt gesendeten Zustand.
+// Toggle wechselt nach dem zuletzt gewünschten Zustand.
 func (k *Supervisor) Toggle() error { return k.set(func(v bool) bool { return !v }) }
 
 func (k *Supervisor) set(next func(bool) bool) error {
@@ -154,15 +166,28 @@ func (k *Supervisor) set(next func(bool) bool) error {
 	if !ok {
 		return fmt.Errorf("%w: wvkbd lässt sich nicht steuern", ErrUnavailable)
 	}
-	want := next(k.visible)
+	k.want = next(k.want)
+	if !k.ready {
+		return nil // gilt nach der Anlaufzeit
+	}
+	return k.applyLocked(sp)
+}
+
+// applyLocked sendet den gewünschten Zustand, wenn er vom gesendeten abweicht. Der
+// Aufrufer hält k.mu.
+func (k *Supervisor) applyLocked(sp signaler) error {
+	if k.want == k.visible {
+		return nil
+	}
 	sig := sigHide
-	if want {
+	if k.want {
 		sig = sigShow
 	}
 	if err := sp.Signal(sig); err != nil {
+		k.want = k.visible
 		return fmt.Errorf("Bildschirmtastatur: %w", err)
 	}
-	k.visible = want
+	k.visible = k.want
 	return nil
 }
 
@@ -173,11 +198,12 @@ func (k *Supervisor) Run(ctx context.Context) {
 		startedAt time.Time
 		backoff   = backoffMin
 		retry     <-chan time.Time
+		grace     <-chan time.Time
 		active    bool
 	)
 	setProc := func(p client.Process) {
 		k.mu.Lock()
-		k.proc, k.visible = p, false
+		k.proc, k.visible, k.want, k.ready = p, false, false, false
 		k.mu.Unlock()
 	}
 	stop := func() {
@@ -188,7 +214,7 @@ func (k *Supervisor) Run(ctx context.Context) {
 			_ = p.Stop(stopGrace)
 		}
 		setProc(nil)
-		done, retry = nil, nil
+		done, retry, grace = nil, nil, nil
 	}
 	launch := func() {
 		at := k.clock.Now()
@@ -205,6 +231,7 @@ func (k *Supervisor) Run(ctx context.Context) {
 		}
 		setProc(p)
 		done, startedAt, retry = p.Done(), at, nil
+		grace = k.clock.After(startGrace)
 	}
 	for {
 		select {
@@ -223,9 +250,19 @@ func (k *Supervisor) Run(ctx context.Context) {
 			if active {
 				launch()
 			}
+		case <-grace:
+			grace = nil
+			k.mu.Lock()
+			k.ready = true
+			if sp, ok := k.proc.(signaler); ok {
+				if err := k.applyLocked(sp); err != nil {
+					k.logf("%v", err)
+				}
+			}
+			k.mu.Unlock()
 		case err := <-done:
 			setProc(nil)
-			done = nil
+			done, grace = nil, nil
 			if k.clock.Now().Sub(startedAt) >= stableAfter {
 				backoff = backoffMin
 			}

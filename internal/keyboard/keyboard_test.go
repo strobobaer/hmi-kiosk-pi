@@ -180,7 +180,7 @@ func TestShowHideToggleSendSignals(t *testing.T) {
 	g.k.SetEnabled(true)
 	g.run(t)
 	g.nextStart(t)
-	g.waitRunning(t)
+	g.waitReady(t)
 	if err := g.k.Show(); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestRestartAfterCrashStartsHidden(t *testing.T) {
 	g.k.SetEnabled(true)
 	g.run(t)
 	g.nextStart(t)
-	g.waitRunning(t)
+	g.waitReady(t)
 	_ = g.k.Show()
 	g.r.proc(0).done <- errors.New("abgestürzt")
 	select {
@@ -223,7 +223,7 @@ func TestRestartAfterCrashStartsHidden(t *testing.T) {
 	if !slices.Contains(c.Args, "--hidden") {
 		t.Fatal("Neustart nicht verborgen")
 	}
-	g.waitRunning(t)
+	g.waitReady(t)
 	if g.k.Visible() {
 		t.Fatal("nach Neustart gilt die Tastatur als sichtbar")
 	}
@@ -247,7 +247,7 @@ func TestDisableStopsProcess(t *testing.T) {
 	g.k.SetEnabled(true)
 	g.run(t)
 	g.nextStart(t)
-	g.waitRunning(t)
+	g.waitReady(t)
 	g.k.SetEnabled(false)
 	deadline := time.Now().Add(2 * time.Second)
 	for g.k.running() {
@@ -270,7 +270,7 @@ func TestSignalErrorIsReported(t *testing.T) {
 	g.k.SetEnabled(true)
 	g.run(t)
 	g.nextStart(t)
-	g.waitRunning(t)
+	g.waitReady(t)
 	p := g.r.proc(0)
 	p.mu.Lock()
 	p.sigErr = errors.New("weg")
@@ -289,5 +289,84 @@ func TestHeightFallback(t *testing.T) {
 	}
 	if got := height(1200); got != 400 {
 		t.Fatalf("1200 → %d", got)
+	}
+}
+
+// waitReady wartet auf den Start und lässt die Anlaufzeit ablaufen.
+func (g *rig) waitReady(t *testing.T) {
+	t.Helper()
+	g.waitRunning(t)
+	select {
+	case d := <-g.clk.afters:
+		if d != startGrace {
+			t.Fatalf("Anlaufzeit %v, erwartet %v", d, startGrace)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("keine Anlaufzeit geplant")
+	}
+	g.clk.fire <- time.Now()
+	deadline := time.Now().Add(2 * time.Second)
+	for !g.k.isReady() {
+		if time.Now().After(deadline) {
+			t.Fatal("Tastatur wird nicht bereit")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestShowDuringStartGraceIsAppliedAfterwards(t *testing.T) {
+	g := newRig(t)
+	g.k.SetEnabled(true)
+	g.run(t)
+	g.nextStart(t)
+	g.waitRunning(t)
+	// wvkbd hat seine Signalbehandlung vielleicht noch nicht: SIGUSR2 beendete es.
+	if err := g.k.Show(); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.k.Hide(); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.k.Show(); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.r.proc(0).got(); len(got) != 0 {
+		t.Fatalf("Signale in der Anlaufzeit: %v", got)
+	}
+	<-g.clk.afters
+	g.clk.fire <- time.Now()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(g.r.proc(0).got()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("gewünschter Zustand nach der Anlaufzeit nicht angewandt")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := g.r.proc(0).got(); !slices.Equal(got, []os.Signal{sigShow}) {
+		t.Fatalf("Signale %v, erwartet nur zeigen", got)
+	}
+	if !g.k.Visible() {
+		t.Fatal("nicht sichtbar")
+	}
+}
+
+func TestHideOnlyDuringGraceSendsNothing(t *testing.T) {
+	g := newRig(t)
+	g.k.SetEnabled(true)
+	g.run(t)
+	g.nextStart(t)
+	g.waitRunning(t)
+	_ = g.k.Hide()
+	<-g.clk.afters
+	g.clk.fire <- time.Now()
+	deadline := time.Now().Add(2 * time.Second)
+	for !g.k.isReady() {
+		if time.Now().After(deadline) {
+			t.Fatal("nicht bereit")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if got := g.r.proc(0).got(); len(got) != 0 {
+		t.Fatalf("Signale %v", got)
 	}
 }
