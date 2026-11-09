@@ -227,7 +227,11 @@ func decodeOpen(w http.ResponseWriter, r *http.Request) (remoteOpenBody, error) 
 		if isTooLarge(err) {
 			return in, fmt.Errorf("Anfrage größer als %d Byte.", remoteBodyLimit)
 		}
-		return in, fmt.Errorf("Anfrage ist kein gültiger Befehl: %v", err)
+		// Nur den Feldnamen zitieren: Ein Syntaxfehler könnte Zeichen des Passworts nennen.
+		if field, ok := strings.CutPrefix(err.Error(), "json: unknown field "); ok {
+			return in, fmt.Errorf("Unbekanntes Feld %s.", field)
+		}
+		return in, errors.New("Anfrage ist kein gültiger Befehl (JSON-Objekt mit host, port, password, mode, label, user).")
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return in, errors.New("Anfrage enthält mehr als einen Befehl.")

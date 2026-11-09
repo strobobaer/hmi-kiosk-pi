@@ -420,3 +420,17 @@ func captureLog(w io.Writer) func() {
 	log.SetOutput(w)
 	return func() { log.SetOutput(os.Stderr) }
 }
+
+func TestRemoteInvalidJSONDoesNotEchoPassword(t *testing.T) {
+	var buf bytes.Buffer
+	restore := captureLog(&buf)
+	defer restore()
+	e := newRemoteEnv(t)
+	w := e.call("POST", "/api/remote/v1/open", `{"host":"10.1.2.3","port":5900,"password":"Q\qGeheim","mode":"view","label":"L","user":"U"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("%d", w.Code)
+	}
+	wantNotContains(t, w.Body.String()+buf.String(), "'q'", "Geheim")
+	w = e.call("POST", "/api/remote/v1/open", strings.Replace(validOpen, `"user"`, `"extra":1,"user"`, 1))
+	wantContains(t, jsonOf(t, w)["error"].(string), `"extra"`)
+}
