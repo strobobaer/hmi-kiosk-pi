@@ -266,8 +266,10 @@ func breakSave(e *adminEnv) {
 type browser struct {
 	// local ist die Adresse des Terminals, an der die Anfrage ankommt (leer: unbekannt).
 	local net.Addr
-	e     *adminEnv
-	jar   map[string]string
+	// onTerminal: Chromium am Terminal über http://127.0.0.1:8081 (Loopback-Admin).
+	onTerminal bool
+	e          *adminEnv
+	jar        map[string]string
 }
 
 func (e *adminEnv) browser() *browser { return &browser{e: e, jar: map[string]string{}} }
@@ -289,8 +291,17 @@ func (b *browser) do(req *http.Request) *httptest.ResponseRecorder {
 	for k, v := range b.jar {
 		req.AddCookie(&http.Cookie{Name: k, Value: v})
 	}
+	h := b.e.a.handler()
+	if b.onTerminal {
+		req.TLS = nil
+		req.URL.Scheme, req.URL.Host, req.Host = "http", "127.0.0.1:8081", "127.0.0.1:8081"
+		if isWrite(req) && req.Header.Get("Origin") == "" {
+			req.Header.Set("Origin", "http://127.0.0.1:8081")
+		}
+		h = b.e.a.localHandler()
+	}
 	w := httptest.NewRecorder()
-	b.e.a.handler().ServeHTTP(w, req)
+	h.ServeHTTP(w, req)
 	for _, c := range w.Result().Cookies() {
 		if c.MaxAge < 0 {
 			delete(b.jar, c.Name)

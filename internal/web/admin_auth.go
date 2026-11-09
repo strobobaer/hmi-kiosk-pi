@@ -24,6 +24,12 @@ const (
 	cookiePath       = "/admin"
 
 	sessionIdle     = 30 * time.Minute
+
+	// Am Terminal (Loopback, HTTP) eigene Cookies ohne Secure und eine kurze Sitzung:
+	// Nach 5 Minuten ohne Eingabe geht es zurück zur Kachelseite.
+	localSessionCookie    = "hmi_admin_local"
+	localPreSessionCookie = "hmi_admin_local_pre"
+	localSessionIdle      = 5 * time.Minute
 	maxFailures     = 5
 	lockoutDuration = 5 * time.Minute
 	minPasswordLen  = 10
@@ -41,15 +47,15 @@ func tokensEqual(got, want string) bool {
 	return got != "" && want != "" && subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
-func adminCookie(name, value string) *http.Cookie {
+func adminCookie(name, value string, secure bool) *http.Cookie {
 	return &http.Cookie{
 		Name: name, Value: value, Path: cookiePath,
-		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		Secure: secure, HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	}
 }
 
-func clearCookie(w http.ResponseWriter, name string) {
-	c := adminCookie(name, "")
+func clearCookie(w http.ResponseWriter, name string, secure bool) {
+	c := adminCookie(name, "", secure)
 	c.MaxAge = -1
 	http.SetCookie(w, c)
 }
@@ -58,6 +64,7 @@ func clearCookie(w http.ResponseWriter, name string) {
 
 type sessionData struct {
 	csrf     string
+	local    bool // am Terminal angemeldet (Loopback, HTTP)
 	lastSeen time.Time
 	flash    string
 }
@@ -65,8 +72,17 @@ type sessionData struct {
 // sessionRef verweist auf eine Sitzung; der Schlüssel ist der Hash des
 // Cookie-Werts, der Wert selbst liegt nicht im Speicher.
 type sessionRef struct {
-	key  [sha256.Size]byte
-	csrf string
+	key   [sha256.Size]byte
+	csrf  string
+	local bool
+}
+
+func (s *sessionData) expired(now time.Time) bool {
+	idle := sessionIdle
+	if s.local {
+		idle = localSessionIdle
+	}
+	return now.Sub(s.lastSeen) >= idle
 }
 
 type sessionStore struct {
@@ -78,35 +94,37 @@ func newSessionStore() *sessionStore {
 	return &sessionStore{byID: map[[sha256.Size]byte]*sessionData{}}
 }
 
-func (st *sessionStore) create(now time.Time) (string, sessionRef) {
+func (st *sessionStore) create(now time.Time, local bool) (string, sessionRef) {
 	token := newToken()
 	key := sha256.Sum256([]byte(token))
 	csrf := newToken()
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	for k, s := range st.byID {
-		if now.Sub(s.lastSeen) >= sessionIdle {
+		if s.expired(now) {
 			delete(st.byID, k)
 		}
 	}
-	st.byID[key] = &sessionData{csrf: csrf, lastSeen: now}
-	return token, sessionRef{key: key, csrf: csrf}
+	st.byID[key] = &sessionData{csrf: csrf, lastSeen: now, local: local}
+	return token, sessionRef{key: key, csrf: csrf, local: local}
 }
 
-func (st *sessionStore) touch(token string, now time.Time) (sessionRef, bool) {
+// touch gilt nur für eine Sitzung derselben Art: Ein Wert vom Terminal nützt über HTTPS
+// nichts und umgekehrt.
+func (st *sessionStore) touch(token string, now time.Time, local bool) (sessionRef, bool) {
 	key := sha256.Sum256([]byte(token))
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	s, ok := st.byID[key]
-	if !ok {
+	if !ok || s.local != local {
 		return sessionRef{}, false
 	}
-	if now.Sub(s.lastSeen) >= sessionIdle {
+	if s.expired(now) {
 		delete(st.byID, key)
 		return sessionRef{}, false
 	}
 	s.lastSeen = now
-	return sessionRef{key: key, csrf: s.csrf}, true
+	return sessionRef{key: key, csrf: s.csrf, local: local}, true
 }
 
 func (st *sessionStore) remove(s sessionRef) {
@@ -141,20 +159,32 @@ func (st *sessionStore) takeFlash(s sessionRef) string {
 	return msg
 }
 
+// cookieNames liefert die Namen von Sitzungs- und Vor-Cookie; am Terminal eigene.
+func cookieNames(local bool) (session, pre string) {
+	if local {
+		return localSessionCookie, localPreSessionCookie
+	}
+	return sessionCookie, preSessionCookie
+}
+
 func (a *admin) sessionFrom(r *http.Request) (sessionRef, bool) {
-	c, err := r.Cookie(sessionCookie)
+	local := onTerminal(r)
+	name, _ := cookieNames(local)
+	c, err := r.Cookie(name)
 	if err != nil {
 		return sessionRef{}, false
 	}
-	return a.sessions.touch(c.Value, a.d.Clock.Now())
+	return a.sessions.touch(c.Value, a.d.Clock.Now(), local)
 }
 
 // startSession gibt immer einen neuen Wert aus, damit ein vorher bekannter
 // Cookie-Wert nach der Anmeldung nichts nützt.
-func (a *admin) startSession(w http.ResponseWriter) sessionRef {
-	token, s := a.sessions.create(a.d.Clock.Now())
-	http.SetCookie(w, adminCookie(sessionCookie, token))
-	clearCookie(w, preSessionCookie)
+func (a *admin) startSession(w http.ResponseWriter, r *http.Request) sessionRef {
+	local := onTerminal(r)
+	name, pre := cookieNames(local)
+	token, s := a.sessions.create(a.d.Clock.Now(), local)
+	http.SetCookie(w, adminCookie(name, token, !local))
+	clearCookie(w, pre, !local)
 	return s
 }
 
@@ -272,23 +302,26 @@ func checkNewPassword(pw, repeat string) error {
 
 // preToken liefert den Wert des Vor-Cookies und setzt ihn bei Bedarf.
 func preToken(w http.ResponseWriter, r *http.Request) string {
-	if c, err := r.Cookie(preSessionCookie); err == nil && c.Value != "" {
+	local := onTerminal(r)
+	_, pre := cookieNames(local)
+	if c, err := r.Cookie(pre); err == nil && c.Value != "" {
 		return c.Value
 	}
 	t := newToken()
-	http.SetCookie(w, adminCookie(preSessionCookie, t))
+	http.SetCookie(w, adminCookie(pre, t, !local))
 	return t
 }
 
 func checkPreToken(r *http.Request) bool {
-	c, err := r.Cookie(preSessionCookie)
+	_, pre := cookieNames(onTerminal(r))
+	c, err := r.Cookie(pre)
 	return err == nil && tokensEqual(r.PostForm.Get("csrf"), c.Value)
 }
 
 // --- Ersteinrichtung ---
 
 func (a *admin) renderSetup(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	a.writePage(w, status, "setup.html", adminView{Title: "Ersteinrichtung", CSRF: preToken(w, r), Error: msg})
+	a.writePage(w, status, "setup.html", adminView{Title: "Ersteinrichtung", CSRF: preToken(w, r), Error: msg, Terminal: onTerminal(r)})
 }
 
 func (a *admin) handleSetupForm(w http.ResponseWriter, r *http.Request, _ sessionRef) {
@@ -327,7 +360,7 @@ func (a *admin) handleSetup(w http.ResponseWriter, r *http.Request, _ sessionRef
 	case err != nil:
 		a.renderSetup(w, r, formStatus(err), publicMessage(err))
 	default:
-		s := a.startSession(w)
+		s := a.startSession(w, r)
 		a.done(w, r, s, "/admin/hmis", "Passwort gesetzt.")
 	}
 }
@@ -335,7 +368,7 @@ func (a *admin) handleSetup(w http.ResponseWriter, r *http.Request, _ sessionRef
 // --- Anmeldung ---
 
 func (a *admin) renderLogin(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	a.writePage(w, status, "login.html", adminView{Title: "Anmeldung", CSRF: preToken(w, r), Error: msg})
+	a.writePage(w, status, "login.html", adminView{Title: "Anmeldung", CSRF: preToken(w, r), Error: msg, Terminal: onTerminal(r)})
 }
 
 func (a *admin) handleLoginForm(w http.ResponseWriter, r *http.Request, _ sessionRef) {
@@ -361,7 +394,7 @@ func (a *admin) handleLogin(w http.ResponseWriter, r *http.Request, _ sessionRef
 		a.renderLogin(w, r, authStatus(err), loginMessage(err))
 		return
 	}
-	a.startSession(w)
+	a.startSession(w, r)
 	redirect(w, r, "/admin/hmis")
 }
 
@@ -374,7 +407,8 @@ func loginMessage(err error) string {
 
 func (a *admin) handleLogout(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	a.sessions.remove(s)
-	clearCookie(w, sessionCookie)
+	name, _ := cookieNames(s.local)
+	clearCookie(w, name, !s.local)
 	redirect(w, r, "/admin/login")
 }
 
@@ -417,7 +451,7 @@ func (a *admin) handleChangePassword(w http.ResponseWriter, r *http.Request, s s
 	}
 	// Alle Sitzungen enden, auch ein womöglich mitgelesener Wert der eigenen.
 	a.sessions.clear()
-	fresh := a.startSession(w)
+	fresh := a.startSession(w, r)
 	a.done(w, r, fresh, "/admin/system", "Passwort geändert. Andere Sitzungen wurden beendet.")
 }
 

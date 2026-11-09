@@ -15,6 +15,7 @@ const pathRepair = "/admin/repair"
 var repairPaths = map[string]bool{
 	pathRepair:          true,
 	"/admin/logout":     true,
+	pathLocalBack:       true,
 	"/admin/system/log": true,
 }
 

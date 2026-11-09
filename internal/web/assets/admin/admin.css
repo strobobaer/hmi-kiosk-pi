@@ -173,3 +173,19 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 .steps li.check { border-color: var(--amber); }
 .tag.warn { color: var(--amber); border-color: var(--amber); }
 .msg.warn.banner { margin: 0 0 16px; }
+
+/* Am Terminal (Touch, http://127.0.0.1:8081): größere Ziele, keine Neugestaltung. */
+.kiosk-back { padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.kiosk-back form { margin: 0; }
+.kiosk-back .btn { display: flex; width: 100%; min-height: 64px; font-size: 1.4rem; text-decoration: none; }
+.on-terminal { font-size: 18px; }
+.on-terminal .btn,
+.on-terminal button,
+.on-terminal input:not([type="checkbox"]):not([type="radio"]),
+.on-terminal select,
+.on-terminal textarea { min-height: 48px; font-size: 1.1rem; }
+.on-terminal input[type="checkbox"],
+.on-terminal input[type="radio"] { width: 28px; height: 28px; }
+.on-terminal .nav a { min-height: 56px; padding: 16px 18px; }
+/* Platz für die Bildschirmtastatur (ein Drittel der Höhe), damit das unterste Feld frei bleibt. */
+.on-terminal .main { padding-bottom: 40vh; }

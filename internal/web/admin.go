@@ -99,6 +99,12 @@ type AdminDeps struct {
 	TileURLs func() []string
 	// ConfigMu schützt Laden, Ändern und Speichern der Konfiguration auch gegenüber dem Dienst (leer: eigener Mutex).
 	ConfigMu *sync.Mutex
+	// Keyboard ist die Bildschirmtastatur für die Seiten am Terminal (nil: keine).
+	Keyboard KeyboardAPI
+	// LocalActive meldet jede Anfrage am Terminal (Loopback-Listener), LocalLeft die Rückkehr
+	// zur Kachelseite über „Zurück zum Kiosk“ oder nach Inaktivität. nil: nicht gebraucht.
+	LocalActive func()
+	LocalLeft   func()
 }
 
 const formBodyLimit = 64 << 10
@@ -150,6 +156,7 @@ type admin struct {
 	pages      map[string]*template.Template
 	static     fs.FS
 	h          http.Handler
+	local      http.Handler // Zugang am Terminal (Loopback, HTTP)
 }
 
 // NewAdmin baut den Handler der Admin-Seite. Alle Routen liegen unter /admin/.
@@ -180,6 +187,7 @@ func newAdmin(d AdminDeps) *admin {
 		mux.Handle(pattern, a.wrap(rt))
 	}
 	a.h = mux
+	a.local = a.buildLocal()
 	return a
 }
 
@@ -201,6 +209,7 @@ func (a *admin) routes() []route {
 	return []route{
 		public(http.MethodGet, "/admin/admin.css", routeAsset, a.asset("admin.css", "text/css; charset=utf-8")),
 		public(http.MethodGet, "/admin/admin.js", routeAsset, a.asset("admin.js", "text/javascript; charset=utf-8")),
+		public(http.MethodGet, "/admin/local.js", routeAsset, a.asset("local.js", "text/javascript; charset=utf-8")),
 		public(http.MethodGet, "/admin/setup", routeSetup, a.handleSetupForm),
 		public(http.MethodPost, "/admin/setup", routeSetup, a.handleSetup),
 		public(http.MethodGet, "/admin/login", routeLogin, a.handleLoginForm),
@@ -208,6 +217,7 @@ func (a *admin) routes() []route {
 
 		get("/admin/{$}", func(w http.ResponseWriter, r *http.Request, _ sessionRef) { redirect(w, r, "/admin/hmis") }),
 		post("/admin/logout", a.handleLogout),
+		post(pathLocalBack, a.handleLocalBack),
 
 		get("/admin/hmis", a.handleHMIList),
 		get("/admin/hmis/new", a.handleHMINewForm),
@@ -277,7 +287,7 @@ func (a *admin) routes() []route {
 // CSRF, damit Unbefugte nur eine Weiterleitung sehen.
 func (a *admin) wrap(rt route) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setAdminHeaders(w)
+		setAdminHeaders(w, onTerminal(r))
 		if isWrite(r) && !sameOrigin(r) {
 			http.Error(w, "Anfrage nicht erlaubt", http.StatusForbidden)
 			return
@@ -355,10 +365,18 @@ func notFound(w http.ResponseWriter) {
 
 func isWrite(r *http.Request) bool { return r.Method != http.MethodGet && r.Method != http.MethodHead }
 
-func setAdminHeaders(w http.ResponseWriter) {
+func setAdminHeaders(w http.ResponseWriter, terminal bool) {
 	h := w.Header()
-	// Wie local.go, aber Formulare müssen hier abgeschickt werden können.
-	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+	// Wie local.go, aber Formulare müssen hier abgeschickt werden können. Am Terminal
+	// führt „Zurück zum Kiosk“ per Weiterleitung zur Kachelseite, die die Richtlinie
+	// dann auch erlauben muss; die Tastatur-API liegt am eigenen Ursprung.
+	formAction := "'self'"
+	connect := ""
+	if terminal {
+		formAction += " " + strings.TrimSuffix(KioskURL, "/")
+		connect = " connect-src 'self';"
+	}
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self';"+connect+" base-uri 'none'; form-action "+formAction+"; frame-ancestors 'none'")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "no-store")
 }
@@ -490,10 +508,22 @@ type adminView struct {
 	// NetworkTiles: Die Kachelseite ist im Netz freigegeben; TileURLs nennt ihre Adressen.
 	NetworkTiles bool
 	TileURLs     []string
-	Body         any
+	// Terminal: Aufruf am Terminal (Loopback); dann „Zurück zum Kiosk“, Inaktivitätsabmeldung
+	// nach IdleSeconds und Bildschirmtastatur (OSK „auto“ oder „manual“).
+	Terminal    bool
+	KioskURL    string
+	IdleSeconds int
+	OSK         string
+	Body        any
 }
 
 func (a *admin) writePage(w http.ResponseWriter, status int, page string, v adminView) {
+	if v.Terminal {
+		v.KioskURL, v.IdleSeconds, v.OSK = KioskURL, int(localSessionIdle/time.Second), "auto"
+		if cfg, _, err := a.d.Store.Load(); err == nil && cfg.Kiosk.InputMode == config.InputMouse {
+			v.OSK = "manual"
+		}
+	}
 	var buf bytes.Buffer
 	if err := a.pages[page].Execute(&buf, v); err != nil {
 		http.Error(w, "Seite konnte nicht erzeugt werden", http.StatusInternalServerError)
@@ -519,7 +549,7 @@ func (a *admin) pageRefresh(w http.ResponseWriter, s sessionRef, status int, pag
 	a.writePage(w, status, page, adminView{
 		Title: title, Section: section, CSRF: s.csrf, LoggedIn: true, TerminalName: name,
 		Notice: a.sessions.takeFlash(s), Error: errMsg, Refresh: refresh, Body: body,
-		NetworkTiles: netTiles, TileURLs: a.tileURLs(netTiles),
+		NetworkTiles: netTiles, TileURLs: a.tileURLs(netTiles), Terminal: s.local,
 	})
 }
 

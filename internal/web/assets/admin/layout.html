@@ -7,9 +7,15 @@
 {{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">
 {{end}}<link rel="stylesheet" href="/admin/admin.css">
 <script src="/admin/admin.js" defer></script>
-</head>
-<body>
-<header class="top">
+{{if .Terminal}}<script src="/admin/local.js" defer></script>
+<script src="/keyboard.js" defer></script>
+{{end}}</head>
+<body{{if .Terminal}} class="on-terminal" data-osk="{{.OSK}}" data-idle="{{.IdleSeconds}}" data-kiosk="{{.KioskURL}}"{{end}}>
+{{if .Terminal}}<div class="kiosk-back">{{if .LoggedIn}}<form method="post" action="/admin/local/back" id="kiosk-back">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="btn primary">Zurück zum Kiosk</button>
+  </form>{{else}}<a class="btn primary" id="kiosk-back" href="{{.KioskURL}}">Zurück zum Kiosk</a>{{end}}</div>
+{{end}}<header class="top">
   <div class="brand">HMI-Kiosk{{if .TerminalName}}<span class="terminal">{{.TerminalName}}</span>{{end}}</div>
   {{if .LoggedIn}}
   <form method="post" action="/admin/logout" class="logout">
