@@ -6,7 +6,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung und
 
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen
-3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand)
+3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Kachelseite im Netz für Tests)
 4. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -262,6 +262,23 @@ So baut man ein Abbild mit SSH:
 6. Ob `hmiadmin` per `sudo` Rechte bekommt, ist bei diesem Abbild nicht geprüft.
 
 Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist, ist eine Entscheidung der Anlage (Inbetriebnahme, Abschnitt 12). Eine Datei `ssh` auf der Boot-Partition schaltet SSH ebenfalls ein, hilft aber ohne Schlüssel nicht bei der Anmeldung.
+
+### Kachelseite im Netz (Test)
+
+Für Tests lässt sich die Kachelseite von einem anderen PC im Netz aufrufen. Ab Werk ist das aus, und die Kachelseite antwortet nur auf `127.0.0.1:8080`.
+
+1. Admin-Seite → **Kiosk** → Haken bei **Kachelseite im Netz freigeben (nur für Tests)** setzen, **Speichern**. Die Umstellung wirkt sofort, ohne Neustart des Dienstes. Eine laufende Sitzung und Chromium auf dem Terminal bleiben unberührt.
+2. Am PC im Browser `http://<IP des Terminals>:8080/` öffnen. Die Adresse steht oben auf jeder Admin-Seite, solange die Freigabe an ist.
+3. Nach dem Test den Haken wieder entfernen und speichern.
+
+Wichtig:
+
+- Die Kachelseite hat **keine Anmeldung**. Jeder im Netz kann dann HMI-Sitzungen auf diesem Terminal starten, beenden und übernehmen.
+- Das Remmina-Fenster öffnet sich immer **auf dem Bildschirm des Terminals**, nicht auf dem PC. Der PC dient nur als Fernbedienung der Kacheln.
+- Aufrufen lässt sich die Seite nur über die IP-Adresse mit Port 8080, nicht über einen Gerätenamen. Das schützt vor DNS-Rebinding.
+- Die Selbstprüfungs-API bleibt auf das Terminal selbst beschränkt.
+- Der Import einer Konfiguration übernimmt die Freigabe nicht. Jedes Gerät behält seinen eigenen Stand.
+- Lässt sich Port 8080 im Netz nicht öffnen, läuft die Kachelseite lokal weiter. Die Admin-Seite zeigt dann unter **System** eine Warnung. Scheitert das Zurückstellen auf lokal, den Dienst unter **System** neu starten.
 
 ## 4. Fehlersuche
 
