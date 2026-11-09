@@ -121,6 +121,9 @@ func Validate(c Config) error {
 		}
 		peerNames[p.Name] = true
 	}
+	if err := checkWebOrigins(c); err != nil {
+		return err
+	}
 	if c.Kiosk.PermanentHMI != "" && !ids[c.Kiosk.PermanentHMI] {
 		return fmt.Errorf("Dauer-HMI unbekannt: %q", c.Kiosk.PermanentHMI)
 	}

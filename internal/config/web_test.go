@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -195,10 +196,94 @@ func TestValidOrigin(t *testing.T) {
 		"", "http://grafana", "http://grafana:3000/", "http://grafana:3000/x", "ftp://grafana:21",
 		"http://Grafana:3000", "http://*:3000", "http://gra fana:1", "http://grafana:0", "http://grafana:65536",
 		"http://user@grafana:3000", "http://[zz::1]:80", "http://grafana:3000\n", `http://"x":1`, "http://-a:1",
-		"http://a..b:1", "http://grafana:03000",
+		"http://a..b:1", "http://grafana:03000", "http://127.0.0.1:8080", "http://localhost:8080", "http://[::1]:80", "http://010.1.1.1:80", "http://0x7f.1:80",
 	} {
 		if ValidOrigin(o) {
 			t.Errorf("%q angenommen", o)
 		}
+	}
+}
+
+// Chromium liest Namen mit Zahl als letztem Teil (oder 0x…) als IPv4-Adresse, auch in
+// Schreibweisen, die netip nicht kennt. Solche Namen wären in Richtlinie und Anzeige mehrdeutig.
+func TestWebURLRejectsAmbiguousNumericHosts(t *testing.T) {
+	for _, h := range []string{"010.1.1.1", "1.2.3", "0x7f.1", "999.1.1.1", "1.2.3.4.5", "grafana.1", "0x7f000001", "4294967295", "a.0X1f"} {
+		if err := Validate(webSample("http://" + h + ":3000/")); err == nil {
+			t.Errorf("%q angenommen", h)
+		}
+	}
+	for _, h := range []string{"10.1.1.1", "grafana1", "1grafana.werk", "x0x1"} {
+		if err := Validate(webSample("http://" + h + ":3000/")); err != nil {
+			t.Errorf("%q abgelehnt: %v", h, err)
+		}
+	}
+}
+
+func TestWebURLRejectsLoopback(t *testing.T) {
+	for _, u := range []string{
+		"http://127.0.0.1:3000/", "http://127.1.2.3/", "http://localhost:3000/", "http://LocalHost/",
+		"http://grafana.localhost/", "http://[::1]:3000/", "http://[::ffff:127.0.0.1]/", "http://0.0.0.0/", "http://[::]/",
+	} {
+		err := Validate(webSample(u))
+		if err == nil {
+			t.Errorf("%q angenommen", u)
+			continue
+		}
+		if !strings.Contains(err.Error(), "Terminal selbst") && !strings.Contains(err.Error(), "ungültig") {
+			t.Errorf("%q: Meldung %v", u, err)
+		}
+	}
+}
+
+func TestValidateLimitsWebOrigins(t *testing.T) {
+	c := sample()
+	c.Kiosk.PermanentHMI = ""
+	for i := range MaxWebOrigins + 1 {
+		c.HMIs = append(c.HMIs, HMI{ID: fmt.Sprintf("w%d", i), Name: "W", Kind: KindWeb, URL: fmt.Sprintf("http://grafana%d:3000/", i)})
+	}
+	err := Validate(c)
+	if err == nil || !strings.Contains(err.Error(), "Höchstens 32") {
+		t.Fatalf("33 Server: %v", err)
+	}
+	c.HMIs = c.HMIs[:len(c.HMIs)-1]
+	if err := Validate(c); err != nil {
+		t.Fatalf("32 Server: %v", err)
+	}
+	// Viele Kacheln auf demselben Server zählen einmal.
+	c.HMIs = append(c.HMIs, HMI{ID: "dup", Name: "W", Kind: KindWeb, URL: "http://grafana0:3000/d/anders"})
+	if err := Validate(c); err != nil {
+		t.Fatalf("doppelter Server: %v", err)
+	}
+	// Lange Namen: die Liste muss in die Anfrage an den Helfer passen.
+	c = sample()
+	c.Kiosk.PermanentHMI = ""
+	for i := range 20 {
+		host := fmt.Sprintf("%s.%s.%s%02d.werk", strings.Repeat("a", 60), strings.Repeat("a", 60), strings.Repeat("a", 55), i)
+		c.HMIs = append(c.HMIs, HMI{ID: fmt.Sprintf("l%d", i), Name: "L", Kind: KindWeb, URL: "http://" + host + ":3000/"})
+	}
+	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "zu lang") {
+		t.Fatalf("lange Liste: %v", err)
+	}
+}
+
+func TestWebOriginsFitHelperRequest(t *testing.T) {
+	// Größte erlaubte Liste: 32 Ursprünge bis zur Grenze; die Anfrage an den Helfer
+	// ({"cmd":…,"arg":"<JSON mit maskierten Anführungszeichen>"}) bleibt unter 4096 Byte.
+	var list []string
+	for i := 0; ; i++ {
+		next := append(list, fmt.Sprintf("https://%s%02d:65535", strings.Repeat("b", 60), i))
+		b, _ := json.Marshal(next)
+		if len(next) > MaxWebOrigins || len(b) > MaxWebOriginsJSON {
+			break
+		}
+		list = next
+	}
+	arg, _ := json.Marshal(list)
+	req, _ := json.Marshal(struct {
+		Cmd string `json:"cmd"`
+		Arg string `json:"arg"`
+	}{"set-web-origins", string(arg)})
+	if len(req)+1 > 4096 {
+		t.Fatalf("Anfrage %d Byte", len(req)+1)
 	}
 }

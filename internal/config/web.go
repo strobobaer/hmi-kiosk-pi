@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -39,12 +40,40 @@ func validDNSName(s string) bool {
 	return true
 }
 
-// validWebHost: IP-Adresse ohne Zone oder Rechnername.
+// numericLabelRe: So endende Namen liest Chromium als IPv4-Adresse (auch oktal, hex,
+// verkürzt), netip aber nicht. Sie sind nur als echte IPv4-Adresse erlaubt.
+var numericLabelRe = regexp.MustCompile(`(?i)^(0x[0-9a-f]*|[0-9]+)$`)
+
+// validWebHost: IP-Adresse ohne Zone oder Rechnername, der nicht wie eine Zahl aussieht.
 func validWebHost(host string) bool {
 	if ip, err := netip.ParseAddr(host); err == nil {
 		return ip.Zone() == ""
 	}
-	return validDNSName(host)
+	if !validDNSName(host) {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	for _, l := range labels {
+		if strings.HasPrefix(strings.ToLower(l), "0x") && numericLabelRe.MatchString(l) {
+			return false
+		}
+	}
+	return !numericLabelRe.MatchString(labels[len(labels)-1])
+}
+
+// isLocalHost: das Terminal selbst (Loopback, unbestimmte Adresse, localhost). Dort laufen
+// Kachelseite und Admin-Seite; eine Web-Kachel darauf hebelte Richtlinie und Fensterregel aus.
+func isLocalHost(host string) bool {
+	h := strings.ToLower(host)
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	ip, err := netip.ParseAddr(h)
+	if err != nil {
+		return false
+	}
+	ip = ip.Unmap()
+	return ip.IsLoopback() || ip.IsUnspecified()
 }
 
 // ParseWebURL prüft die Adresse einer Web-Kachel: nur http/https mit Rechner, optional
@@ -76,6 +105,9 @@ func ParseWebURL(raw string) (*url.URL, error) {
 	}
 	if !validWebHost(u.Hostname()) {
 		return nil, fmt.Errorf("Rechnername der Adresse ist ungültig: %q", u.Hostname())
+	}
+	if isLocalHost(u.Hostname()) {
+		return nil, errors.New("Adresse zeigt auf das Terminal selbst (localhost, 127.0.0.1, ::1); das ist für Web-Kacheln nicht erlaubt")
 	}
 	if p := u.Port(); p != "" || strings.HasSuffix(u.Host, ":") {
 		n, err := strconv.Atoi(p)
@@ -148,6 +180,27 @@ func WebOrigins(c Config) []string {
 	return out
 }
 
+// Grenzen der Ursprungsliste; der Helfer prüft dieselben. MaxWebOriginsJSON begrenzt die
+// JSON-Liste so, dass die Anfrage an den Helfer (höchstens 4096 Byte, Anführungszeichen
+// maskiert) und seine Zustandsdatei sicher passen.
+const (
+	MaxWebOrigins     = 32
+	MaxWebOriginsJSON = 3000
+)
+
+// checkWebOrigins prüft die Grenzen beim Speichern: lieber eine klare Meldung als eine
+// Richtlinie, die der Helfer ablehnt.
+func checkWebOrigins(c Config) error {
+	origins := WebOrigins(c)
+	if len(origins) > MaxWebOrigins {
+		return fmt.Errorf("Höchstens %d verschiedene Web-Server (Schema, Rechner, Port) sind möglich, eingetragen sind %d", MaxWebOrigins, len(origins))
+	}
+	if b, _ := json.Marshal(origins); len(b) > MaxWebOriginsJSON {
+		return fmt.Errorf("Die Adressen der Web-Server sind zusammen zu lang (%d von höchstens %d Zeichen); bitte weniger oder kürzere Rechnernamen verwenden", len(b), MaxWebOriginsJSON)
+	}
+	return nil
+}
+
 var originRe = regexp.MustCompile(`^(https?)://(\[[0-9a-f:.]+\]|[a-z0-9_.-]+):([1-9][0-9]{0,4})$`)
 
 // ValidOrigin prüft einen Ursprung in genau der Form von WebOrigin (für den Helfer,
@@ -163,10 +216,10 @@ func ValidOrigin(s string) bool {
 	host := m[2]
 	if strings.HasPrefix(host, "[") {
 		ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
-		return err == nil && ip.Is6() && ip.Zone() == ""
+		return err == nil && ip.Is6() && ip.Zone() == "" && !isLocalHost(ip.String())
 	}
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.Is4()
+	if ip, err := netip.ParseAddr(host); err == nil && !ip.Is4() {
+		return false
 	}
-	return validDNSName(host)
+	return validWebHost(host) && !isLocalHost(host)
 }

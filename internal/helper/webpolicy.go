@@ -20,8 +20,8 @@ import (
 const CmdSetWebOrigins = "set-web-origins"
 
 const (
-	// maxWebOrigins begrenzt die Liste; die Anfrage selbst ist ohnehin auf 4 KiB begrenzt.
-	maxWebOrigins       = 32
+	// maxWebOrigins begrenzt die Liste wie config.Validate; die Anfrage ist ohnehin auf 4 KiB begrenzt.
+	maxWebOrigins       = config.MaxWebOrigins
 	maxWebOriginsState  = 4096
 	defaultPolicyPath   = "/etc/chromium/policies/managed/hmi-kiosk.json"
 	defaultWebOriginsSt = "/data/system/web-origins"
@@ -33,6 +33,9 @@ var fixedAllow = []string{"http://127.0.0.1:8080", "http://localhost:8080", "htt
 // parseWebOrigins liest die Liste streng: genau eine JSON-Liste von Zeichenketten,
 // jede ein gültiger Ursprung. Ergebnis sortiert und ohne Doppel.
 func parseWebOrigins(raw []byte) ([]string, error) {
+	if len(bytes.TrimSpace(raw)) > config.MaxWebOriginsJSON {
+		return nil, errors.New("Liste der Web-Ursprünge zu lang")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	var list []string
 	if err := dec.Decode(&list); err != nil || list == nil {

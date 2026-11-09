@@ -215,3 +215,18 @@ func TestPackagedPolicyMatchesHelperWithoutOrigins(t *testing.T) {
 		t.Fatalf("Paket-Richtlinie weicht vom Helfer ab:\n%s\n---\n%s", b, ChromiumPolicy(nil))
 	}
 }
+
+func TestSetWebOriginsRejectsLoopbackAndTooLong(t *testing.T) {
+	linuxOnly(t)
+	long := make([]string, 0, 30)
+	for i := range 30 {
+		long = append(long, fmt.Sprintf("http://%s.%s%02d:1", strings.Repeat("c", 60), strings.Repeat("c", 60), i))
+	}
+	longJSON, _ := json.Marshal(long)
+	for _, arg := range []string{`["http://127.0.0.1:8080"]`, `["http://localhost:3000"]`, string(longJSON)} {
+		e := webEnv(t)
+		if err := e.srv.Dispatch(context.Background(), CmdSetWebOrigins, arg); err == nil {
+			t.Errorf("%.60q angenommen", arg)
+		}
+	}
+}
