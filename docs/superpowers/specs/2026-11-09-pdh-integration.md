@@ -62,6 +62,20 @@ Beendet eine **von PDH** geöffnete Sitzung (`200 {"status":"closed"}`), sonst `
 - PDH verdrängt nie: Hält ein anderes Terminal die HMI, gibt es immer `409`, auch im Übernahme-Modus.
   Ausnahme: Ansehen (`view`) einer laufenden Daueranzeige.
 - `503` zusätzlich bei Selbst-/Dauerprüfung und bei offener Admin-Seite am Terminal.
+- `open` antwortet erst nach der VNC-Prüfung (RFB-Anmeldung höchstens 5 s; mit Abstimmung und
+  Namensauflösung bleibt die Antwort unter 8 s). Lehnt das HMI das Passwort ab:
+  `422 {"error":"VNC-Anmeldung am HMI fehlgeschlagen: …"}`, es startet kein Client (schützt auch vor
+  der Sperre des VNC-Servers nach Fehlversuchen). HMI nicht erreichbar oder gesperrt: `503` mit Grund
+  in `error`.
+- `422` auch bei Steuerzeichen im Passwort, bei einem Ziel auf dem Terminal selbst (Loopback,
+  `0.0.0.0`/`::`, `localhost`, auch nach Namensauflösung) und bei Format- oder Trennzeichen
+  (Unicode Cf, Zl, Zp) in `label` oder `user`.
+- Kachelabgleich: gleicher Port und gleicher Host (ohne Groß-/Kleinschreibung) oder dieselbe
+  aufgelöste Adresse. PDH sollte denselben Host senden, wie er in der Kachel des Terminals steht.
+- Eine Kachel, die am Terminal auf „nur ansehen“ steht, bleibt es, auch wenn PDH `control` sendet.
+- Bricht PDH die Anfrage vor der Antwort ab, beendet das Terminal den Versuch; es entsteht keine
+  Sitzung ohne Antwort.
+- Die Sperre nach Fehlversuchen gilt bei IPv6 für das ganze /64-Netz der Quelladresse.
 
 ## PDH-Seite
 
