@@ -4,15 +4,18 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"math/big"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -42,7 +45,43 @@ func loadOrCreateCert(dir string, now time.Time) (tls.Certificate, error) {
 			return cert, nil
 		}
 	}
-	return createCert(dir, certPath, keyPath, now)
+	return createCert(dir, certPath, keyPath, now, loadKey(keyPath))
+}
+
+// loadKey liest einen vorhandenen P-256-Schlüssel (nil: keiner oder unbrauchbar). Ein neues
+// Zertifikat behält ihn, damit der Fingerabdruck stabil bleibt, den PDH prüft.
+func loadKey(path string) *ecdsa.PrivateKey {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	block, _ := pem.Decode(b)
+	if block == nil || block.Type != "EC PRIVATE KEY" {
+		return nil
+	}
+	key, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil || key.Curve != elliptic.P256() {
+		return nil
+	}
+	return key
+}
+
+// PublicKeyFingerprint ist SHA-256 über SubjectPublicKeyInfo, hex klein mit Doppelpunkten
+// (leer ohne lesbares Zertifikat).
+func PublicKeyFingerprint(cert tls.Certificate) string {
+	if len(cert.Certificate) == 0 {
+		return ""
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
+	parts := make([]string, len(sum))
+	for i, b := range sum {
+		parts[i] = hex.EncodeToString([]byte{b})
+	}
+	return strings.Join(parts, ":")
 }
 
 var chmodFile = os.Chmod
@@ -64,11 +103,11 @@ func tightenKeyFile(path string) error {
 	return nil
 }
 
-func createCert(dir, certPath, keyPath string, now time.Time) (tls.Certificate, error) {
+func createCert(dir, certPath, keyPath string, now time.Time, key *ecdsa.PrivateKey) (tls.Certificate, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return tls.Certificate{}, err
 	}
-	certPEM, keyPEM, err := generateCert(now, interfaceIPs())
+	certPEM, keyPEM, err := generateCert(now, interfaceIPs(), key)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -78,11 +117,13 @@ func createCert(dir, certPath, keyPath string, now time.Time) (tls.Certificate, 
 	return tls.X509KeyPair(certPEM, keyPEM)
 }
 
-// generateCert erzeugt ein selbst signiertes Zertifikat für den Rechnernamen und ips.
-func generateCert(now time.Time, ips []net.IP) (certPEM, keyPEM []byte, err error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, err
+// generateCert erzeugt ein selbst signiertes Zertifikat für den Rechnernamen und ips, mit key
+// oder (nil) einem neuen Schlüssel.
+func generateCert(now time.Time, ips []net.IP, key *ecdsa.PrivateKey) (certPEM, keyPEM []byte, err error) {
+	if key == nil {
+		if key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
+			return nil, nil, err
+		}
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -166,3 +207,4 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 }
 
 func mkdirCert(dir string) error { return os.MkdirAll(dir, 0o700) }
+

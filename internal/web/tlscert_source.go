@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"log"
@@ -95,7 +96,9 @@ func (c *CertSource) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificat
 	if !containsIP(ips, ip) {
 		ips = append(ips, ip)
 	}
-	certPEM, keyPEM, err := generateCert(now, ips)
+	// Derselbe Schlüssel: Der Fingerabdruck, den PDH prüft, bleibt beim Adresswechsel gleich.
+	priv, _ := cur.PrivateKey.(*ecdsa.PrivateKey)
+	certPEM, keyPEM, err := generateCert(now, ips, priv)
 	var cert tls.Certificate
 	if err == nil {
 		cert, err = tls.X509KeyPair(certPEM, keyPEM)
@@ -113,6 +116,17 @@ func (c *CertSource) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificat
 	c.set(&cert)
 	c.mu.Unlock()
 	return &cert, nil
+}
+
+// PublicKeyFingerprint ist der Fingerabdruck des aktuellen Zertifikats (siehe PublicKeyFingerprint).
+func (c *CertSource) PublicKeyFingerprint() string {
+	c.mu.Lock()
+	cur := c.cert
+	c.mu.Unlock()
+	if cur == nil {
+		return ""
+	}
+	return PublicKeyFingerprint(*cur)
 }
 
 func containsIP(ips []net.IP, ip net.IP) bool {
