@@ -24,9 +24,11 @@ type HelperAPI interface {
 	Call(ctx context.Context, cmd string, arg string) error
 }
 
-// UpdateAPI installiert ein hochgeladenes Programmpaket.
+// UpdateAPI installiert ein Programmpaket: hochgeladen (jede Version) oder per Klick
+// geladen (nur die angebotene Version want).
 type UpdateAPI interface {
 	Install(ctx context.Context, blob []byte) (version string, err error)
+	InstallExpect(ctx context.Context, blob []byte, want string) (version string, err error)
 }
 
 // SystemStatus sind die Anzeigewerte im Bereich System.

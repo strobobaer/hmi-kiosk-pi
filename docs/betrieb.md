@@ -57,6 +57,8 @@ gh release upload v1.0.1 dist/hmi-kiosk-1.0.1.pkg
 
 Fehlt die Paketdatei (zum Beispiel, weil die Version neuere Systemteile braucht und nur als Abbild und Bundle erscheint), zeigen die Terminals die Version mit einem Verweis auf die Release-Seite an, aber ohne Knopf zum Installieren. Ein Release als Vorabversion („Pre-release“) gilt nur für Terminals, bei denen „Vorabversionen einbeziehen“ eingeschaltet ist. Entwürfe (Drafts) sieht kein Terminal.
 
+**Wichtig:** Ein Paket, das einen höheren Systemstand verlangt (`release.SystemLevel` wurde erhöht), **nie** als Release-Datei anhängen. Terminals mit einer Version vor dem Systemstand (0.1.6 und älter) prüfen ihn nicht und würden das Paket installieren; das neue Programm liefe dann auf zu alten Systemteilen. Solche Versionen nur als Abbild und Bundle veröffentlichen.
+
 ### Updates per Klick
 
 1. Admin-Seite, Menü „System“, Abschnitt „Updates“. Dort stehen die laufende Version und das Ergebnis der letzten Prüfung.

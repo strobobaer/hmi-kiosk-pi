@@ -116,10 +116,11 @@ func (a *admin) handleUpdateInstall(w http.ResponseWriter, r *http.Request, s se
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Now().Add(uploadDeadline))
 
-	blob, err := a.d.UpdateCheck.Download(r.Context(), r.PostForm.Get("version"))
+	version := r.PostForm.Get("version")
+	blob, err := a.d.UpdateCheck.Download(r.Context(), version)
 	if err != nil {
 		a.renderSystem(w, s, http.StatusUnprocessableEntity, "Update fehlgeschlagen: "+err.Error(), systemExtras{})
 		return
 	}
-	a.installUpdate(w, r, s, blob)
+	a.installUpdate(w, r, s, blob, version)
 }

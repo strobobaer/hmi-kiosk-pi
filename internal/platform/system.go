@@ -24,13 +24,13 @@ const (
 
 // InstalledSystemLevel liest den Stand der Systemteile unter root (Produktion "/").
 // Systeme vor der Kennzeichnung (bis 0.1.6) haben keine Datei: Erlaubt ihre
-// Chromium-Richtlinie schon die Admin-Seite am Terminal, sind es Systemteile von 0.1.6
-// (Stand 1), sonst älter (Stand 0). Eine unlesbare Datei gilt als Stand 0.
-func InstalledSystemLevel(root string) int {
+// Chromium-Richtlinie schon die Admin-Seite am Terminal (Ursprung localAdmin), sind es
+// Systemteile von 0.1.6 (Stand 1), sonst älter (Stand 0). Eine unlesbare Datei gilt als Stand 0.
+func InstalledSystemLevel(root, localAdmin string) int {
 	b, err := os.ReadFile(filepath.Join(root, SystemLevelFile))
 	if errors.Is(err, fs.ErrNotExist) {
 		if _, perr := os.Stat(filepath.Join(root, ChromiumPolicyFile)); perr == nil &&
-			ChromiumAllows(root, "http://127.0.0.1:8081") {
+			ChromiumAllows(root, localAdmin) {
 			return 1
 		}
 		return 0

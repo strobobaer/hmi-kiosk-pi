@@ -56,7 +56,7 @@ func (s *service) Status() web.SystemStatus {
 	if !st.OverlayActive {
 		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
 	}
-	if have := platform.InstalledSystemLevel(rootFS); have < release.SystemLevel {
+	if have := platform.InstalledSystemLevel(rootFS, localAdminOrigin); have < release.SystemLevel {
 		add(fmt.Sprintf(systemPartsNotice, have, release.SystemLevel))
 	}
 

@@ -67,7 +67,7 @@ func TestInstalledSystemLevel(t *testing.T) {
 		{"negatives Kennzeichen", map[string]string{SystemLevelFile: "-1"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := InstalledSystemLevel(writeRoot(t, tc.files)); got != tc.want {
+			if got := InstalledSystemLevel(writeRoot(t, tc.files), "http://127.0.0.1:8081"); got != tc.want {
 				t.Fatalf("Stand %d, erwartet %d", got, tc.want)
 			}
 		})

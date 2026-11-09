@@ -128,3 +128,23 @@ func TestNotesArePlainAndShortened(t *testing.T) {
 		t.Errorf("%d Zeichen", n)
 	}
 }
+
+func TestSelectIgnoresNonCanonicalTags(t *testing.T) {
+	rels := []Release{rel("v0.10.01", pkg("0.10.01", 1)), rel("v00.11.0", pkg("00.11.0", 1)), rel("v0.10.0", pkg("0.10.0", 1))}
+	o, err := Select(rels, "0.9.0", false)
+	if err != nil || o == nil || o.Version != "0.10.0" {
+		t.Errorf("%+v %v", o, err)
+	}
+	if o, _ := Select(rels, "0.10.0", false); o != nil {
+		t.Errorf("Tag mit führender Null angeboten: %+v", o)
+	}
+}
+
+func TestNotesDropFormatCharacters(t *testing.T) {
+	r := rel("v0.2.0", pkg("0.2.0", 1))
+	r.Body = "a" + string(rune(0x202e)) + "b" + string(rune(0x2066)) + "c" + string(rune(0x200b)) + "d" + string(rune(0xfeff)) + "e"
+	o, _ := Select([]Release{r}, "0.1.0", false)
+	if o == nil || o.Notes != "abcde" {
+		t.Errorf("%+q", o.Notes)
+	}
+}

@@ -151,6 +151,21 @@ type Installer struct {
 }
 
 func (in *Installer) Install(ctx context.Context, blob []byte) (string, error) {
+	return in.install(ctx, blob, "")
+}
+
+// InstallExpect installiert nur, wenn das Paket genau die Version want enthält. Beim Update
+// per Klick verhindert das, dass ein älteres, gültig signiertes Paket unter dem Namen der
+// angebotenen Version still zurückstuft.
+func (in *Installer) InstallExpect(ctx context.Context, blob []byte, want string) (string, error) {
+	if !ValidVersion(want) {
+		return "", errors.New("Erwartete Version ungültig")
+	}
+	return in.install(ctx, blob, want)
+}
+
+// install: want leer heißt jede Version (Hochladen).
+func (in *Installer) install(ctx context.Context, blob []byte, want string) (string, error) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -159,6 +174,9 @@ func (in *Installer) Install(ctx context.Context, blob []byte) (string, error) {
 	p, err := Verify(blob, in.PublicKey)
 	if err != nil {
 		return "", err
+	}
+	if want != "" && p.Version != want {
+		return "", fmt.Errorf("Das Paket enthält Version %s statt der angebotenen Version %s; es wurde nicht installiert.", p.Version, want)
 	}
 	if err := in.checkSystemLevel(p); err != nil {
 		return "", err

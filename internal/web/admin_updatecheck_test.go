@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/updatecheck"
 )
 
@@ -97,11 +99,23 @@ func TestUpdateInstallByClickUsesInstallPath(t *testing.T) {
 		t.Fatalf("falsche Version installiert: %q", e.update.blobs)
 	}
 
+	e.update.version = "0.10.0"
 	body := b.follow(b.postVia("/admin/system", "/admin/system/update/install", url.Values{"version": {"0.10.0"}}))
-	wantContains(t, body, "Update installiert: Version 1.2.3")
+	wantContains(t, body, "Update installiert: Version 0.10.0")
 	if len(e.update.blobs) != 1 || string(e.update.blobs[0]) != "paket-0.10.0" {
 		t.Errorf("Blobs: %q", e.update.blobs)
 	}
+	if len(e.update.wants) != 1 || e.update.wants[0] != "0.10.0" {
+		t.Errorf("erwartete Version nicht weitergegeben: %q", e.update.wants)
+	}
+
+	// Ein älteres, gültig signiertes Paket unter dem Namen der neuen Version stuft nicht zurück.
+	e.update.version = "0.1.2"
+	r = b.postVia("/admin/system", "/admin/system/update/install", url.Values{"version": {"0.10.0"}})
+	if r.Code != http.StatusUnprocessableEntity {
+		t.Errorf("abweichende Version: %d", r.Code)
+	}
+	wantContains(t, r.Body.String(), "Update fehlgeschlagen: Das Paket enthält Version 0.1.2")
 
 	e.update.err = errors.New("Version 0.10.0 braucht neuere Systemteile (Stand 2, dieses Gerät hat Stand 1).")
 	r = b.postVia("/admin/system", "/admin/system/update/install", url.Values{"version": {"0.10.0"}})
@@ -116,6 +130,7 @@ func TestUpdateInstallAndUploadShareLock(t *testing.T) {
 	rs := newReleaseServer(t)
 	rs.release = make(chan struct{})
 	withUpdateCheck(t, e, rs)
+	e.update.version = "0.10.0"
 	b.postVia("/admin/system", "/admin/system/update/check", nil)
 	tok := b.tokenFrom("/admin/system")
 	other := e.login()
@@ -203,5 +218,32 @@ func TestImportTakesUpdateSource(t *testing.T) {
 	wantContains(t, importBlob(t, db, blob, exportPW), "importiert")
 	if u := dst.cfg().Update; u.Repo != "firma/kiosk" || !u.Prerelease {
 		t.Errorf("%+v", u)
+	}
+}
+
+// Ein Export ohne Abschnitt "update" (älterer Stand) lässt die Update-Einstellung des Ziels stehen;
+// sonst schaltete der Import eine bewusst abgeschaltete Prüfung wieder ein.
+func TestImportWithoutUpdateKeepsTargetSetting(t *testing.T) {
+	dst, db := newLoggedIn(t)
+	dst.mutate(func(c *config.Config) { c.Update = config.UpdateCfg{} })
+	base := dst.cfg()
+	base.Admin = config.AdminCfg{}
+	raw, err := json.Marshal(exportFile{Format: exportFormat, Config: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	delete(m["config"].(map[string]any), "update")
+	raw, _ = json.Marshal(m)
+	blob, err := secrets.SealExport(raw, exportPW)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantContains(t, importBlob(t, db, blob, exportPW), "importiert")
+	if u := dst.cfg().Update; u.Repo != "" || u.Prerelease {
+		t.Errorf("Update-Einstellung überschrieben: %+v", u)
 	}
 }

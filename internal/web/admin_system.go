@@ -357,13 +357,20 @@ func (a *admin) handleUpdate(w http.ResponseWriter, r *http.Request, s sessionRe
 		a.renderSystem(w, s, http.StatusUnprocessableEntity, "Bitte eine Update-Datei auswählen.", systemExtras{})
 		return
 	}
-	a.installUpdate(w, r, s, blob)
+	a.installUpdate(w, r, s, blob, "")
 }
 
 // installUpdate ist der gemeinsame Weg für hochgeladene und per Klick geladene Pakete:
-// Signatur, Systemstand, Versionsregeln und Rückfall-Wächter prüft Update.Install.
-func (a *admin) installUpdate(w http.ResponseWriter, r *http.Request, s sessionRef, blob []byte) {
-	version, err := a.d.Update.Install(r.Context(), blob)
+// Signatur, Systemstand, Versionsregeln und Rückfall-Wächter prüft der Installer.
+// want ist die angebotene Version (leer: Hochladen, jede Version).
+func (a *admin) installUpdate(w http.ResponseWriter, r *http.Request, s sessionRef, blob []byte, want string) {
+	install := a.d.Update.Install
+	if want != "" {
+		install = func(ctx context.Context, blob []byte) (string, error) {
+			return a.d.Update.InstallExpect(ctx, blob, want)
+		}
+	}
+	version, err := install(r.Context(), blob)
 	if err != nil {
 		a.renderSystem(w, s, http.StatusUnprocessableEntity, "Update fehlgeschlagen: "+err.Error(), systemExtras{})
 		return

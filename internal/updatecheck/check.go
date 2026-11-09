@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,9 +27,10 @@ const (
 )
 
 // Checker fragt die Releases eines Repositorys ab und lädt Paketdateien. Er stellt
-// nur GET-Anfragen an BaseURL und an Adressen aus deren Antwort, immer über HTTPS.
+// nur GET-Anfragen an BaseURL und an Adressen aus deren Antwort, immer über HTTPS und
+// nur an Rechner von GitHub (siehe githubHost) oder den Rechner einer gesetzten BaseURL.
 type Checker struct {
-	BaseURL   string       // leer: DefaultAPI
+	BaseURL   string       // leer: DefaultAPI; nur Tests setzen sie
 	Client    *http.Client // nil: Standard-Transport, also mit Proxy aus der Umgebung
 	UserAgent string
 }
@@ -42,12 +44,46 @@ func (c *Checker) client() *http.Client {
 		if req.URL.Scheme != "https" {
 			return errors.New("Weiterleitung auf eine Adresse ohne HTTPS abgelehnt")
 		}
+		if !c.allowed(req.URL) {
+			return fmt.Errorf("Weiterleitung auf %s nicht erlaubt (nur GitHub)", req.URL.Host)
+		}
 		if len(via) >= maxRedirects {
 			return errors.New("zu viele Weiterleitungen")
 		}
 		return nil
 	}
 	return &cl
+}
+
+// githubHost lässt nur die Rechner von GitHub für API, Release-Seiten und Paketdateien zu,
+// ohne oder mit Port 443. Das verhindert, dass eine Release-Liste das Terminal an
+// Rechner im Anlagennetz schickt.
+func githubHost(hostport string) bool {
+	host, port := strings.ToLower(hostport), ""
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		host, port = h, p
+	}
+	if port != "" && port != "443" {
+		return false
+	}
+	switch host {
+	case "api.github.com", "github.com", "objects.githubusercontent.com":
+		return true
+	}
+	label, ok := strings.CutSuffix(host, ".githubusercontent.com")
+	return ok && label != "" && !strings.Contains(label, ".")
+}
+
+// allowed: GitHub, dazu der Rechner einer abweichenden Basis-URL (nur im Test gesetzt).
+func (c *Checker) allowed(u *url.URL) bool {
+	if githubHost(u.Host) {
+		return true
+	}
+	if c.BaseURL == "" {
+		return false
+	}
+	base, err := url.Parse(c.BaseURL)
+	return err == nil && base.Host != "" && strings.EqualFold(base.Host, u.Host)
 }
 
 func (c *Checker) get(ctx context.Context, raw, accept string) (*http.Response, error) {
@@ -57,6 +93,9 @@ func (c *Checker) get(ctx context.Context, raw, accept string) (*http.Response, 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, err
+	}
+	if !c.allowed(req.URL) {
+		return nil, fmt.Errorf("Rechner %s ist nicht erlaubt (nur GitHub)", req.URL.Host)
 	}
 	req.Header.Set("Accept", accept)
 	if c.UserAgent != "" {
@@ -77,7 +116,7 @@ func (c *Checker) Releases(ctx context.Context, repo string) ([]Release, error) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	resp, err := c.get(ctx, strings.TrimSuffix(base, "/")+"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/releases", "application/vnd.github+json")
+	resp, err := c.get(ctx, strings.TrimSuffix(base, "/")+"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name)+"/releases?per_page=100", "application/vnd.github+json")
 	if err != nil {
 		return nil, fmt.Errorf("GitHub nicht erreichbar: %v", err)
 	}

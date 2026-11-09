@@ -26,6 +26,8 @@ type exportFile struct {
 	Config       config.Config     `json:"config"`
 	SharedKey    string            `json:"sharedKey,omitempty"`
 	HMIPasswords map[string]string `json:"hmiPasswords,omitempty"`
+	// hasUpdate: Die Datei hat einen Abschnitt "update" (ältere Exporte nicht).
+	hasUpdate bool
 }
 
 func (a *admin) buildExport(c config.Config) (exportFile, error) {
@@ -117,6 +119,11 @@ func (a *admin) merge(ex exportFile, cur config.Config) (config.Config, error) {
 	next.Network = cur.Network
 	// Die Freigabe der Kachelseite im Netz ist ein Testzustand dieses Geräts.
 	next.Kiosk.NetworkTiles = cur.Kiosk.NetworkTiles
+	// Ein älterer Export ohne Update-Abschnitt brächte nur die Standardwerte mit und schaltete
+	// eine bewusst abgeschaltete Prüfung wieder ein.
+	if !ex.hasUpdate {
+		next.Update = cur.Update
+	}
 
 	// Beim Übertragen auf ein Nachbarterminal steht dieses selbst in der Liste.
 	peers := make([]config.Peer, 0, len(next.Peers))
@@ -188,6 +195,7 @@ func (a *admin) handleImport(w http.ResponseWriter, r *http.Request, s sessionRe
 		fail(http.StatusUnprocessableEntity, "Die Datei enthält keine gültige Konfiguration.")
 		return
 	}
+	ex.hasUpdate = hasUpdateSection(plain)
 	if ex.Format != exportFormat || ex.Config.SchemaVersion != config.SchemaVersion {
 		fail(http.StatusUnprocessableEntity, "Die Datei stammt aus einer nicht passenden Programmversion.")
 		return
@@ -205,4 +213,14 @@ func (a *admin) handleImport(w http.ResponseWriter, r *http.Request, s sessionRe
 		return
 	}
 	a.done(w, r, s, "/admin/system", "Konfiguration importiert. Name, Kennung, Rolle, Admin-Passwort, Netzwerk und die Freigabe der Kachelseite im Netz blieben unverändert.")
+}
+
+// hasUpdateSection meldet, ob config.update in der Exportdatei steht.
+func hasUpdateSection(plain []byte) bool {
+	var probe struct {
+		Config struct {
+			Update json.RawMessage `json:"update"`
+		} `json:"config"`
+	}
+	return json.Unmarshal(plain, &probe) == nil && len(probe.Config.Update) > 0
 }

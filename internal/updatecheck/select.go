@@ -87,7 +87,7 @@ func Select(rels []Release, current string, prerelease bool) (*Offer, error) {
 			continue
 		}
 		v := strings.TrimPrefix(r.TagName, "v")
-		if !update.ValidVersion(v) || !Newer(v, bestVersion) {
+		if !canonical(v) || !Newer(v, bestVersion) {
 			continue
 		}
 		best, bestVersion = r, v
@@ -122,11 +122,26 @@ func isHTTPS(raw string) bool {
 	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil
 }
 
-// plainNotes macht aus der Release-Notiz kurzen Klartext; das Escapen übernimmt die Vorlage.
+// canonical: gültige Version ohne führende Nullen. Sonst hinge der Paketname an der
+// Schreibweise des Tags (v0.10.01 gälte als neuer als 0.10.0).
+func canonical(v string) bool {
+	if !update.ValidVersion(v) {
+		return false
+	}
+	for _, part := range strings.Split(v, ".") {
+		if len(part) > 1 && part[0] == '0' {
+			return false
+		}
+	}
+	return true
+}
+
+// plainNotes macht aus der Release-Notiz kurzen Klartext ohne Steuer- und Formatzeichen
+// (Cf, etwa Bidi-Umschaltungen, die Text vortäuschen könnten); das Escapen übernimmt die Vorlage.
 func plainNotes(s string) string {
 	s = strings.ReplaceAll(strings.ToValidUTF8(s, "�"), "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+		if r == '\n' || r == '\t' || !(unicode.IsControl(r) || unicode.Is(unicode.Cf, r)) {
 			return r
 		}
 		return -1

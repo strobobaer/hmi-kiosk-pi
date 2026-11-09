@@ -456,3 +456,27 @@ func TestInstallFailsOnBrokenLinkInsteadOfReplacingDest(t *testing.T) {
 		t.Fatalf("Reste: %s", dirNames(t, root))
 	}
 }
+
+// Beim Update per Klick muss das Paket die angebotene Version enthalten: Ein älteres,
+// gültig signiertes Paket unter neuem Namen darf nicht still zurückstufen.
+func TestInstallExpectRejectsOtherVersion(t *testing.T) {
+	pub, priv := newKeys(t)
+	root := t.TempDir()
+	in := newInstaller(root, pub)
+	called := false
+	in.Activate = func(ctx context.Context, v string) error { called = true; return Activate(root, v) }
+	_, err := in.InstallExpect(context.Background(), goodBlob(t, priv, "0.1.2"), "0.3.0")
+	if err == nil || !strings.Contains(err.Error(), "0.1.2") || !strings.Contains(err.Error(), "0.3.0") {
+		t.Fatalf("err = %v", err)
+	}
+	if called {
+		t.Error("abweichende Version aktiviert")
+	}
+	if _, err := os.Stat(filepath.Join(appDir(root), "0.1.2")); !os.IsNotExist(err) {
+		t.Errorf("Versionsordner angelegt: %v", err)
+	}
+	got, err := in.InstallExpect(context.Background(), goodBlob(t, priv, "0.3.0"), "0.3.0")
+	if err != nil || got != "0.3.0" || !called {
+		t.Fatalf("%q %v", got, err)
+	}
+}

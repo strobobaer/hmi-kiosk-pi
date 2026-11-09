@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -65,14 +66,39 @@ func (f *fakeHelper) got() []helperCall {
 type fakeUpdate struct {
 	mu    sync.Mutex
 	blobs [][]byte
+	wants []string // erwartete Versionen der Aufrufe von InstallExpect
 	err   error
+	// version steht im Paket (leer: 1.2.3).
+	version string
+}
+
+func (f *fakeUpdate) pkgVersion() string {
+	if f.version == "" {
+		return "1.2.3"
+	}
+	return f.version
 }
 
 func (f *fakeUpdate) Install(_ context.Context, blob []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.blobs = append(f.blobs, blob)
-	return "1.2.3", f.err
+	return f.pkgVersion(), f.err
+}
+
+// InstallExpect lehnt wie der echte Installer ein Paket mit anderer Version ab.
+func (f *fakeUpdate) InstallExpect(_ context.Context, blob []byte, want string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blobs = append(f.blobs, blob)
+	f.wants = append(f.wants, want)
+	if f.err != nil {
+		return "", f.err
+	}
+	if v := f.pkgVersion(); v != want {
+		return "", fmt.Errorf("Das Paket enthält Version %s statt der angebotenen Version %s", v, want)
+	}
+	return want, nil
 }
 
 // adminEnv ist ein Admin-Handler mit Fälschungen für alle Abhängigkeiten.
