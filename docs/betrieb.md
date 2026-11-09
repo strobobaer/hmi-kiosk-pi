@@ -6,7 +6,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung und
 
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen
-3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests)
+3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln)
 4. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -306,6 +306,25 @@ Wichtig:
 - Die Selbstprüfungs-API bleibt auf das Terminal selbst beschränkt.
 - Der Import einer Konfiguration übernimmt die Freigabe nicht. Jedes Gerät behält seinen eigenen Stand.
 - Lässt sich Port 8080 im Netz nicht öffnen, läuft die Kachelseite lokal weiter. Die Admin-Seite zeigt dann unter **System** eine Warnung. Scheitert das Zurückstellen auf lokal, den Dienst unter **System** neu starten.
+
+### Web-Kacheln (Grafana-Dashboards und Webseiten)
+
+Eine Kachel kann statt eines VNC-HMI eine Webseite zeigen, etwa ein Grafana-Dashboard. Sie verhält sich wie ein HMI: Antippen öffnet sie unter der Leiste (Name, **Tastatur**, **Zurück**), **Zurück** schließt sie, Rückkehr bei Inaktivität und Daueranzeige gelten wie bei VNC.
+
+Einrichten: Admin-Seite → **HMIs** → **Webseite anlegen** (oder im Formular **Art: Webseite** wählen). Nötig sind nur Name, Adresse, Symbol, Farbe und Erreichbarkeit.
+
+- **Adresse:** nur `http://` oder `https://`, mit Rechner und optional Port, Pfad und Abfrage, z. B. `http://grafana:3000/d/abc/linie-1?orgId=1&kiosk`. Benutzer und Passwort in der Adresse (`http://user:pw@…`) werden abgelehnt.
+- **Grafana-Menüs ausblenden:** `?kiosk` an die Dashboard-Adresse hängen (`&kiosk`, wenn schon ein `?` darin steht). `&refresh=30s` lädt die Daten regelmäßig neu.
+- **Anmeldung:** Man meldet sich einmal in der Webseite an (Bildschirmtastatur über den Knopf **Tastatur**). Die Anmeldung bleibt im Web-Profil des Terminals auf der Datenpartition gespeichert (`/data/web-profile`), auch über Neustarts. Passwörter speichert Chromium nicht (Richtlinie `PasswordManagerEnabled: false`), nur das Sitzungs-Cookie der Seite. Grafana ohne Anmeldung geht ebenso: in `grafana.ini` `[auth.anonymous] enabled = true` (mit `org_role = Viewer`).
+- **Gespeicherte Anmeldungen löschen:** Admin-Seite → **Kiosk** → **Gespeicherte Web-Anmeldungen löschen**. Das geht nur, wenn gerade keine Web-Kachel offen ist (sonst erst mit **Zurück** schließen). Danach muss man sich an jeder Webseite neu anmelden. Hinweis: Eine SD-Sicherung enthält das Web-Profil wie die übrige Datenpartition.
+- **Nur derselbe Server:** Die Seite darf nur innerhalb ihres Ursprungs navigieren (Schema, Rechner und Port wie in der Adresse). Links auf andere Server bleiben gesperrt (Chromium zeigt „von Ihrem Administrator blockiert“). Das gilt auch für **Weiterleitungen auf einen anderen Anmeldeserver (SSO, z. B. Keycloak, Azure AD)**: Sie sind gesperrt, die Anmeldung muss auf demselben Server stattfinden.
+- **HTTPS mit selbstsigniertem Zertifikat:** Chromium zeigt eine Warnseite, und der Kiosk übergeht sie bewusst nicht. Im Werksnetz `http://` verwenden oder dem Server ein Zertifikat geben, dem das Terminal vertraut.
+- **Keine Abstimmung:** Web-Kacheln sind lokal. Mehrere Terminals können dieselbe Webseite gleichzeitig zeigen; es gibt weder Übernahme noch Sperre noch „belegt durch“.
+- **Erreichbarkeit:** Ping prüft den Rechner der Adresse, **Port** eine TCP-Verbindung zu ihrem Port (bei Webseiten unkritisch), **aus** zeigt nie „nicht erreichbar“. **Verbindung prüfen** in der HMI-Liste meldet bei Webseiten nur, ob der Port antwortet.
+- **Absturz:** Endet das Chromium der Webseite unerwartet, zeigt die Kachelseite „Webseite „…“ unerwartet beendet“; eine Daueranzeige startet nach 2, 4, 8 … höchstens 30 s neu.
+- **Daueranzeige ohne Leiste:** Das Fenster bleibt unter labwc unterhalb des 48-Pixel-Rands (Fensterregel, gemessen); oben bleibt dann ein schwarzer Streifen.
+
+Technik: Jede geöffnete Web-Kachel ist ein eigener Chromium-Prozess im App-Fenster (`--app=<Adresse>`, Profil `<Daten>/web-profile`, Profilordner und Klasse `hmi-kiosk-web`). Die Fensterregeln (labwc `chrome-*-hmi-kiosk-web`, openbox `class="hmi-kiosk-web"`) legen es ohne Rahmen unter die Leiste. Die Chromium-Richtlinie in `/etc/chromium/policies/managed/hmi-kiosk.json` schreibt der root-Helfer: bei jeder Änderung der Web-Kacheln (Befehl `set-web-origins`) und beim Start vor dem Kiosk-Dienst (`hmi-kiosk-helper web-policy` aus `/data/system/web-origins`), weil `/etc` auf dem Abbild bei jedem Start aus dem Paket kommt. Fest erlaubt bleiben immer die Kachelseite (`127.0.0.1:8080`, `localhost:8080`) und die Admin-Seite am Terminal (`127.0.0.1:8081`, `localhost:8081`). Chromium liest die geänderte Richtlinie im Lauf nach, ein Neustart ist nicht nötig. Schlägt das Schreiben fehl (Helfer nicht erreichbar), steht im Protokoll „Chromium-Richtlinie für Web-Kacheln nicht geschrieben“, und der Dienst versucht es alle 30 s erneut; bis dahin zeigt die Web-Kachel die Sperrseite.
 
 ## 4. Fehlersuche
 

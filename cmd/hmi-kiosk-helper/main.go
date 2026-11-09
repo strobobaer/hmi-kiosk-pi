@@ -51,6 +51,7 @@ func serveMain() {
 	bootCfg := flag.String("boot-config", "/boot/firmware/config.txt", "Pfad der config.txt")
 	ntpState := flag.String("ntp-state", "/data/system/ntp-server", "Datei für den dauerhaften NTP-Server")
 	netSaved := flag.String("net-saved", defaultNetSaved, "Datei für die bestätigte Ethernet-Einstellung")
+	webOrigins := flag.String("web-origins", "/data/system/web-origins", "Datei für die Ursprünge der Web-Kacheln (Chromium-Richtlinie)")
 	root := flag.String("root", defaultRoot, "Wurzel der Datenpartition mit app/")
 	marker := flag.String("marker", defaultMarker, "Gesundmarke des Dienstes")
 	flag.Parse()
@@ -69,6 +70,7 @@ func serveMain() {
 	srv := helper.NewServer(*socket, *uid, e, *bootCfg, update.Ops{Root: *root})
 	srv.SocketGID = *gid
 	srv.NTPStatePath = *ntpState
+	srv.WebOriginsStatePath = *webOrigins
 	srv.HealthyMarker = *marker
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
