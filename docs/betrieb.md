@@ -273,8 +273,9 @@ Die Admin-Seite lässt sich direkt am Bildschirm des Terminals öffnen, ohne PC:
 
 Wichtig:
 
-- Nach **5 Minuten ohne Eingabe** meldet die Seite ab und kehrt zur Kachelseite zurück. Die Sitzung am Terminal gilt auch auf dem Server nur 5 Minuten seit der letzten Anfrage; über HTTPS bleibt es bei 30 Minuten.
-- Solange die Admin-Seite am Terminal offen ist, startet **keine HMI-Sitzung und keine Daueranzeige**, auch nicht nach dem Speichern einer Einstellung. Die Daueranzeige startet wieder, sobald die Kachelseite zurück ist (Zurück, Inaktivität oder Neustart von Chromium).
+- Nach **5 Minuten ohne Eingabe** meldet die Seite ab und kehrt zur Kachelseite zurück. Das gilt auch, wenn die Sitzung inzwischen abgelaufen ist oder nur die Anmeldeseite offen war. Die Sitzung am Terminal gilt auch auf dem Server nur 5 Minuten seit der letzten Anfrage; über HTTPS bleibt es bei 30 Minuten.
+- Solange die Admin-Seite am Terminal offen ist, startet **keine HMI-Sitzung und keine Daueranzeige**, auch nicht nach dem Speichern einer Einstellung. Die Daueranzeige startet wieder, sobald die Kachelseite zurück ist (Zurück, Inaktivität oder Neustart von Chromium). Als offen gilt sie nach dem Antippen des Zahnrads und bei jeder Anfrage mit Anmeldung am Terminal, höchstens 5 Minuten seit der letzten; Abrufe anderer Seiten (etwa einer Web-Kachel) zählen nicht. Auf der Anmeldeseite gilt sie nur 5 Minuten ab dem Antippen des Zahnrads.
+- **Gemeinsame Sperre:** Die Sperre nach 5 Fehlversuchen gilt für beide Zugänge zusammen. Wer im Netz `https://<IP>:8443` erreicht, kann mit falschen Passwörtern auch die Anmeldung am Terminal für 5 Minuten sperren. Dann 5 Minuten warten.
 - Technisch läuft diese Admin-Seite über HTTP nur auf `127.0.0.1:8081`, nie im Netz (die Chromium-Richtlinie erlaubt genau diese Adresse zusätzlich zur Kachelseite). Sie hat eigene Cookies; eine Anmeldung am Terminal und eine über HTTPS stören sich nicht. Die Terminal-API (`/peer/`) gibt es dort nicht.
 - Eine feste Ethernet-Adresse lässt sich am Terminal einstellen, aber nur von einem PC über die neue Adresse bestätigen (Abschnitt „Feste IP-Adresse“); DHCP lässt sich auch am Terminal bestätigen.
 - Wird die Kachelseite von einem PC aus geöffnet (Kachelseite im Netz), führt das Zahnrad dort zu `https://<IP>:8443/admin/`.
