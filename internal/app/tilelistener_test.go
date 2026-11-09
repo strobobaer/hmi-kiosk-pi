@@ -235,3 +235,32 @@ func TestTileURLsFor(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestTileSwitchAfterCloseWarnsNothing(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	f.stop()
+	c := f.s.config()
+	c.Kiosk.NetworkTiles = true
+	f.s.syncTileListener(c)
+	f.s.mu.RLock()
+	defer f.s.mu.RUnlock()
+	if len(f.s.warnings) != 0 {
+		t.Fatalf("Warnung nach dem Beenden: %v", f.s.warnings)
+	}
+}
+
+func TestTileSwitchWarningWording(t *testing.T) {
+	broken := tileSwitchWarning(false, true, "127.0.0.1:8080", errors.New("belegt"))
+	if !strings.Contains(broken, "startet neu") || strings.Contains(broken, "Bitte den Dienst neu starten") {
+		t.Fatalf("ohne Port: %q", broken)
+	}
+	stuck := tileSwitchWarning(false, false, "127.0.0.1:8080", errors.New("belegt"))
+	if !strings.Contains(stuck, "neu starten") {
+		t.Fatalf("weiter im Netz: %q", stuck)
+	}
+	if msg := tileSwitchWarning(true, false, ":8080", errors.New("belegt")); !strings.Contains(msg, "bleibt lokal") {
+		t.Fatalf("Freigabe gescheitert: %q", msg)
+	}
+}

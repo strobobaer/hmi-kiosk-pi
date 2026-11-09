@@ -125,10 +125,10 @@ func (s *service) syncTileListener(c config.Config) {
 	want := tileAddr(s.opts.LocalAddr, c.Kiosk.NetworkTiles)
 	changed, err := s.tileLn.Switch(want)
 	switch {
-	case err != nil && c.Kiosk.NetworkTiles:
-		s.warn(fmt.Sprintf("Kachelseite nicht im Netz freigegeben, sie bleibt lokal: %v", err))
+	case errors.Is(err, net.ErrClosed):
+		// Der Dienst endet gerade; nichts zu melden.
 	case err != nil:
-		s.warn(fmt.Sprintf("Kachelseite nicht auf %s zurückgestellt: %v. Bitte den Dienst neu starten (System).", want, err))
+		s.warn(tileSwitchWarning(c.Kiosk.NetworkTiles, changed, want, err))
 	case changed && c.Kiosk.NetworkTiles:
 		log.Printf("Kachelseite im Netz freigegeben (nur für Tests): %s", s.tileLn.Addr())
 	case changed:
@@ -175,4 +175,17 @@ func tileURLsFor(addrs []net.Addr, port int) []string {
 		urls = append(urls, "http://"+net.JoinHostPort(ip.String(), strconv.Itoa(port))+"/")
 	}
 	return urls
+}
+
+// tileSwitchWarning beschreibt ein gescheitertes Umschalten. changed mit Fehler heißt:
+// Weder neue noch alte Adresse ließ sich binden; die Kachelseite endet, und systemd
+// startet den Dienst neu (beim Start gilt der Rückfall auf lokal).
+func tileSwitchWarning(network, changed bool, want string, err error) string {
+	switch {
+	case changed:
+		return fmt.Sprintf("Kachelseite ohne Port: %v. Der Dienst startet neu.", err)
+	case network:
+		return fmt.Sprintf("Kachelseite nicht im Netz freigegeben, sie bleibt lokal: %v", err)
+	}
+	return fmt.Sprintf("Kachelseite nicht auf %s zurückgestellt, sie ist weiter im Netz erreichbar: %v. Bitte den Dienst neu starten (System).", want, err)
 }
