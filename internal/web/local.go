@@ -75,6 +75,9 @@ type LocalExtras struct {
 	// TilesShown meldet, dass Chromium am Terminal die Kachelseite geladen hat
 	// (lokaler Host); die Admin-Seite am Terminal ist dann geschlossen.
 	TilesShown func()
+	// LocalAdmin meldet, ob die Admin-Seite am Terminal läuft (nil: ja). Ohne sie fehlt
+	// das Zahnrad: Chromium bliebe sonst auf einer Fehlerseite ohne Rückweg stehen.
+	LocalAdmin func() bool
 }
 
 // KeyboardAPI steuert die Bildschirmtastatur (keyboard.Controller).
@@ -266,8 +269,16 @@ func (l *local) handleTiles(w http.ResponseWriter, r *http.Request) {
 		l.ex.TilesShown()
 	}
 	render(w, l.page, "tiles.html", tilesPage{
-		Tiles: tiles, Layout: layoutClass(layout), AdminURL: adminURLFor(r.Host), OSK: oskMode(l.ex.InputMode),
+		Tiles: tiles, Layout: layoutClass(layout), AdminURL: l.adminURL(r.Host), OSK: oskMode(l.ex.InputMode),
 	})
+}
+
+// adminURL ist leer, wenn es am Terminal keine Admin-Seite gibt.
+func (l *local) adminURL(hostport string) string {
+	if allowedHosts[hostport] && l.ex.LocalAdmin != nil && !l.ex.LocalAdmin() {
+		return ""
+	}
+	return adminURLFor(hostport)
 }
 
 // adminURLFor: Am Terminal führt das Zahnrad zur Loopback-Admin-Seite; von einem

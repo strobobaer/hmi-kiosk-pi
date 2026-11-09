@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"hmikiosk/internal/browser"
@@ -90,9 +91,10 @@ type service struct {
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
 
 	// kbd steuert die Bildschirmtastatur (Seiten, Leiste); kbdSup ist wvkbd selbst, nil ohne Chromium.
-	kbd      web.KeyboardAPI
-	kbdSup   *keyboard.Supervisor
-	presence adminPresence // Admin-Seite am Terminal offen
+	kbd          web.KeyboardAPI
+	kbdSup       *keyboard.Supervisor
+	presence     adminPresence // Admin-Seite am Terminal offen
+	localAdminUp atomic.Bool   // Admin-Seite am Terminal läuft (sonst kein Zahnrad)
 
 	tileMu sync.Mutex    // schützt tileLn und das Umschalten der Kachelseite
 	tileLn *tileListener // Port der Kachelseite, ab startServers

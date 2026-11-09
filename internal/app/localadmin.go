@@ -91,9 +91,11 @@ func (s *service) startLocalAdmin(ctx context.Context, wg *sync.WaitGroup, h htt
 	}
 	srv := newLocalServer(ctx, h)
 	srv.ReadTimeout, srv.WriteTimeout = 5*time.Minute, 5*time.Minute // Hochladen eines Updates
+	s.localAdminUp.Store(true)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer s.localAdminUp.Store(false)
 		if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
 			s.warn(fmt.Sprintf("Admin-Seite am Terminal beendet: %v", err))
 		}

@@ -168,3 +168,11 @@ func TestTilesShownOnlyForLocalHost(t *testing.T) {
 		t.Fatalf("Aufruf aus dem Netz oder Leiste zählt: %d", shown.Load())
 	}
 }
+
+func TestNoGearWithoutLocalAdmin(t *testing.T) {
+	srv := serveWith(t, LocalExtras{LocalAdmin: func() bool { return false }})
+	body, _ := get(t, srv.URL+"/")
+	if gearRe.MatchString(body) {
+		t.Fatal("Zahnrad ohne laufende Admin-Seite am Terminal: Chromium bliebe auf einer Fehlerseite stehen")
+	}
+}

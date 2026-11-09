@@ -174,3 +174,27 @@ func TestKeyboardAPIWithoutWvkbdDoesNotCrash(t *testing.T) {
 		t.Fatalf("Kachelseite danach: %d", code)
 	}
 }
+
+func TestGearOnlyWhileLocalAdminRuns(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	if _, body := f.local(http.MethodGet, "/"); !strings.Contains(body, `class="gear"`) {
+		t.Fatal("Zahnrad fehlt, obwohl die Admin-Seite am Terminal läuft")
+	}
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	g := newFixture(t)
+	g.saveConfig(nil)
+	g.startWith(func(s *service) { s.opts.LocalAdminAddr = l.Addr().String() })
+	if g.bound.LocalAdmin != "" {
+		t.Fatal("belegter Port gebunden")
+	}
+	if _, body := g.local(http.MethodGet, "/"); strings.Contains(body, `class="gear"`) {
+		t.Fatal("Zahnrad ohne Admin-Seite am Terminal")
+	}
+}
