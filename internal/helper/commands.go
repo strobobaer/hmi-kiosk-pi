@@ -85,6 +85,7 @@ var commands = map[string]command{
 	CmdNetConfirm:     {runData: (*Server).netConfirm},
 	CmdNetRevert:      {run: (*Server).netRevert},
 	CmdNetStatus:      {runData: (*Server).netStatus},
+	CmdSetWebOrigins:  {takesArg: true, run: (*Server).setWebOrigins},
 }
 
 // Dispatch führt einen Befehl aus. Fehlertexte sind für die Admin-Seite bestimmt.

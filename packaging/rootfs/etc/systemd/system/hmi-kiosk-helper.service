@@ -7,6 +7,9 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 ExecStartPre=/bin/chgrp hmikiosk /run/hmi-kiosk-helper
+# Chromium-Richtlinie mit den Web-Kacheln vor dem Kiosk-Dienst (After=hmi-kiosk-helper): /etc ist
+# auf dem Abbild ein tmpfs-Overlay. Endet immer mit 0, der Helfer startet also auch bei einem Fehler.
+ExecStartPre=-/usr/local/bin/hmi-kiosk-helper web-policy
 ExecStart=/usr/local/bin/hmi-kiosk-helper -uid 1100 -gid 1100 -socket /run/hmi-kiosk-helper/helper.sock
 Restart=always
 RestartSec=2

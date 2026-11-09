@@ -51,6 +51,9 @@ type Server struct {
 	NTPStatePath string
 	// HealthyMarker meldet, dass die gestartete Version gesund ist (Dienst schreibt ihre Version hinein).
 	HealthyMarker string
+	// ChromiumPolicyPath ist die Chromium-Richtlinie, WebOriginsStatePath die dauerhafte Liste der Web-Ursprünge.
+	ChromiumPolicyPath  string
+	WebOriginsStatePath string
 
 	// ExecOut startet ein Programm und liefert seine Ausgabe (nur blkid).
 	ExecOut ExecOut
@@ -72,11 +75,13 @@ type Server struct {
 func NewServer(socket string, allowedUID int, e Exec, bootCfg string, upd UpdateOps) *Server {
 	return &Server{
 		socket: socket, allowedUID: allowedUID, exec: e, bootCfg: bootCfg, upd: upd,
-		SocketGID:     -1,
-		NTPConfPath:   "/etc/systemd/timesyncd.conf.d/hmi-kiosk.conf",
-		NTPStatePath:  "/data/system/ntp-server",
-		HealthyMarker: "/run/hmi-kiosk/healthy",
-		peerUID:       peerUID,
+		SocketGID:           -1,
+		NTPConfPath:         "/etc/systemd/timesyncd.conf.d/hmi-kiosk.conf",
+		NTPStatePath:        "/data/system/ntp-server",
+		HealthyMarker:       "/run/hmi-kiosk/healthy",
+		ChromiumPolicyPath:  defaultPolicyPath,
+		WebOriginsStatePath: defaultWebOriginsSt,
+		peerUID:             peerUID,
 	}
 }
 

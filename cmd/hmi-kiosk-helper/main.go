@@ -3,6 +3,8 @@
 // Ohne Unterbefehl bedient er den Socket. Mit "net-boot" schreibt er beim Start das
 // Ethernet-Profil aus der Datenpartition. Mit "update-guard" prüft er nach einer
 // Aktivierung, ob die neue Version gesund meldet, und schaltet sonst zurück.
+// Mit "web-policy" schreibt er vor dem Kiosk-Dienst die Chromium-Richtlinie mit den
+// gespeicherten Ursprüngen der Web-Kacheln (das Abbild beginnt mit der aus dem Paket).
 package main
 
 import (
@@ -29,6 +31,10 @@ const (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "net-boot" {
 		netBootMain(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "web-policy" {
+		webPolicyMain(os.Args[2:])
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "update-guard" {
@@ -121,4 +127,20 @@ func netBootMain(args []string) {
 		return
 	}
 	helper.NetBoot(helper.NetConfig{SavedPath: *saved}, log.Printf)
+}
+
+// webPolicyMain läuft als ExecStartPre des Helfers, also vor hmi-kiosk.service. Es endet
+// immer mit 0: Der Helfer und damit der Kiosk dürfen nie daran hängen. Im Fehlerfall gilt
+// die Richtlinie aus dem Paket oder nur die festen Einträge (Web-Kacheln gesperrt).
+func webPolicyMain(args []string) {
+	fs := flag.NewFlagSet("web-policy", flag.ContinueOnError)
+	policy := fs.String("policy", "/etc/chromium/policies/managed/hmi-kiosk.json", "Chromium-Richtlinie")
+	state := fs.String("state", "/data/system/web-origins", "Gespeicherte Ursprünge der Web-Kacheln")
+	if err := fs.Parse(args); err != nil {
+		log.Printf("web-policy: %v", err)
+		return
+	}
+	if err := helper.ApplyWebPolicy(*policy, *state); err != nil {
+		log.Printf("web-policy: %v", err)
+	}
 }
