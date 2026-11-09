@@ -5,6 +5,8 @@ xwayland
 libgl1-mesa-dri
 libegl-mesa0
 fonts-dejavu-core
+# Bildschirmtastatur unter labwc (Wayland, layer-shell); Programm wvkbd-mobintl, gestartet vom Dienst
+wvkbd
 # Oberfläche und VNC-Clients
 chromium
 remmina

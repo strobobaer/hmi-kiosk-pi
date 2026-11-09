@@ -44,7 +44,7 @@ install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/labwc/rc.xml" "${R}/etc/hmi-
 install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/labwc/environment" "${R}/etc/hmi-kiosk/labwc/environment"
 install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/labwc/autostart" "${R}/etc/hmi-kiosk/labwc/autostart"
 install -m 644 -o root -g root "${FS}/etc/xdg/openbox/rc.xml" "${R}/etc/xdg/openbox/rc.xml"
-# Navigationssperre (Spezifikation 11): Chromium lädt nur die Kachelseite auf 127.0.0.1:8080.
+# Navigationssperre (Spezifikation 11): Chromium lädt nur die Kachelseite (127.0.0.1:8080) und die Admin-Seite am Terminal (127.0.0.1:8081).
 install -d -m 755 "${R}/etc/chromium/policies/managed"
 install -m 644 -o root -g root "${FS}/etc/chromium/policies/managed/hmi-kiosk.json" "${R}/etc/chromium/policies/managed/hmi-kiosk.json"
 install -m 644 -o root -g root "${FS}/etc/pam.d/hmi-kiosk-session" "${R}/etc/pam.d/hmi-kiosk-session"

@@ -89,6 +89,8 @@ run_session() {
 }
 
 x11_client() {
+	# Unter X11 gibt es keine Bildschirmtastatur (wvkbd braucht Wayland-layer-shell);
+	# der Dienst startet sie nur unter labwc, der Knopf „Tastatur“ bleibt ohne Wirkung.
 	# Bildschirmschoner und Energiesparen aus; -nocursor beim Start blendet bei Touch den Zeiger aus.
 	xset s off s noblank -dpms || echo "xset fehlgeschlagen" >&2
 	exec openbox --config-file /etc/xdg/openbox/rc.xml

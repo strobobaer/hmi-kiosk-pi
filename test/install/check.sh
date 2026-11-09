@@ -79,10 +79,14 @@ if [ "$state1" = "$(state)" ]; then ok "zweiter Lauf ändert nichts (Dateien, Ve
 check "Konfiguration unverändert" test "$(sha256sum $DATA/config.json | cut -d' ' -f1)" = "$sum_before"
 check "Konfiguration gehört hmikiosk" test "$(stat -c %U $DATA/config.json)" = hmikiosk
 
-for p in labwc xwayland remmina remmina-plugin-vnc tigervnc-viewer openbox xserver-xorg-core xinit xauth x11-utils rfkill libpam-systemd rsync dosfstools fdisk e2fsprogs util-linux; do
+for p in labwc xwayland wvkbd remmina remmina-plugin-vnc tigervnc-viewer openbox xserver-xorg-core xinit xauth x11-utils rfkill libpam-systemd rsync dosfstools fdisk e2fsprogs util-linux; do
 	check "Paket $p installiert" bash -c "dpkg-query -W -f='\${db:Status-Abbrev}\n' $p | grep -q '^ii'"
 done
 if dpkg-query -W -f='${db:Status-Abbrev}\n' chromium 2>/dev/null | grep -q '^ii'; then ok "Paket chromium installiert"; else bad "Chromium fehlt"; fi
+check "Programm wvkbd-mobintl vorhanden" bash -c "command -v wvkbd-mobintl"
+pol=/etc/chromium/policies/managed/hmi-kiosk.json
+check "Chromium-Richtlinie erlaubt nur Kacheln (8080) und Admin am Terminal (8081)" bash -c "tr -d '\n\t' <$pol | tr -s ' ' | grep -Fq '\"URLAllowlist\": [\"http://127.0.0.1:8080\", \"http://localhost:8080\", \"http://127.0.0.1:8081\", \"http://localhost:8081\"]'"
+check "Chromium-Richtlinie sperrt alles andere" grep -Fq '"URLBlocklist": ["*"]' $pol
 for c in rsync mkfs.vfat mkfs.ext4 sfdisk losetup partx resize2fs blkid findmnt; do
 	check "Programm $c vorhanden" bash -c "command -v $c"
 done

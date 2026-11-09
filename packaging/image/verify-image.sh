@@ -12,7 +12,7 @@
 set -eu
 
 KIOSK_UID=1100
-REQUIRED_PACKAGES="labwc xwayland chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
+REQUIRED_PACKAGES="labwc xwayland wvkbd chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
 xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs
 iputils-arping iputils-ping network-manager"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
@@ -274,6 +274,8 @@ if [ -z "$missing" ]; then ok pakete "alle vorhanden"; else bad pakete "fehlen:$
 present=""
 for p in $FORBIDDEN_PACKAGES; do if installed "$p"; then present="$present $p"; fi; done
 if [ -z "$present" ]; then ok pakete-verboten "$FORBIDDEN_PACKAGES fehlen"; else bad pakete-verboten "installiert:$present"; fi
+# Bildschirmtastatur: Der Dienst startet genau dieses Programm (internal/keyboard.Program).
+if [ -x "$R/usr/bin/wvkbd-mobintl" ]; then ok bildschirmtastatur "/usr/bin/wvkbd-mobintl vorhanden"; else bad bildschirmtastatur "/usr/bin/wvkbd-mobintl fehlt (Paket wvkbd)"; fi
 
 # Automatische Updates
 msg=""
@@ -315,15 +317,15 @@ else
 	bad rc-openbox "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/openbox/rc.xml"
 fi
 
-# Navigationssperre: Chromium-Richtlinie sperrt alles außer der Kachelseite auf dem lokalen Port
+# Navigationssperre: Chromium-Richtlinie sperrt alles außer der Kachelseite und der Admin-Seite am Terminal (Loopback)
 pol="$R/etc/chromium/policies/managed/hmi-kiosk.json"
 pf=$(flat "$pol" 2>/dev/null || true)
 if printf '%s' "$pf" | grep -Fq '"URLBlocklist": ["*"]' &&
-	printf '%s' "$pf" | grep -Fq '"URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080"]' &&
+	printf '%s' "$pf" | grep -Fq '"URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080", "http://127.0.0.1:8081", "http://localhost:8081"]' &&
 	[ "$(stat -c %u:%g:%a "$pol")" = 0:0:644 ]; then
-	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1:8080 und localhost:8080, root 644"
+	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), root 644"
 else
-	bad chromium-richtlinie "/etc/chromium/policies/managed/hmi-kiosk.json fehlt oder weicht ab (URLBlocklist [\"*\"], URLAllowlist nur lokale Kachelseite)"
+	bad chromium-richtlinie "/etc/chromium/policies/managed/hmi-kiosk.json fehlt oder weicht ab (URLBlocklist [\"*\"], URLAllowlist nur Kachelseite und Admin-Seite am Terminal auf Loopback)"
 fi
 
 # Dienste
