@@ -104,6 +104,7 @@ func TestPermanentResumesAfterMarkClearedFollowingRejection(t *testing.T) {
 		h.probe = rejectedProbe()
 	})
 	h.waitNotice(StateTiles, authFailedNotice)
+	h.awaitMarked()
 	h.advance(PollEvery + time.Second) // Markierung ist in der Konfiguration sichtbar
 	h.setProbe(rfb.ProbeResult{Reachable: true, AuthOK: true})
 	h.setConfig(func(c *config.Config) { c.HMIs[0].AuthFailed = false })
@@ -117,6 +118,8 @@ func TestPermanentResumesAfterPasswordChange(t *testing.T) {
 		h.probe = rejectedProbe()
 	})
 	h.waitNotice(StateTiles, authFailedNotice)
+	// Die Markierung läuft nebenher; erst danach ändern, sonst überschriebe sie die Änderung.
+	h.awaitMarked()
 	h.setProbe(rfb.ProbeResult{Reachable: true, AuthOK: true})
 	h.setConfig(func(c *config.Config) { c.HMIs[0].AuthFailed, c.HMIs[0].PasswordEnc = false, "enc-neu" })
 	h.advance(PollEvery + time.Second)
@@ -200,5 +203,17 @@ func TestRejectedPasswordMarkCarriesProbedPassword(t *testing.T) {
 	h.mu.Unlock()
 	if !slices.Equal(got, []string{"enc-alt"}) {
 		t.Fatalf("Passwort der Markierung %v", got)
+	}
+}
+
+// awaitMarked wartet, bis MarkAuthFailed (eigene Goroutine) gelaufen ist.
+func (h *harness) awaitMarked() {
+	h.t.Helper()
+	deadline := time.Now().Add(guard)
+	for len(h.markedIDs()) == 0 {
+		if time.Now().After(deadline) {
+			h.t.Fatal("keine Markierung")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
