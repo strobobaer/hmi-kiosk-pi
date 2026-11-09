@@ -156,13 +156,14 @@ func (s *service) adminDeps() web.AdminDeps {
 		RemoteIsWifi: remoteIsWifi,
 		EthernetLink: func() bool { return platform.EthernetHasLink(sysRoot) },
 		Update: &update.Installer{
-			Root:      s.opts.DataDir,
-			PublicKey: release.PublicKey(),
+			Root:        s.opts.DataDir,
+			PublicKey:   release.PublicKey(),
 			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS) },
 			Activate: func(ctx context.Context, version string) error {
 				return s.helper.Call(ctx, "update-activate", version)
 			},
 		},
+		UpdateCheck:          s.updates,
 		Selftest:             s.adminSelftest,
 		Soak:                 s.soak,
 		Backup:               s.helper,

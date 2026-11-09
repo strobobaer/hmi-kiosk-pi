@@ -81,9 +81,11 @@ type AdminDeps struct {
 	RemoteIsWifi func(*http.Request) bool
 	EthernetLink func() bool
 	Update       UpdateAPI
-	Selftest     func(ctx context.Context) []SelftestStep
-	Soak         SoakAPI
-	Backup       BackupAPI
+	// UpdateCheck sucht in den GitHub-Releases nach Updates (nil: Abschnitt fehlt).
+	UpdateCheck UpdateCheckAPI
+	Selftest    func(ctx context.Context) []SelftestStep
+	Soak        SoakAPI
+	Backup      BackupAPI
 	// Net stellt die Ethernet-Schnittstelle über den Helfer um (leer: Abschnitt nicht verfügbar).
 	Net NetAPI
 	// HardwareID liefert die Kennung des Geräts (leer: nicht lesbar), TLSDir den Ordner des Zertifikats.
@@ -275,6 +277,9 @@ func (a *admin) routes() []route {
 		get("/admin/system/soak.txt", a.handleSoakSummary),
 		post("/admin/system/password", a.handleChangePassword),
 		post("/admin/system/export", a.handleExport),
+		post("/admin/system/update/check", a.handleUpdateCheck),
+		post("/admin/system/update/settings", a.handleUpdateSettings),
+		post("/admin/system/update/install", a.handleUpdateInstall),
 		upload("/admin/system/update", updateBodyLimit, a.handleUpdate),
 		upload("/admin/system/import", importBodyLimit, a.handleImport),
 

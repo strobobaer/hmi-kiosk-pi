@@ -138,6 +138,9 @@ func Validate(c Config) error {
 	default:
 		return fmt.Errorf("Unbekannte Bedienart: %q (erlaubt: Touch oder Maus)", c.Kiosk.InputMode)
 	}
+	if !ValidUpdateRepo(c.Update.Repo) {
+		return fmt.Errorf("Update-Quelle ungültig: %q (erwartet Besitzer/Repository)", c.Update.Repo)
+	}
 	if err := ValidateEthernet(c.Network.Ethernet); err != nil {
 		return fmt.Errorf("Ethernet: %w", err)
 	}

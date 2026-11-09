@@ -134,6 +134,42 @@
   {{end}}
 </section>
 
+{{with .Updates}}
+<section class="panel stack">
+  <h2>Updates</h2>
+  <dl class="facts">
+    <dt>Laufende Version</dt><dd>{{$.Body.Status.Version}}</dd>
+    <dt>Letzte Prüfung</dt><dd>{{if .Checked}}{{.At}}: {{.Summary}}{{else}}noch keine{{end}}</dd>
+  </dl>
+  {{if .Dev}}<p class="hint">Dieses Programm ist ein Entwicklungsstand. Update-Angebote gibt es nur für veröffentlichte Versionen; Updates gehen weiter per Hochladen.</p>{{end}}
+  {{with .Offer}}
+  <p class="msg warn">Version {{.Version}} verfügbar{{if .Prerelease}} (Vorabversion){{end}}.</p>
+  {{if .Notes}}<pre class="log notes" tabindex="0">{{.Notes}}</pre>{{end}}
+  {{if .PageURL}}<p><a href="{{.PageURL}}" rel="noreferrer">Release-Seite: {{.PageURL}}</a></p>{{end}}
+  {{if .Installable}}
+  <form method="post" action="/admin/system/update/install" data-confirm="Version {{.Version}} jetzt herunterladen und installieren?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="version" value="{{.Version}}">
+    <div class="actions"><button type="submit" class="btn primary">Herunterladen und installieren</button></div>
+  </form>
+  {{else}}<p class="hint">{{.NoPackage}}</p>{{end}}
+  {{end}}
+  <p class="hint">Das Terminal prüft einmal am Tag und zeigt neue Versionen nur an; installiert wird erst per Klick. Geprüft werden Signatur und Systemstand wie beim Hochladen.</p>
+  <form method="post" action="/admin/system/update/check">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="actions"><button type="submit" class="btn">Jetzt nach Updates suchen</button></div>
+  </form>
+  <form method="post" action="/admin/system/update/settings" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Quelle (GitHub, Besitzer/Repository; leer = Prüfung aus)
+      <input type="text" name="repo" value="{{.Repo}}" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="check"><input type="checkbox" name="prerelease" value="ja"{{if .Prerelease}} checked{{end}}> Vorabversionen einbeziehen</label>
+    <div class="actions"><button type="submit" class="btn">Speichern</button></div>
+  </form>
+</section>
+{{end}}
+
 <form method="post" action="/admin/system/update" enctype="multipart/form-data" class="panel stack" data-confirm="Dieses Update jetzt installieren?">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <h2>Update hochladen</h2>

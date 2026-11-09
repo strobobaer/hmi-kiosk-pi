@@ -122,6 +122,7 @@ type Config struct {
 	Network      NetworkCfg `json:"network"`
 	Display      DisplayCfg `json:"display"`
 	Admin        AdminCfg   `json:"admin"`
+	Update       UpdateCfg  `json:"update"`
 }
 
 const SchemaVersion = 1
@@ -137,6 +138,7 @@ func Default() Config {
 	c.Kiosk.InactivityMinutes = 15
 	c.Kiosk.InputMode = InputTouch
 	c.Display.GraphicsProfile = "labwc"
+	c.Update = UpdateCfg{Repo: DefaultUpdateRepo, Prerelease: true}
 	return c
 }
 

@@ -26,6 +26,7 @@ import (
 	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/selftest"
 	"hmikiosk/internal/session"
+	"hmikiosk/internal/updatecheck"
 	"hmikiosk/internal/web"
 )
 
@@ -114,6 +115,7 @@ type service struct {
 	loadFailed   bool   // keine lesbare Konfiguration, es gilt die Grundeinstellung
 	usedFallback bool   // der Rückfallstand gilt, config.json ist verloren oder defekt
 	hwID         string // Hardware-Kennung dieses Geräts, leer wenn nicht lesbar
+	updates      *updatecheck.Service
 
 	mu       sync.RWMutex
 	cfg      config.Config
@@ -174,6 +176,7 @@ func newService(opts Options) (*service, error) {
 	}
 	s.origins = newOriginSync(s.helper.Call)
 	s.soak = newSoakJob(s)
+	s.updates = s.newUpdateCheck()
 	s.cleanupStartup()
 	s.loadConfig()
 	s.hwID = s.detectHardwareID()
@@ -329,6 +332,7 @@ func (s *service) serve(parent context.Context) error {
 	background(func() { s.coord.Run(ctx) })
 	background(func() { s.reach.run(ctx) })
 	background(func() { s.origins.run(ctx) })
+	background(func() { s.runUpdateCheck(ctx) })
 	background(func() {
 		if err := platform.WatchTouch(ctx, devInput, s.mgr.TouchActivity); err != nil && ctx.Err() == nil {
 			log.Printf("Touch-Überwachung beendet: %v", err)

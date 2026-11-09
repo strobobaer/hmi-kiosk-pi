@@ -32,6 +32,8 @@ type systemExtras struct {
 	Time     string
 	// Peers: Schlüssel der anderen Terminals abfragen (nur beim Aufruf der Seite).
 	Peers bool
+	// UpdateRepo ist die abgelehnte Eingabe der Update-Quelle.
+	UpdateRepo *string
 }
 
 type displayFormData struct {
@@ -51,6 +53,7 @@ type systemData struct {
 	Display         displayFormData
 	Selftest        []SelftestStep
 	Keys            keysView
+	Updates         *updatesView // nil: keine Update-Prüfung
 }
 
 func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, errMsg string, ex systemExtras) {
@@ -72,6 +75,7 @@ func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, er
 		d.Display = *ex.Display
 	}
 	d.Keys = a.keysView(cfg, ex.Peers)
+	d.Updates = a.updatesView(cfg, ex.UpdateRepo)
 	d.LogLines, d.HasLog = logTailLines(a.d.LogDir)
 	a.lastMu.Lock()
 	d.HasSelftestFile = len(a.lastSelf) > 0
@@ -353,6 +357,12 @@ func (a *admin) handleUpdate(w http.ResponseWriter, r *http.Request, s sessionRe
 		a.renderSystem(w, s, http.StatusUnprocessableEntity, "Bitte eine Update-Datei auswählen.", systemExtras{})
 		return
 	}
+	a.installUpdate(w, r, s, blob)
+}
+
+// installUpdate ist der gemeinsame Weg für hochgeladene und per Klick geladene Pakete:
+// Signatur, Systemstand, Versionsregeln und Rückfall-Wächter prüft Update.Install.
+func (a *admin) installUpdate(w http.ResponseWriter, r *http.Request, s sessionRef, blob []byte) {
 	version, err := a.d.Update.Install(r.Context(), blob)
 	if err != nil {
 		a.renderSystem(w, s, http.StatusUnprocessableEntity, "Update fehlgeschlagen: "+err.Error(), systemExtras{})

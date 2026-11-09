@@ -171,6 +171,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 
+.notes { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 .steps li.check { border-color: var(--amber); }
 .tag.warn { color: var(--amber); border-color: var(--amber); }
