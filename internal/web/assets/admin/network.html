@@ -63,6 +63,32 @@
 </section>
 {{end}}
 <section class="panel stack">
+  <h2>Fernsteuerung (PDH)</h2>
+  <p>PDH kann über HTTPS (Port 8443) ein HMI auf diesem Bildschirm öffnen und wieder schließen. Ist eine Sitzung offen, auch die Daueranzeige, lehnt das Terminal ab.</p>
+  <p>Status: {{if .RemoteOn}}an{{else}}aus{{end}}</p>
+  {{if .RemoteKey}}
+  <div class="msg ok">
+    <p>Neuer Schlüssel. Er wird nur dieses eine Mal angezeigt; bitte jetzt in PDH beim Kiosk-Terminal eintragen:</p>
+    <p class="key">{{.RemoteKey}}</p>
+  </div>
+  {{end}}
+  <p>Fingerabdruck des HTTPS-Schlüssels (SHA-256, in PDH eintragen):</p>
+  <p class="key">{{if .Fingerprint}}{{.Fingerprint}}{{else}}nicht verfügbar{{end}}</p>
+  <p class="hint">Der Fingerabdruck bleibt gleich, auch wenn das Zertifikat wegen einer neuen Adresse erneuert wird.</p>
+  <div class="actions">
+    <form method="post" action="/admin/network/remote/generate"{{if .RemoteOn}} data-confirm="Einen neuen Schlüssel erzeugen? Der bisherige gilt sofort nicht mehr; PDH braucht dann den neuen."{{end}}>
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button type="submit" class="btn{{if not .RemoteOn}} primary{{end}}">{{if .RemoteOn}}Neuen Schlüssel erzeugen{{else}}Schlüssel erzeugen{{end}}</button>
+    </form>
+    {{if .RemoteOn}}
+    <form method="post" action="/admin/network/remote/off" data-confirm="Fernsteuerung ausschalten? PDH kann dann auf diesem Terminal nichts mehr öffnen.">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <button type="submit" class="btn danger">Aus</button>
+    </form>
+    {{end}}
+  </div>
+</section>
+<section class="panel stack">
   <h2>WLAN</h2>
   <p>Eingestellt: {{if .WifiOff}}dauerhaft aus{{else}}an{{end}}</p>
   <p class="hint">Das Abschalten wird verweigert, wenn diese Sitzung über WLAN läuft oder Ethernet keinen Link hat.</p>

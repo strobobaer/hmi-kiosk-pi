@@ -93,6 +93,8 @@ type AdminDeps struct {
 	// HardwareID liefert die Kennung des Geräts (leer: nicht lesbar), TLSDir den Ordner des Zertifikats.
 	HardwareID func() string
 	TLSDir     string
+	// TLSFingerprint liefert den Fingerabdruck des öffentlichen TLS-Schlüssels für PDH (nil oder leer: unbekannt).
+	TLSFingerprint func() string
 	// KeyFile ist die Schlüsseldatei des Geräts, CheckPeer prüft den Schlüssel eines anderen Terminals,
 	// UpdateKeyFingerprint der Fingerabdruck des eingebauten Update-Schlüssels (leer: keiner eingebaut).
 	KeyFile              string
@@ -251,6 +253,8 @@ func (a *admin) routes() []route {
 		post("/admin/network/wifi-on", a.handleWifiOn),
 		post("/admin/network/bt-off", a.handleBtOff),
 		post("/admin/network/bt-on", a.handleBtOn),
+		post("/admin/network/remote/generate", a.handleRemoteKeyGenerate),
+		post("/admin/network/remote/off", a.handleRemoteKeyOff),
 
 		get(pathRepair, a.handleRepairPage),
 		post(pathRepair, a.handleRepairRun),

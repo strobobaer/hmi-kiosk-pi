@@ -317,6 +317,10 @@ type networkData struct {
 	WifiOff, BluetoothOff bool
 	NTP                   string
 	Eth                   ethView
+	// Fernsteuerung (PDH): RemoteKey ist nur direkt nach dem Erzeugen gesetzt.
+	RemoteOn    bool
+	RemoteKey   string
+	Fingerprint string
 }
 
 func (a *admin) renderNetwork(w http.ResponseWriter, s sessionRef, status int, errMsg string, ntpOverride *string) {
@@ -325,12 +329,21 @@ func (a *admin) renderNetwork(w http.ResponseWriter, s sessionRef, status int, e
 
 // renderNetworkEth zeigt die Netzwerkseite; ethOverride hält eine abgelehnte Ethernet-Eingabe.
 func (a *admin) renderNetworkEth(w http.ResponseWriter, s sessionRef, status int, errMsg string, ntpOverride *string, ethOverride *ethForm) {
+	a.renderNetworkFull(w, s, status, errMsg, ntpOverride, ethOverride, "")
+}
+
+// renderNetworkFull zeigt außerdem einen eben erzeugten Schlüssel der Fernsteuerung (einmalig).
+func (a *admin) renderNetworkFull(w http.ResponseWriter, s sessionRef, status int, errMsg string, ntpOverride *string, ethOverride *ethForm, remoteKey string) {
 	cfg, _, err := a.d.Store.Load()
 	if err != nil {
 		http.Error(w, "Konfiguration nicht lesbar", http.StatusInternalServerError)
 		return
 	}
 	d := networkData{WifiOff: cfg.Network.WifiOff, BluetoothOff: cfg.Network.BluetoothOff, NTP: cfg.Network.NTPServer}
+	d.RemoteOn, d.RemoteKey = cfg.Admin.RemoteKeyHash != "", remoteKey
+	if a.d.TLSFingerprint != nil {
+		d.Fingerprint = a.d.TLSFingerprint()
+	}
 	if ntpOverride != nil {
 		d.NTP = *ntpOverride
 	}

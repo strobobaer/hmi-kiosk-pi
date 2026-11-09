@@ -104,7 +104,8 @@ func (a *admin) handleMaintenanceReplace(w http.ResponseWriter, r *http.Request,
 		a.renderMaintenance(w, s, http.StatusUnprocessableEntity, "Bitte bestätigen, dass das alte Gerät außer Betrieb ist.", nil)
 		return
 	}
-	a.finishMaintenance(w, r, s, func(*config.Config) error { return nil }, nil)
+	// Ersatz: Der TLS-Schlüssel bleibt, damit PDH dem Gerät weiter vertraut.
+	a.finishMaintenance(w, r, s, func(*config.Config) error { return nil }, nil, true)
 }
 
 // handleMaintenanceCancel beendet einen von Hand gestarteten Wartungsmodus. Bei einem
@@ -138,13 +139,15 @@ func (a *admin) handleMaintenanceNew(w http.ResponseWriter, r *http.Request, s s
 		c.Terminal.ID = config.NewTerminalID()
 		c.Terminal.Name = f.Name
 		c.Terminal.Role = config.Role(f.Role)
+		// Der Schlüssel der Fernsteuerung gehört zum alten Terminal.
+		c.Admin.RemoteKeyHash = ""
 		return nil
-	}, &f)
+	}, &f, false)
 }
 
 // finishMaintenance übernimmt die neue Hardware-Kennung samt change, erneuert das
 // Zertifikat und startet den Dienst neu. Der Wartungsmodus endet mit dem Speichern.
-func (a *admin) finishMaintenance(w http.ResponseWriter, r *http.Request, s sessionRef, change func(*config.Config) error, form *maintenanceData) {
+func (a *admin) finishMaintenance(w http.ResponseWriter, r *http.Request, s sessionRef, change func(*config.Config) error, form *maintenanceData, keepKey bool) {
 	a.cfgMu.Lock()
 	defer a.cfgMu.Unlock()
 	hw := a.hardwareID()
@@ -167,7 +170,7 @@ func (a *admin) finishMaintenance(w http.ResponseWriter, r *http.Request, s sess
 		return
 	}
 	msg := maintenanceFlow
-	if err := a.renewCert(); err != nil {
+	if err := a.renewCert(keepKey); err != nil {
 		log.Printf("Wartungsmodus: Zertifikat nicht erneuert: %v", err)
 		msg = "Gespeichert, aber das Zertifikat der Admin-Seite konnte nicht erneuert werden; der Browser warnt eventuell weiter vor dem alten."
 	}
@@ -181,13 +184,18 @@ func (a *admin) finishMaintenance(w http.ResponseWriter, r *http.Request, s sess
 }
 
 // renewCert löscht das Zertifikat und legt ein neues an; der Dienst lädt es beim
-// nächsten Start. Rechnername und Adressen des Geräts haben sich geändert.
-func (a *admin) renewCert() error {
+// nächsten Start. Rechnername und Adressen des Geräts haben sich geändert. keepKey behält
+// den privaten Schlüssel (Ersatzgerät): Der Fingerabdruck für PDH bleibt gleich.
+func (a *admin) renewCert(keepKey bool) error {
 	dir := a.d.TLSDir
 	if dir == "" {
 		return nil
 	}
-	for _, name := range []string{certFile, certKeyFile} {
+	remove := []string{certFile, certKeyFile}
+	if keepKey {
+		remove = remove[:1]
+	}
+	for _, name := range remove {
 		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
