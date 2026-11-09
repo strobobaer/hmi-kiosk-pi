@@ -166,3 +166,25 @@ func TestClearWebLoginsHiddenWithoutSupport(t *testing.T) {
 		t.Fatalf("Status %d", r.Code)
 	}
 }
+
+func TestExportImportCarriesWebTiles(t *testing.T) {
+	src, sb := newLoggedIn(t)
+	src.addHMI("x", "Presse", "vnc-geheim")
+	src.mutate(func(c *config.Config) {
+		c.HMIs = append(c.HMIs, config.HMI{ID: "w", Name: "Grafana", Kind: config.KindWeb, URL: "http://grafana:3000/d/a?kiosk", Icon: "monitor", Color: "blue", Reach: config.ReachOff})
+		c.Kiosk.PermanentHMI = "w"
+	})
+	blob := exportBlob(t, sb)
+	dst, db := newLoggedIn(t)
+	wantContains(t, importBlob(t, db, blob, exportPW), "importiert")
+	w := dst.hmi("w")
+	if !w.IsWeb() || w.URL != "http://grafana:3000/d/a?kiosk" || w.Reach != config.ReachOff || w.PasswordEnc != "" {
+		t.Fatalf("Web-Kachel %+v", w)
+	}
+	if dst.cfg().Kiosk.PermanentHMI != "w" {
+		t.Fatal("Daueranzeige nicht übernommen")
+	}
+	if got, err := dst.box.Open(dst.hmi("x").PasswordEnc); err != nil || got != "vnc-geheim" {
+		t.Fatalf("VNC-Passwort: %q %v", got, err)
+	}
+}
