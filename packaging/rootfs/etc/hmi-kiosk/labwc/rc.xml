@@ -17,6 +17,14 @@
       <action name="MoveTo" x="0" y="48" />
       <action name="Maximize" />
     </windowRule>
+    <!-- Web-Kachel (eigenes Chromium im App-Fenster der Adresse): wie Remmina ohne Rahmen bei 0,48 maximiert.
+         Die app_id ist "chrome-<aus der Adresse>-<Profilordner>"; der Profilordner heißt immer
+         hmi-kiosk-web (client.WebAppProfileName), die Klasse zählt unter Wayland nicht (gemessen mit
+         Chromium 156). Die Leiste (chrome-127.0.0.1__bar-Default) trifft die Regel nicht. -->
+    <windowRule identifier="chrome-*-hmi-kiosk-web" type="normal" serverDecoration="no">
+      <action name="MoveTo" x="0" y="48" />
+      <action name="Maximize" />
+    </windowRule>
     <!-- Sitzungsleiste (Chromium mit -app=.../bar): unter Wayland zählt -window-position nicht. -->
     <windowRule identifier="*127.0.0.1__bar*" serverDecoration="no" fixedPosition="yes">
       <action name="MoveTo" x="0" y="0" />

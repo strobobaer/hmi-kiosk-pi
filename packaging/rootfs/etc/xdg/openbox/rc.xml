@@ -23,6 +23,16 @@
       </position>
       <maximized>yes</maximized>
     </application>
+    <!-- Web-Kachel (eigenes Chromium im App-Fenster mit der Klasse hmi-kiosk-web): wie Remmina.
+         Die Leiste hat die Klasse "Chromium" und bleibt unberührt. -->
+    <application class="hmi-kiosk-web" type="normal">
+      <decor>no</decor>
+      <position force="yes">
+        <x>0</x>
+        <y>48</y>
+      </position>
+      <maximized>yes</maximized>
+    </application>
     <!-- Sitzungsleiste (Chromium mit -app=.../bar). -->
     <application name="127.0.0.1__bar">
       <decor>no</decor>

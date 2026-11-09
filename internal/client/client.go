@@ -17,6 +17,8 @@ type Spec struct {
 	Scale      bool
 	X, Y, W, H int
 	SessionN   int
+	// URL ist die Adresse einer Web-Kachel (nur WebApp).
+	URL string
 }
 
 // Command.Env enthält nur Ergänzungen; der Runner hängt sie an die Umgebung des Dienstes an.
