@@ -173,11 +173,16 @@ func (r *reachability) round(ctx context.Context) {
 // probe wählt die Prüfart des HMI. Ping ist der Standard: Eine TCP-Verbindung zum
 // VNC-Port zählt RealVNC als Fehlversuch und sperrt die Adresse nach wenigen Malen.
 func (r *reachability) probe(ctx context.Context, h config.HMI) (bool, error) {
+	// Bei einer Web-Kachel Rechner und Port ihrer Adresse.
+	host, port, ok := h.Endpoint()
+	if !ok {
+		return false, nil
+	}
 	if h.ReachMode() == config.ReachPort {
-		return r.check(ctx, h.Host, h.Port), nil
+		return r.check(ctx, host, port), nil
 	}
 	if r.ping == nil {
 		return false, nil
 	}
-	return r.ping(ctx, h.Host)
+	return r.ping(ctx, host)
 }

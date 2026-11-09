@@ -1,0 +1,252 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"hmikiosk/internal/client"
+	"hmikiosk/internal/config"
+	"hmikiosk/internal/session"
+)
+
+const grafanaURL = "http://grafana:3000/d/abc?kiosk"
+
+func webHMI(c *config.Config) {
+	c.HMIs = append(c.HMIs, config.HMI{ID: "grafana", Name: "Grafana", Kind: config.KindWeb, URL: grafanaURL, Icon: "monitor", Color: "green", Reach: config.ReachOff})
+}
+
+type helperCalls struct {
+	mu   sync.Mutex
+	args []string
+	fail error
+}
+
+func (h *helperCalls) call(_ context.Context, cmd, arg string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if cmd != "set-web-origins" {
+		return errors.New("unerwarteter Befehl " + cmd)
+	}
+	h.args = append(h.args, arg)
+	return h.fail
+}
+
+func (h *helperCalls) all() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.args)
+}
+
+func TestOriginSyncSendsOnlyChanges(t *testing.T) {
+	calls := &helperCalls{}
+	o := newOriginSync(calls.call)
+	o.retry = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go o.run(ctx)
+	o.set([]string{})
+	eventually(t, "erster Abgleich", func() bool { return len(calls.all()) == 1 })
+	o.set([]string{})
+	o.set([]string{"http://grafana:3000"})
+	eventually(t, "zweiter Abgleich", func() bool { return len(calls.all()) == 2 })
+	if got := calls.all(); got[0] != "[]" || got[1] != `["http://grafana:3000"]` {
+		t.Fatalf("Aufrufe %q", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(calls.all()); n != 2 {
+		t.Fatalf("%d Aufrufe ohne Änderung", n)
+	}
+}
+
+func TestOriginSyncRetriesAfterFailure(t *testing.T) {
+	calls := &helperCalls{fail: errors.New("Der Helfer ist nicht erreichbar")}
+	o := newOriginSync(calls.call)
+	o.retry = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go o.run(ctx)
+	o.set([]string{"http://grafana:3000"})
+	eventually(t, "Wiederholung", func() bool { return len(calls.all()) >= 3 })
+	calls.mu.Lock()
+	calls.fail = nil
+	calls.mu.Unlock()
+	n := len(calls.all())
+	eventually(t, "Erfolg", func() bool { return len(calls.all()) > n })
+	time.Sleep(50 * time.Millisecond)
+	m := len(calls.all())
+	time.Sleep(50 * time.Millisecond)
+	if len(calls.all()) != m {
+		t.Fatal("wiederholt nach Erfolg")
+	}
+}
+
+func TestServicePushesWebOriginsOnStartAndApply(t *testing.T) {
+	f := newFixture(t)
+	cfg := f.saveConfig(func(c *config.Config) { oneHMI(c); webHMI(c) })
+	calls := &helperCalls{}
+	f.startWith(func(s *service) { s.origins.call = calls.call })
+	eventually(t, "Ursprünge beim Start", func() bool { return slices.Contains(calls.all(), `["http://grafana:3000"]`) })
+	cfg.HMIs[1].URL = "https://grafana.werk:8443/d/x"
+	f.s.Apply(cfg)
+	eventually(t, "Ursprünge nach Apply", func() bool { return slices.Contains(calls.all(), `["https://grafana.werk:8443"]`) })
+}
+
+func startWebService(t *testing.T, mutate func(*config.Config)) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	f.saveConfig(func(c *config.Config) {
+		oneHMI(c)
+		webHMI(c)
+		if mutate != nil {
+			mutate(c)
+		}
+	})
+	opts := f.options()
+	opts.ChromiumEnabled = true
+	ready := make(chan Bound, 1)
+	opts.Ready = func(b Bound) { ready <- b }
+	s, err := newService(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.lookPath = func(name string) (string, error) { return "/opt/" + name, nil }
+	s.origins.call = (&helperCalls{}).call
+	f.s = s
+	ctx, cancel := context.WithCancel(context.Background())
+	f.cancel, f.done = cancel, make(chan error, 1)
+	go func() { f.done <- s.serve(ctx) }()
+	t.Cleanup(f.stop)
+	f.bound = <-ready
+	return f
+}
+
+func (f *fixture) webStarts() []client.Command {
+	var out []client.Command
+	for _, c := range f.runner.started() {
+		if c.Path == "/opt/chromium" && slices.ContainsFunc(c.Args, func(a string) bool { return strings.HasPrefix(a, "--app=http://grafana") }) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func TestServiceOpensWebTileInOwnChromium(t *testing.T) {
+	f := startWebService(t, nil)
+	if code, body := f.local("GET", "/"); code != 200 || !strings.Contains(body, "Grafana") {
+		t.Fatalf("Kachelseite %d: %s", code, body)
+	}
+	if code, body := f.local("POST", "/api/hmi/grafana/open"); code != 204 {
+		t.Fatalf("Öffnen %d: %s", code, body)
+	}
+	eventually(t, "Chromium der Web-Kachel", func() bool { return len(f.webStarts()) == 1 })
+	args := f.webStarts()[0].Args
+	profile := filepath.Join(f.data, "web-profile")
+	for _, want := range []string{"--app=" + grafanaURL, "--user-data-dir=" + profile, "--class=" + client.WebAppClass, "--ozone-platform=wayland"} {
+		if !slices.Contains(args, want) {
+			t.Errorf("%q fehlt in %q", want, args)
+		}
+	}
+	if fi, err := os.Stat(profile); err != nil || !fi.IsDir() {
+		t.Fatalf("Profilordner: %v", err)
+	}
+	eventually(t, "verbunden", func() bool { return f.s.mgr.Snapshot().State == session.StateConnected })
+	// Keine Belegung: Die Kachel bleibt für andere Terminals frei.
+	if occ := f.s.coord.Occupancy(); len(occ) != 0 {
+		t.Fatalf("Belegung %v", occ)
+	}
+	// Löschen der Anmeldungen geht nur ohne offene Web-Kachel.
+	if err := f.s.clearWebLogins(); !errors.Is(err, session.ErrWebOpen) {
+		t.Fatalf("Löschen bei offener Kachel: %v", err)
+	}
+	if _, err := os.Stat(profile); err != nil {
+		t.Fatal("Profil trotz offener Kachel gelöscht")
+	}
+	f.local("POST", "/api/back")
+	eventually(t, "Kacheln", func() bool { return f.s.mgr.Snapshot().State == session.StateTiles })
+	if err := os.WriteFile(filepath.Join(profile, "Cookies"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.clearWebLogins(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(profile); !os.IsNotExist(err) {
+		t.Fatalf("Profil noch da: %v", err)
+	}
+}
+
+func TestPermanentWebTileStartsAutomatically(t *testing.T) {
+	f := startWebService(t, func(c *config.Config) { c.Kiosk.PermanentHMI = "grafana" })
+	eventually(t, "Daueranzeige", func() bool { return len(f.webStarts()) == 1 })
+}
+
+func TestWebTileReachUsesURLHostAndPort(t *testing.T) {
+	var gotHost string
+	var gotPort int
+	r := newReachability(func() []config.HMI {
+		return []config.HMI{{ID: "w", Kind: config.KindWeb, URL: "https://grafana.werk/d/x", Reach: config.ReachPort}}
+	}, func() string { return "" }, func(_ context.Context, host string, port int) bool {
+		gotHost, gotPort = host, port
+		return true
+	})
+	r.round(context.Background())
+	if gotHost != "grafana.werk" || gotPort != 443 || !r.reachable("w") {
+		t.Fatalf("Prüfung %q:%d", gotHost, gotPort)
+	}
+	var pinged string
+	r = newReachability(func() []config.HMI {
+		return []config.HMI{{ID: "w", Kind: config.KindWeb, URL: "http://10.0.0.7:3000/"}}
+	}, func() string { return "" }, nil)
+	r.ping = func(_ context.Context, host string) (bool, error) { pinged = host; return true, nil }
+	r.round(context.Background())
+	if pinged != "10.0.0.7" {
+		t.Fatalf("Ping an %q", pinged)
+	}
+}
+
+func TestWebSessionJournalMode(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	f.s.onSessionEnd(session.Ended{HMIName: "Grafana", Web: true, Reason: "x"})
+	eventually(t, "Protokollzeile", func() bool {
+		b, _ := os.ReadFile(filepath.Join(f.data, "log", logFileName))
+		return strings.Contains(string(b), `modus="Webseite"`)
+	})
+}
+
+func TestAdminProbeOfWebTileChecksPortOnly(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	res := f.s.adminProbe(context.Background(), config.HMI{ID: "w", Kind: config.KindWeb, URL: "http://" + l.Addr().String() + "/"})
+	if !res.Reachable || res.AuthOK || res.AuthRejected {
+		t.Fatalf("Ergebnis %+v", res)
+	}
+	l.Close()
+	res = f.s.adminProbe(context.Background(), config.HMI{ID: "w", Kind: config.KindWeb, URL: "http://" + l.Addr().String() + "/"})
+	if res.Reachable {
+		t.Fatalf("geschlossen erreichbar: %+v", res)
+	}
+}

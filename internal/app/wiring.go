@@ -39,6 +39,7 @@ func (s *service) Apply(c config.Config) {
 	s.cfgWarn = "" // Der Aufrufer hat gespeichert, config.json ist also wieder gültig.
 	s.mu.Unlock()
 	s.coord.UpdateIdentity(selfOf(c), peersFor(c, key))
+	s.origins.set(config.WebOrigins(c))
 	s.syncTileListener(c)
 	s.syncMaintenance()
 	s.reach.wake()
@@ -180,6 +181,16 @@ func (s *service) sessionProbe(ctx context.Context, h config.HMI, password strin
 }
 
 func (s *service) adminProbe(ctx context.Context, h config.HMI) rfb.ProbeResult {
+	if h.IsWeb() {
+		// Eine Webseite hat keine VNC-Anmeldung: nur ob der Server auf dem Port der Adresse antwortet.
+		host, port, ok := h.Endpoint()
+		if !ok {
+			return rfb.ProbeResult{Err: "Die Adresse ist ungültig"}
+		}
+		ctx, cancel := context.WithTimeout(ctx, adminProbeLimit)
+		defer cancel()
+		return rfb.ProbeResult{Reachable: rfb.TCPReachable(ctx, host, port)}
+	}
 	pw, err := s.password(h)
 	if err != nil {
 		if h.PasswordLost {
@@ -206,8 +217,9 @@ func (s *service) tiles() []web.TileView {
 	occupied := s.coord.Occupancy()
 	tiles := make([]web.TileView, 0, len(hmis))
 	for _, h := range hmis {
-		tile := web.TileView{ID: h.ID, Name: h.Name, Icon: h.Icon, Color: h.Color, Reachable: s.reach.reachable(h.ID), AuthFailed: h.AuthFailed}
-		if holder, ok := occupied[h.ID]; ok {
+		tile := web.TileView{ID: h.ID, Name: h.Name, Icon: h.Icon, Color: h.Color, Reachable: s.reach.reachable(h.ID), AuthFailed: h.AuthFailed, Web: h.IsWeb()}
+		// Web-Kacheln sind lokal und frei: Eine Belegung gibt es nur bei VNC.
+		if holder, ok := occupied[h.ID]; ok && !h.IsWeb() {
 			tile.BusyBy = holder.Name
 		}
 		tiles = append(tiles, tile)
@@ -218,8 +230,12 @@ func (s *service) tiles() []web.TileView {
 func (s *service) onSessionEnd(e session.Ended) {
 	mode := "Bedienen"
 	switch {
+	case e.Permanent && e.Web:
+		mode = "Daueranzeige Webseite"
 	case e.Permanent:
 		mode = "Daueranzeige"
+	case e.Web:
+		mode = "Webseite"
 	case e.Watch:
 		mode = "Mitschauen"
 	case e.ViewOnly:

@@ -35,6 +35,7 @@ type TileView struct {
 	AuthFailed            bool
 	BusyBy                string
 	Disabled              bool
+	Web                   bool // Web-Kachel (Grafana, Webseite): nie belegt
 }
 
 var heartbeat = 15 * time.Second

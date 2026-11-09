@@ -89,6 +89,7 @@ type service struct {
 	helper   *helperapi.Client
 	lookPath func(string) (string, error)
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
+	origins  *originSync   // Ursprünge der Web-Kacheln in der Chromium-Richtlinie
 
 	// kbd steuert die Bildschirmtastatur (Seiten, Leiste); kbdSup ist wvkbd selbst, nil ohne Chromium.
 	kbd          web.KeyboardAPI
@@ -168,6 +169,7 @@ func newService(opts Options) (*service, error) {
 	if err := os.MkdirAll(opts.RunDir, 0o755); err != nil {
 		s.warn(fmt.Sprintf("Laufzeitordner nicht verfügbar: %v", err))
 	}
+	s.origins = newOriginSync(s.helper.Call)
 	s.soak = newSoakJob(s)
 	s.cleanupStartup()
 	s.loadConfig()
@@ -179,6 +181,7 @@ func newService(opts Options) (*service, error) {
 	s.key, s.keyWarn = s.openKey(s.cfg)
 	cfg, key := s.cfg, s.key
 	s.mu.Unlock()
+	s.origins.set(config.WebOrigins(cfg))
 	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
 	if opts.ChromiumEnabled {
 		s.kbdSup = keyboard.New(s.runner, func() (string, error) { return keyboard.Find(s.lookPath) }, func() int {
@@ -282,6 +285,7 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		OnEnd:          s.onSessionEnd,
 		Blocked:        s.sessionBlocked,
 		MarkAuthFailed: s.markAuthFailed,
+		Web:            s.webProfile,
 	})
 	s.reach = newReachability(
 		func() []config.HMI { return s.config().HMIs },
@@ -317,6 +321,7 @@ func (s *service) serve(parent context.Context) error {
 	s.syncMaintenance()
 	background(func() { s.coord.Run(ctx) })
 	background(func() { s.reach.run(ctx) })
+	background(func() { s.origins.run(ctx) })
 	background(func() {
 		if err := platform.WatchTouch(ctx, devInput, s.mgr.TouchActivity); err != nil && ctx.Err() == nil {
 			log.Printf("Touch-Überwachung beendet: %v", err)
