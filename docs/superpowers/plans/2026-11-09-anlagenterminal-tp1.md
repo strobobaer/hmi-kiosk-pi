@@ -4,7 +4,7 @@
 
 **Goal:** PDH bekommt die Terminalseite `/terminal` (Bildschirmschoner → Störungsinfo → „Neu“), Terminal-Einstellungen (Rückkehrzeit) und pro HMI-Verbindung die Felder „Ansehen/Bedienen am Terminal“. Weitere Terminal-Einstellungen der Spec (QR-Gültigkeit, Kartenpflicht, Playlist-Mischung) kommen mit ihren Teilprojekten, damit keine wirkungslosen Felder entstehen.
 
-**Architecture:** Alles in PDH, server-gerendert wie die übrigen Seiten (Go `html/template`, eigenes Vollbild-Template ohne Navigation, wenig JS). Das Terminal ist der vorhandene System-Benutzer mit `users.terminal_infrastructure_id`; die Anlage samt Unteranlagen liefert `infraSubtreeIDs`. hmi-kiosk zeigt `/terminal` als Web-Kachel in der Daueranzeige ohne Leiste (nur Doku).
+**Architecture:** Alles in PDH, server-gerendert wie die übrigen Seiten (Go `html/template`, eigenes Vollbild-Template ohne Navigation, wenig JS). Das Terminal ist der vorhandene System-Benutzer mit `users.terminal_infrastructure_id`; die Anlage samt Unteranlagen liefert `infraSubtreeIDs`. Die Pi-Seite ist das eigene Produkt PDH-Terminal (Teilprojekt 0); bis dahin lässt sich `/terminal` in jedem Browser im Vollbild testen. Dieser Plan ändert nichts an HMI-Kiosk.
 
 **Tech Stack:** Go 1.24, chi, pgx/PostgreSQL, gohtml-Templates, Vanilla-JS.
 
@@ -98,7 +98,7 @@
 - [ ] **Step 5:** Tests → PASS; Seiten im Browser (Docker-Stack aus `compose.yaml` oder `make run`) bei 1280×800 und 1920×1080 prüfen, Screenshot in den Bericht.
 - [ ] **Step 6: Commit** `feat: Terminalseite mit Schoner, Störungsinfo und Neu`.
 
-### Task 4: Handbuch, Changelog, Version, hmi-kiosk-Einrichtung
+### Task 4: Handbuch, Changelog, Version
 
 **Files:**
 - Modify: `web/templates/help.gohtml` (neues Kapitel `terminal`, Abschnitt HMI-Felder im Kapitel `kiosk` oder `infrastructure`), `internal/web/help.go` (`helpChapterIDs` um `"terminal"`), `CHANGELOG.md` (`## [0.77.10] – 2026-11-09`, `### Neu`), `VERSION` (`0.77.10`)
@@ -106,4 +106,4 @@
 
 - [ ] **Step 1:** `GO test ./internal/web/ -run 'Help|Changelog'` → nach Änderungen PASS (`TestHelpCoversAllPages` verlangt das Kapitel, falls `/terminal` `baseData(r, "terminal")` nutzt).
 - [ ] **Step 2:** `GO test ./...`, `GO vet ./...`, `gofmt -l` auf geänderten Dateien leer; Integrationstests `-run Anlagenterminal` → PASS.
-- [ ] **Step 3: Commit** PDH `docs: Anlagenterminal im Handbuch, Version 0.77.10`; hmi-kiosk `docs: Anlagenterminal einrichten (PDH-Terminal als Daueranzeige)`.
+- [ ] **Step 3: Commit** PDH `docs: Anlagenterminal im Handbuch, Version 0.77.10`.

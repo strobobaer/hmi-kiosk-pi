@@ -1,12 +1,27 @@
-# Anlagenterminal: PDH-Terminal auf hmi-kiosk
+# Anlagenterminal: eigenes Produkt „PDH-Terminal“
 
-Stand 2026-11-09. Betrifft hmi-kiosk (dieses Repository) und PDH (`pdh-server`, Arbeitszweig
-`feat/kiosk-terminal` bzw. Folgezweige). Baut auf der PDH-Fernsteuerung auf
-(`2026-11-09-pdh-integration.md`).
+Stand 2026-11-09. Betrifft dieses Repository (künftig Plattform für zwei Produkte) und PDH
+(`pdh-server`, Arbeitszweig `feat/kiosk-terminal` bzw. Folgezweige).
+
+## Produktlinie
+
+Das Anlagenterminal ist eine **eigene Produktlinie** und hat mit dem Einzel-HMI-Kiosk nichts zu tun.
+Beide Produkte entstehen aus einer **gemeinsamen Basis in einem Repository**:
+
+| | HMI-Kiosk | PDH-Terminal |
+|---|---|---|
+| Zweck | Kacheln, VNC/Remmina, Abstimmung zwischen Terminals | PDH-Terminalseite im Vollbild, Kartenleser |
+| Programm | `cmd/hmi-kiosk` | `cmd/pdh-terminal` |
+| Abbild, Bundle, Update-Paket, Release-Dateien | eigene | eigene |
+| Gemeinsamer Kern | Abbild-Bau, Schreibschutz, signierte Updates mit Rückfall, Chromium-Vollbild, Bildschirmtastatur, Admin-Grundgerüst (Anmeldung, Netzwerk, feste IP, System, Sicherung, Wartung), root-Helfer | ← |
+
+Das Herauslösen des Kerns ist **Teilprojekt 0** mit eigenem Entwurf; HMI-Kiosk muss danach unverändert
+funktionieren. Alles, was unten „Pi-Seite“ heißt, gehört ins Produkt **PDH-Terminal**, nicht in HMI-Kiosk.
+Die PDH-Seite ist vom Pi-Produkt unabhängig.
 
 ## Ziel
 
-In jeder Anlage steht ein Raspberry Pi 5 mit hmi-kiosk, Touchscreen (Bedienung wie ein Bestellterminal)
+In jeder Anlage steht ein Raspberry Pi 5 mit dem Produkt PDH-Terminal, Touchscreen (Bedienung wie ein Bestellterminal)
 und RFID-Leser. Er ist dauerhaft als PDH-Terminal-Benutzer angemeldet und dient als PDH-Terminal für
 **seine Anlage und alle Unteranlagen**. Jede Person kann ohne Vorwissen Störungen, Tickets und
 Stillstände erfassen; Bearbeitungsschritte verlangen je nach Einstellung die Karte der Instandhalter.
@@ -16,9 +31,10 @@ Im Ruhezustand zeigt das Terminal eine zentral gepflegte Info-Playlist.
 
 | Thema | Entscheidung |
 |---|---|
-| Aufbau | Oberfläche und Logik in **PDH**; hmi-kiosk ist die Hülle (Vollbild, Karten, Rückkehr) |
+| Aufbau | Oberfläche und Logik in **PDH**; das Pi-Produkt PDH-Terminal ist die Hülle (Vollbild, Karten, Neustart) |
+| Produktlinie | **Eigenes Produkt** PDH-Terminal; gemeinsamer Kern mit HMI-Kiosk in **einem Repository** |
 | Karten | Technik noch offen → Leser austauschbar: **PN532 über I²C** (Standard), **USB-Leser** als Alternative |
-| Kartenweg | **Lokales Ereignis**: hmi-kiosk liest, meldet über `127.0.0.1` an die PDH-Seite, PDH prüft |
+| Kartenweg | **Lokales Ereignis**: PDH-Terminal (Pi) liest, meldet über `127.0.0.1` an die PDH-Seite, PDH prüft |
 | Beseitigung | Erste Karte öffnet den Dialog, weitere Karten werden **Beteiligte** |
 | Kartenpflicht | Für Übernehmen, Behoben melden und Bestätigen **einzeln einstellbar** |
 | HMI-Zugriff | **Pro HMI-Verbindung einstellbar**: Ansehen und Bedienen am Terminal |
@@ -45,11 +61,11 @@ Im Ruhezustand zeigt das Terminal eine zentral gepflegte Info-Playlist.
   Vollbild, deutsch.
 - Der Terminal-Benutzer sieht nur seinen Anlagen-Teilbaum.
 
-### hmi-kiosk
-- Web-Kachel „PDH-Terminal“ als **Daueranzeige ohne Leiste** (vorhanden).
+### Pi-Seite (Produkt PDH-Terminal)
+- Chromium im Vollbild auf die eingestellte PDH-Adresse `/terminal` (keine Kacheln, keine Leiste).
 - Neuer **Kartendienst** (Teil 2).
-- Die Inaktivitäts-Rückkehr liegt in PDH (`/terminal`), nicht in hmi-kiosk; hmi-kiosk startet die Seite
-  nach Absturz neu (vorhanden).
+- Die Inaktivitäts-Rückkehr liegt in PDH (`/terminal`); das Pi-Produkt startet Chromium
+  nach Absturz neu (Kern).
 
 ### HMIs am Terminal
 - Über das **vorhandene noVNC von PDH** im selben Fenster (nicht Remmina), damit das Bild als Canvas
@@ -67,7 +83,7 @@ Im Ruhezustand zeigt das Terminal eine zentral gepflegte Info-Playlist.
 
 ## Teil 2: Kartendienst und Kartensitzung
 
-### hmi-kiosk: Kartendienst
+### PDH-Terminal (Pi): Kartendienst
 - Admin-Seite **„Kartenleser“**: Typ `aus` · `pn532-i2c` · `usb`.
   - **PN532/I²C:** Abbild schaltet I²C ein (`dtparam=i2c_arm=on`), Benutzer `hmikiosk` in Gruppe `i2c`;
     Abfrage ISO 14443A ca. 4×/s; Bus und Adresse einstellbar (Standard `/dev/i2c-1`, `0x24`).
@@ -79,7 +95,7 @@ Im Ruhezustand zeigt das Terminal eine zentral gepflegte Info-Playlist.
 - **Ereignisstrom** `GET http://127.0.0.1:8080/api/card/events` (Server-Sent Events): nur Loopback,
   nur `Origin` = eingetragene PDH-Adresse (CORS mit genau diesem Ursprung, Antwort auf den
   Private-Network-Access-Preflight `Access-Control-Allow-Private-Network: true`). Ereignis
-  `{"uid":"…","at":"RFC3339"}`. Die Chromium-Richtlinie erlaubt die PDH-Adresse ohnehin (Web-Kachel).
+  `{"uid":"…","at":"RFC3339"}`. Die Chromium-Richtlinie des PDH-Terminals erlaubt die eingestellte PDH-Adresse.
 - **Anlernen:** Admin-Seite zeigt die zuletzt gelesene UID (zum Eintragen beim PDH-Benutzer).
 - **Selbstprüfung:** neuer Schritt „Kartenleser“ (Leser antwortet / Gerät vorhanden).
 
@@ -155,7 +171,7 @@ löscht PDH nach 30 min. **Tickets** werden am Terminal nur gemeldet.
   nur eigene.
 - Terminal fragt jede Minute nach Änderungen; ohne PDH-Verbindung läuft die zuletzt geladene Playlist
   weiter, Symbol „offline“.
-- `web`/`grafana` nur mit Adressen, die die Chromium-Richtlinie des Terminals erlaubt (Web-Kachel-Ursprünge).
+- `web`/`grafana` nur mit Adressen, die die Chromium-Richtlinie des PDH-Terminals erlaubt (in dessen Admin-Seite pflegbar).
 
 ## Fehlerfälle
 
@@ -181,7 +197,7 @@ löscht PDH nach 30 min. **Tickets** werden am Terminal nur gemeldet.
   PostgreSQL für Melden, Übernehmen, Behoben (Beteiligte), Bestätigen (andere Person), Stillstände
   (ein laufender je Anlage, Überschneidung), Abteilungsgrenzen, QR-Ablauf und Upload-Grenzen;
   Handbuch, Changelog, Version nach `AGENTS.md`.
-- **hmi-kiosk:** PN532 über nachgebildeten I²C-Bus, USB über nachgebildete evdev-Ereignisse,
+- **PDH-Terminal (Pi):** PN532 über nachgebildeten I²C-Bus, USB über nachgebildete evdev-Ereignisse,
   Ereignisstrom (Ursprung, Loopback, Entprellen, keine alten Ereignisse), Admin-Seite, Selbstprüfung.
 - **Ende-zu-Ende:** nachgebildeter Leser → Ereignis → PDH-Seite → Kartensitzung (aufbauend auf
   `test/pdh-e2e`).
@@ -189,9 +205,10 @@ löscht PDH nach 30 min. **Tickets** werden am Terminal nur gemeldet.
 
 ## Umsetzung (je Teilprojekt eigener Plan)
 
+0. Gemeinsamen Kern herauslösen, Produkt PDH-Terminal (Programm, Abbild, Admin-Seite mit PDH-Adresse) – eigener Entwurf; HMI-Kiosk unverändert lauffähig.
 1. Grundgerüst: `/terminal`, Störungsinfo, „Neu“-Seite, Rückkehr zur Playlist (zunächst leer),
    Terminal-Einstellungen, HMI-Felder pro Verbindung.
-2. Kartendienst (hmi-kiosk) und Kartensitzung (PDH).
+2. Kartendienst (PDH-Terminal, Pi) und Kartensitzung (PDH).
 3. Störung/Ticket melden und bearbeiten mit Kartenpflicht und Beteiligten.
 4. Stillstände mit Auswertung.
 5. Foto per QR-Code.
@@ -202,5 +219,5 @@ löscht PDH nach 30 min. **Tickets** werden am Terminal nur gemeldet.
 
 - Offline-Erfassung am Terminal ohne PDH.
 - Bearbeitung von Tickets am Terminal (nur Melden).
-- Anlernen von Karten direkt am Terminal (UID über die hmi-kiosk-Admin-Seite).
+- Anlernen von Karten direkt am Terminal (UID über die Admin-Seite des PDH-Terminals).
 - Kartentechnik jenseits PN532/USB (LEGIC, HID iCLASS) – folgt, wenn die Ausweise feststehen.
