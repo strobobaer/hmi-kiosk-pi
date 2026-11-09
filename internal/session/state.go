@@ -37,6 +37,10 @@ const (
 	// probeTimeout bleibt unter der Frist, in der eine Anfrage bei den anderen
 	// Terminals als laufend gilt.
 	probeTimeout = 5 * time.Second
+
+	// WebShowAfter: Eine Web-Kachel hat keine VNC-Verbindung, die sich prüfen ließe. Nach
+	// dieser Zeit gilt ihr Fenster als da, die Kachelseite weicht der Leiste.
+	WebShowAfter = time.Second
 )
 
 // Snapshot ist der Stand für die Oberfläche. Unreachable nennt Terminals, die
@@ -47,6 +51,7 @@ type Snapshot struct {
 	HMI, HMIName string
 	ViewOnly     bool // nur ansehen: Einstellung des Terminals oder Mitschauen
 	HideBar      bool // Daueranzeige ohne Leiste: das Clientfenster belegt den ganzen Bildschirm
+	Web          bool // Web-Kachel (Chromium statt VNC-Client)
 	Notice       string
 	Confirm      *coord.Holder
 	Unreachable  []string
@@ -59,6 +64,7 @@ type Ended struct {
 	ViewOnly     bool // Einstellung des HMI
 	Watch        bool // Mitschauen
 	Permanent    bool
+	Web          bool // Web-Kachel
 	Connected    bool // die Verbindung stand mindestens einmal
 	Duration     time.Duration
 	Reason       string

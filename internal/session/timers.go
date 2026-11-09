@@ -86,19 +86,19 @@ func (m *Manager) tick(now time.Time) {
 }
 
 func (m *Manager) pollStarting(a *attempt, now time.Time) {
-	if m.d.TCP(a.hmi.Host, a.hmi.Port) {
+	if a.web && now.Sub(a.startedAt) >= WebShowAfter || !a.web && m.d.TCP(a.hmi.Host, a.hmi.Port) {
 		m.state = StateConnected
 		m.notice = ""
 		a.connectedAt, a.lastActivity = now, now
 		return
 	}
-	if now.Sub(a.startedAt) >= StartTimeout {
+	if !a.web && now.Sub(a.startedAt) >= StartTimeout {
 		m.stopClient(a, fmt.Sprintf("Keine Verbindung zu „%s“ zustande gekommen", a.hmi.Name))
 	}
 }
 
 func (m *Manager) pollConnected(a *attempt, now time.Time, cfg config.Config) {
-	if m.d.TCP(a.hmi.Host, a.hmi.Port) {
+	if a.web || m.d.TCP(a.hmi.Host, a.hmi.Port) {
 		a.lostSince = time.Time{}
 	} else {
 		if a.lostSince.IsZero() {

@@ -50,6 +50,9 @@ type Deps struct {
 	// passwordEnc ist das verschlüsselte Passwort der Prüfung: Ist es inzwischen ein anderes, unterbleibt die Markierung.
 	// Läuft in eigener Goroutine, weil das Speichern die Zustands-Goroutine ruft.
 	MarkAuthFailed func(id, passwordEnc string)
+	// Web liefert das Profil für Web-Kacheln (client.WebApp); nil oder ein nil-Ergebnis heißt:
+	// auf diesem Gerät nicht verfügbar. Web-Kacheln laufen ohne Abstimmung und ohne RFB-Prüfung.
+	Web func() client.Profile
 }
 
 // ErrPasswordMissing meldet ein VNC-Passwort, das fehlt oder sich nicht öffnen lässt.
@@ -70,6 +73,7 @@ type attempt struct {
 	barHidden bool // beim Start festgelegt: automatische Daueranzeige mit ausgeblendeter Leiste
 	confirmed bool // Rückfrage ist bejaht, nicht erneut fragen
 	watch     bool
+	web       bool // Web-Kachel: lokal, keine Abstimmung mit anderen Terminals
 	decision  coord.Decision
 
 	ctx    context.Context
@@ -164,7 +168,7 @@ func (m *Manager) shutdown() {
 		<-a.exited
 	}
 	m.cleanupRAM(a)
-	m.d.Coord.Release(a.hmi.ID)
+	m.release(a)
 	m.reportEnd(a, "Dienst beendet", false)
 	m.cur = nil
 	m.state = StateTiles
@@ -332,12 +336,14 @@ func (m *Manager) buildSnapshot() Snapshot {
 		s.HMI, s.HMIName = m.cur.hmi.ID, m.cur.hmi.Name
 		s.ViewOnly = m.cur.hmi.ViewOnly || m.cur.watch
 		s.HideBar = m.cur.barHidden
+		s.Web = m.cur.web
 		if m.state == StateConfirming && m.cur.decision.Holder != nil {
 			h := *m.cur.decision.Holder
 			s.Confirm = &h
 		}
 	case m.state == StateReconnecting:
 		s.HMI, s.HMIName = m.perm.waitingID, m.perm.waitingName
+		s.Web = m.perm.waitingWeb
 	}
 	return s
 }
@@ -390,4 +396,26 @@ func (m *Manager) EndForMaintenance(msg string) {
 		}
 		return nil
 	})
+}
+
+// ErrWebOpen meldet eine offene Web-Kachel (WhenNoWeb).
+var ErrWebOpen = errors.New("Eine Web-Kachel ist geöffnet. Bitte zuerst zu den Kacheln zurückkehren.")
+
+// WhenNoWeb führt f in der Zustands-Goroutine aus, wenn gerade keine Web-Kachel offen ist
+// oder startet; sonst ErrWebOpen. Solange f läuft, startet auch keine (etwa beim Löschen
+// des Web-Profils).
+func (m *Manager) WhenNoWeb(f func() error) error {
+	return m.do(func() error {
+		if m.cur != nil && m.cur.web {
+			return ErrWebOpen
+		}
+		return f()
+	})
+}
+
+// release gibt die Belegung frei; eine Web-Kachel belegt nie etwas.
+func (m *Manager) release(a *attempt) {
+	if !a.web {
+		m.d.Coord.Release(a.hmi.ID)
+	}
 }

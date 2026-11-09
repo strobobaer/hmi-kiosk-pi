@@ -234,6 +234,7 @@ type harness struct {
 	runner  *fakeRunner
 	profile *fakeProfile
 	log     *eventLog
+	web     *fakeProfile // Web-Kacheln; nil heißt: nicht verfügbar
 	sub     <-chan Snapshot
 	tcp     atomic.Bool
 
@@ -274,6 +275,7 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 		coord:    &fakeCoord{log: log, events: make(chan coord.Event, 8)},
 		runner:   &fakeRunner{log: log},
 		profile:  &fakeProfile{},
+		web:      &fakeProfile{},
 		cfg:      baseConfig(),
 		probe:    rfb.ProbeResult{Reachable: true, AuthOK: true},
 		password: "geheim",
@@ -286,7 +288,13 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 		Coord:   h.coord,
 		Runner:  h.runner,
 		Profile: func() client.Profile { return h.profile },
-		TCP:     func(string, int) bool { return h.tcp.Load() },
+		Web: func() client.Profile {
+			if h.web == nil {
+				return nil
+			}
+			return h.web
+		},
+		TCP: func(string, int) bool { return h.tcp.Load() },
 		RAMDir: func() (string, func(), error) {
 			h.mu.Lock()
 			defer h.mu.Unlock()

@@ -20,7 +20,7 @@ import (
 // Blockierende Schritte laufen in eigenen Goroutinen und melden sich per post.
 
 func (m *Manager) begin(h config.HMI, cfg config.Config, auto bool) {
-	a := &attempt{hmi: h, auto: auto, permanent: cfg.Kiosk.PermanentHMI == h.ID}
+	a := &attempt{hmi: h, auto: auto, permanent: cfg.Kiosk.PermanentHMI == h.ID, web: h.IsWeb()}
 	a.ctx, a.cancel = context.WithCancel(m.runCtx)
 	if a.permanent {
 		m.perm.halted = false
@@ -30,6 +30,11 @@ func (m *Manager) begin(h config.HMI, cfg config.Config, auto bool) {
 	m.hint, m.badKey = nil, nil
 	if !auto {
 		m.notice = ""
+	}
+	if a.web {
+		// Lokal und frei: keine Anfrage, keine Belegung, keine RFB-Prüfung.
+		m.startWeb(a)
+		return
 	}
 	m.request(a)
 }
@@ -186,6 +191,7 @@ func (m *Manager) buildSpec(a *attempt, cfg config.Config) client.Spec {
 		W:          w,
 		H:          h,
 		SessionN:   m.sessionN,
+		URL:        a.hmi.URL,
 	}
 	// Ausblenden gilt nur für die automatisch gestartete Daueranzeige: Wer per
 	// Touch beginnt, braucht „Zurück“ (Spec Abschnitt 4).
@@ -218,10 +224,15 @@ func (m *Manager) startClient(a *attempt) {
 	if !a.watch {
 		m.d.Coord.Hold(a.hmi.ID, strconv.Itoa(m.sessionN))
 	}
+	m.launch(a, cmd, "Der VNC-Client konnte nicht gestartet werden")
+}
+
+// launch startet den Prozess und überwacht sein Ende.
+func (m *Manager) launch(a *attempt, cmd client.Command, failNotice string) {
 	proc, err := m.d.Runner.Start(cmd)
 	if err != nil {
 		log.Printf("Sitzung: Client für HMI %q: %v", a.hmi.ID, err)
-		m.end(a, "Der VNC-Client konnte nicht gestartet werden", false)
+		m.end(a, failNotice, false)
 		return
 	}
 	now := m.d.Clock.Now()
@@ -267,6 +278,11 @@ func (m *Manager) onExit(a *attempt, err error) {
 		m.end(a, a.endNotice, a.operator)
 	case a.takenNotice != "":
 		m.end(a, a.takenNotice, false)
+	case a.web && err != nil:
+		log.Printf("Sitzung: Chromium der Web-Kachel %q beendet: %v", a.hmi.ID, err)
+		m.end(a, fmt.Sprintf("Webseite „%s“ unerwartet beendet", a.hmi.Name), false)
+	case a.web:
+		m.end(a, fmt.Sprintf("Webseite „%s“ wurde geschlossen", a.hmi.Name), false)
 	case err != nil:
 		log.Printf("Sitzung: Client von HMI %q beendet: %v", a.hmi.ID, err)
 		m.end(a, fmt.Sprintf("Client für „%s“ unerwartet beendet", a.hmi.Name), false)
@@ -288,7 +304,7 @@ func (m *Manager) end(a *attempt, notice string, operator bool) {
 	now := m.d.Clock.Now()
 	a.cancel()
 	m.cleanupRAM(a)
-	m.d.Coord.Release(a.hmi.ID)
+	m.release(a)
 	m.reportEnd(a, notice, operator)
 	m.cur = nil
 	m.clearDeadline()
@@ -317,6 +333,7 @@ func (m *Manager) reportEnd(a *attempt, notice string, operator bool) {
 	}
 	m.d.OnEnd(Ended{
 		HMI: a.hmi.ID, HMIName: a.hmi.Name,
+		Web:      a.web,
 		ViewOnly: a.hmi.ViewOnly, Watch: a.watch, Permanent: a.permanent,
 		Connected: !a.connectedAt.IsZero(),
 		Duration:  m.d.Clock.Now().Sub(a.startedAt),
@@ -348,7 +365,7 @@ func (m *Manager) onBack() {
 // überholt. Beim Mitschauen belegen wir nichts, also gibt es nichts zu räumen.
 func (m *Manager) onTakeoverEvent(ev coord.Event) {
 	a := m.cur
-	if a == nil || a.hmi.ID != ev.HMI || a.watch || m.state == StateStopping {
+	if a == nil || a.hmi.ID != ev.HMI || a.watch || a.web || m.state == StateStopping {
 		return
 	}
 	by := holderName(&ev.By)
@@ -384,7 +401,7 @@ func (m *Manager) checkConfig(cfg config.Config) {
 		m.endOrStop(a, fmt.Sprintf("„%s“ wurde gelöscht", a.hmi.Name))
 		return
 	}
-	if h.Host != a.hmi.Host || h.Port != a.hmi.Port || m.passwordChanged(a, h) {
+	if h.Kind != a.hmi.Kind || h.URL != a.hmi.URL || h.Host != a.hmi.Host || h.Port != a.hmi.Port || m.passwordChanged(a, h) {
 		m.endOrStop(a, fmt.Sprintf("Einstellungen von „%s“ wurden geändert", a.hmi.Name))
 		return
 	}
@@ -408,4 +425,25 @@ func (m *Manager) passwordChanged(a *attempt, h config.HMI) bool {
 	}
 	pw, err := m.d.Password(h)
 	return err != nil || pw != a.password
+}
+
+// startWeb startet das Chromium-Fenster einer Web-Kachel. Ohne VNC gibt es keinen
+// RAM-Ordner und kein Passwort; das Profil liegt dauerhaft auf der Datenpartition.
+func (m *Manager) startWeb(a *attempt) {
+	var p client.Profile
+	if m.d.Web != nil {
+		p = m.d.Web()
+	}
+	if p == nil {
+		m.end(a, "Webseiten lassen sich auf diesem Terminal nicht anzeigen (kein Chromium)", false)
+		return
+	}
+	m.sessionN++
+	cmd, err := p.Prepare("", m.buildSpec(a, m.d.Config()))
+	if err != nil {
+		log.Printf("Sitzung: Web-Kachel %q: %v", a.hmi.ID, err)
+		m.end(a, "Die Webseite konnte nicht geöffnet werden", false)
+		return
+	}
+	m.launch(a, cmd, "Die Webseite konnte nicht geöffnet werden")
 }
