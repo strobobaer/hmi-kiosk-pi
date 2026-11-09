@@ -53,6 +53,9 @@ type Deps struct {
 	// Web liefert das Profil für Web-Kacheln (client.WebApp); nil oder ein nil-Ergebnis heißt:
 	// auf diesem Gerät nicht verfügbar. Web-Kacheln laufen ohne Abstimmung und ohne RFB-Prüfung.
 	Web func() client.Profile
+	// WebReady wartet, bis die Chromium-Richtlinie den Ursprung der Web-Kachel erlaubt (nil: sofort).
+	// Läuft außerhalb der Zustands-Goroutine; ein Fehler bricht den Start mit Hinweis ab.
+	WebReady func(ctx context.Context, h config.HMI) error
 }
 
 // ErrPasswordMissing meldet ein VNC-Passwort, das fehlt oder sich nicht öffnen lässt.

@@ -181,6 +181,9 @@ func newService(opts Options) (*service, error) {
 	s.key, s.keyWarn = s.openKey(s.cfg)
 	cfg, key := s.cfg, s.key
 	s.mu.Unlock()
+	// Beim Start gilt die Richtlinie, die der Helfer vor dem Dienst aus seiner gespeicherten Liste
+	// geschrieben hat (ExecStartPre web-policy); abgeglichen wird trotzdem.
+	s.origins.assumeWritten(config.WebOrigins(cfg))
 	s.origins.set(config.WebOrigins(cfg))
 	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
 	if opts.ChromiumEnabled {
@@ -286,6 +289,7 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		Blocked:        s.sessionBlocked,
 		MarkAuthFailed: s.markAuthFailed,
 		Web:            s.webProfile,
+		WebReady:       s.webReady,
 	})
 	s.reach = newReachability(
 		func() []config.HMI { return s.config().HMIs },

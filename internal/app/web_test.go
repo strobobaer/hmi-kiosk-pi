@@ -100,6 +100,11 @@ func TestServicePushesWebOriginsOnStartAndApply(t *testing.T) {
 
 func startWebService(t *testing.T, mutate func(*config.Config)) *fixture {
 	t.Helper()
+	return startWebServiceWith(t, mutate, (&helperCalls{}).call)
+}
+
+func startWebServiceWith(t *testing.T, mutate func(*config.Config), call func(context.Context, string, string) error) *fixture {
+	t.Helper()
 	f := newFixture(t)
 	f.saveConfig(func(c *config.Config) {
 		oneHMI(c)
@@ -117,7 +122,7 @@ func startWebService(t *testing.T, mutate func(*config.Config)) *fixture {
 		t.Fatal(err)
 	}
 	s.lookPath = func(name string) (string, error) { return "/opt/" + name, nil }
-	s.origins.call = (&helperCalls{}).call
+	s.origins.call = call
 	f.s = s
 	ctx, cancel := context.WithCancel(context.Background())
 	f.cancel, f.done = cancel, make(chan error, 1)
@@ -260,4 +265,56 @@ func TestAdminDeletesWebLoginsThroughService(t *testing.T) {
 	if _, err := os.Stat(profile); !os.IsNotExist(err) {
 		t.Fatalf("Profil noch da: %v", err)
 	}
+}
+
+func TestOriginSyncWaitFor(t *testing.T) {
+	calls := &helperCalls{}
+	o := newOriginSync(calls.call)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go o.run(ctx)
+	o.set([]string{"http://grafana:3000"})
+	wctx, wcancel := context.WithTimeout(ctx, waitLimit)
+	defer wcancel()
+	if err := o.waitFor(wctx, "http://grafana:3000"); err != nil {
+		t.Fatal(err)
+	}
+	short, scancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer scancel()
+	if err := o.waitFor(short, "http://andere:3000"); err == nil {
+		t.Fatal("fremder Ursprung gilt als geschrieben")
+	}
+}
+
+func TestWebTileWaitsForPolicyAndReportsFailure(t *testing.T) {
+	old := webReadyLimit
+	webReadyLimit = 200 * time.Millisecond
+	t.Cleanup(func() { webReadyLimit = old })
+	f := startWebServiceWith(t, nil, (&helperCalls{fail: errors.New("Der Helfer ist nicht erreichbar")}).call)
+	// Neue Adresse auf einem anderen Server: Der Helfer müsste sie erst freigeben.
+	cfg := f.s.config()
+	cfg.HMIs = slices.Clone(cfg.HMIs)
+	cfg.HMIs[1].URL = "http://neu.werk:3000/"
+	f.s.Apply(cfg)
+	if code, body := f.local("POST", "/api/hmi/grafana/open"); code != 204 {
+		t.Fatalf("Öffnen %d: %s", code, body)
+	}
+	eventually(t, "Hinweis", func() bool {
+		s := f.s.mgr.Snapshot()
+		return s.State == session.StateTiles && strings.Contains(s.Notice, "Freigabe")
+	})
+	if n := len(f.webStarts()); n != 0 {
+		t.Fatalf("%d Web-Chromium trotz fehlender Freigabe", n)
+	}
+}
+
+// Beim Start gilt die Richtlinie, die der Helfer vorher aus seiner gespeicherten Liste
+// geschrieben hat (ExecStartPre): Die Daueranzeige wartet nicht auf den Helfer.
+func TestPermanentWebTileStartsWithoutHelperAtBoot(t *testing.T) {
+	old := webReadyLimit
+	webReadyLimit = 200 * time.Millisecond
+	t.Cleanup(func() { webReadyLimit = old })
+	f := startWebServiceWith(t, func(c *config.Config) { c.Kiosk.PermanentHMI = "grafana" },
+		(&helperCalls{fail: errors.New("Der Helfer ist nicht erreichbar")}).call)
+	eventually(t, "Daueranzeige", func() bool { return len(f.webStarts()) == 1 })
 }

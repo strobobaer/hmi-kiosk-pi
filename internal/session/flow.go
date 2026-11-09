@@ -439,6 +439,30 @@ func (m *Manager) startWeb(a *attempt) {
 		m.end(a, "Webseiten lassen sich auf diesem Terminal nicht anzeigen (kein Chromium)", false)
 		return
 	}
+	if m.d.WebReady == nil {
+		m.launchWeb(a, p)
+		return
+	}
+	h := a.hmi
+	go func() {
+		err := m.d.WebReady(a.ctx, h)
+		m.post(func() { m.onWebReady(a, p, err) })
+	}()
+}
+
+func (m *Manager) onWebReady(a *attempt, p client.Profile, err error) {
+	if m.cur != a {
+		return
+	}
+	if err != nil {
+		log.Printf("Sitzung: Richtlinie für Web-Kachel %q nicht bereit: %v", a.hmi.ID, err)
+		m.end(a, fmt.Sprintf("Die Freigabe für „%s“ steht noch nicht in der Chromium-Richtlinie", a.hmi.Name), false)
+		return
+	}
+	m.launchWeb(a, p)
+}
+
+func (m *Manager) launchWeb(a *attempt, p client.Profile) {
 	m.sessionN++
 	cmd, err := p.Prepare("", m.buildSpec(a, m.d.Config()))
 	if err != nil {

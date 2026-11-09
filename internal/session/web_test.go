@@ -1,8 +1,10 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -238,5 +240,76 @@ func TestWebIdle(t *testing.T) {
 	h.connect("a")
 	if err := h.m.WhenNoWeb(func() error { ran = true; return nil }); err != nil || !ran {
 		t.Fatalf("mit VNC-Sitzung: %v %v", err, ran)
+	}
+}
+
+// Der Start wartet, bis die Richtlinie den Ursprung der Seite erlaubt; sonst zeigte das
+// frisch gestartete Chromium die Sperrseite.
+func TestWebWaitsForPolicyBeforeLaunch(t *testing.T) {
+	gate := make(chan error)
+	h := newHarness(t, withWeb(func(h *harness) {
+		h.webReady = func(ctx context.Context, hm config.HMI) error {
+			if hm.URL != webURL {
+				return errors.New("falsche Kachel")
+			}
+			select {
+			case err := <-gate:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}))
+	h.open("w")
+	h.waitState(StateRequesting)
+	h.advance(time.Second)
+	if h.runner.count() != 0 {
+		t.Fatal("Chromium vor der Freigabe gestartet")
+	}
+	gate <- nil
+	h.waitState(StateStarting)
+	if h.runner.count() != 1 {
+		t.Fatalf("Starts %d", h.runner.count())
+	}
+}
+
+func TestWebPolicyNotReadyShowsNotice(t *testing.T) {
+	h := newHarness(t, withWeb(func(h *harness) {
+		h.webReady = func(context.Context, config.HMI) error { return errors.New("Helfer nicht erreichbar") }
+	}))
+	h.open("w")
+	h.waitNotice(StateTiles, "Freigabe")
+	if h.runner.count() != 0 {
+		t.Fatal("Chromium trotz fehlender Freigabe gestartet")
+	}
+}
+
+func TestWebPolicyNotReadyPermanentRetries(t *testing.T) {
+	var calls atomic.Int32
+	h := newHarness(t, withWeb(func(h *harness) {
+		h.cfg.Kiosk.PermanentHMI = "w"
+		h.webReady = func(context.Context, config.HMI) error {
+			if calls.Add(1) == 1 {
+				return errors.New("noch nicht")
+			}
+			return nil
+		}
+	}))
+	h.waitNotice(StateReconnecting, "Neuer Versuch")
+	h.advance(ReconnectMin)
+	h.waitState(StateStarting)
+}
+
+func TestWebBackWhileWaitingForPolicy(t *testing.T) {
+	h := newHarness(t, withWeb(func(h *harness) {
+		h.webReady = func(ctx context.Context, _ config.HMI) error { <-ctx.Done(); return ctx.Err() }
+	}))
+	h.open("w")
+	h.waitState(StateRequesting)
+	h.m.Back()
+	h.waitState(StateTiles)
+	h.advance(time.Second)
+	if h.runner.count() != 0 {
+		t.Fatal("Chromium nach Zurück gestartet")
 	}
 }

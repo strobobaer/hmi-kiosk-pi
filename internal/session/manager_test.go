@@ -235,6 +235,7 @@ type harness struct {
 	profile *fakeProfile
 	log     *eventLog
 	web     *fakeProfile // Web-Kacheln; nil heißt: nicht verfügbar
+	webReady func(context.Context, config.HMI) error
 	sub     <-chan Snapshot
 	tcp     atomic.Bool
 
@@ -288,6 +289,12 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 		Coord:   h.coord,
 		Runner:  h.runner,
 		Profile: func() client.Profile { return h.profile },
+		WebReady: func(ctx context.Context, hm config.HMI) error {
+			if h.webReady == nil {
+				return nil
+			}
+			return h.webReady(ctx, hm)
+		},
 		Web: func() client.Profile {
 			if h.web == nil {
 				return nil
