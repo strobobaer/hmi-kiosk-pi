@@ -63,13 +63,20 @@ func (s *service) maintenanceMessage() string {
 	return ""
 }
 
-// sessionBlocked sperrt den Start echter Sitzungen im Wartungsmodus und während
-// der Dauerprüfung.
+// sessionBlocked sperrt den Start echter Sitzungen im Wartungsmodus, während der
+// Dauerprüfung und solange Chromium am Terminal die Admin-Seite zeigt (auch die
+// Daueranzeige: Sie schlösse die Seite, die erst nach 5 Minuten ohne Eingabe endet).
 func (s *service) sessionBlocked() string {
 	if msg := s.maintenanceMessage(); msg != "" {
 		return msg
 	}
-	return s.soakBlocked()
+	if msg := s.soakBlocked(); msg != "" {
+		return msg
+	}
+	if s.presence.active() {
+		return localAdminNotice
+	}
+	return ""
 }
 
 // syncMaintenance gleicht Koordinator und Hinweis der Kachelseite an den Zustand an.

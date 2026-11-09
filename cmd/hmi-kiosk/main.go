@@ -38,6 +38,7 @@ func serve() {
 	helperSocket := flag.String("helper-socket", app.DefaultHelperSocket, "Socket des root-Helfers")
 	local := flag.String("local", app.DefaultLocalAddr, "Adresse der Kachelseite")
 	admin := flag.String("admin", app.DefaultAdminAddr, "Adresse von Admin-Seite und Terminal-API")
+	localAdmin := flag.String("local-admin", app.DefaultLocalAdminAddr, "Adresse der Admin-Seite am Terminal (nur Loopback)")
 	noChromium := flag.Bool("no-chromium", false, "Chromium nicht starten (für Tests)")
 	flag.Parse()
 
@@ -48,6 +49,7 @@ func serve() {
 		RunDir:          *run,
 		LocalAddr:       *local,
 		AdminAddr:       *admin,
+		LocalAdminAddr:  *localAdmin,
 		HelperSocket:    *helperSocket,
 		Runner:          client.NewExecRunner(),
 		ChromiumEnabled: !*noChromium,

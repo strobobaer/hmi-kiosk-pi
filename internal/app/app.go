@@ -18,6 +18,7 @@ import (
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
 	"hmikiosk/internal/helperapi"
+	"hmikiosk/internal/keyboard"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/rfb"
@@ -49,7 +50,9 @@ const (
 // Options sind die Startwerte des Dienstes. Adressen dürfen Port 0 nennen.
 type Options struct {
 	DataDir, RunDir, LocalAddr, AdminAddr string
-	HelperSocket                          string
+	// LocalAdminAddr ist die Admin-Seite am Terminal; nur Loopback wird gebunden.
+	LocalAdminAddr string
+	HelperSocket   string
 	// SessionProfileFile nennt das Grafikprofil der laufenden Sitzung (hmi-kiosk-session prepare).
 	SessionProfileFile string
 	Runner             client.Runner
@@ -64,8 +67,10 @@ type Options struct {
 // nicht gestartet werden konnte.
 type Bound struct {
 	Local, Admin string
-	Status       func() web.SystemStatus
-	Snapshot     func() session.Snapshot
+	// LocalAdmin ist die Admin-Seite am Terminal (leer: nicht gestartet).
+	LocalAdmin string
+	Status     func() web.SystemStatus
+	Snapshot   func() session.Snapshot
 }
 
 type service struct {
@@ -83,6 +88,11 @@ type service struct {
 	helper   *helperapi.Client
 	lookPath func(string) (string, error)
 	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
+
+	// kbd steuert die Bildschirmtastatur (Seiten, Leiste); kbdSup ist wvkbd selbst, nil ohne Chromium.
+	kbd      web.KeyboardAPI
+	kbdSup   *keyboard.Supervisor
+	presence adminPresence // Admin-Seite am Terminal offen
 
 	tileMu sync.Mutex    // schützt tileLn und das Umschalten der Kachelseite
 	tileLn *tileListener // Port der Kachelseite, ab startServers
@@ -130,6 +140,9 @@ func newService(opts Options) (*service, error) {
 	if opts.AdminAddr == "" {
 		opts.AdminAddr = DefaultAdminAddr
 	}
+	if opts.LocalAdminAddr == "" {
+		opts.LocalAdminAddr = DefaultLocalAdminAddr
+	}
 	if opts.HelperSocket == "" {
 		opts.HelperSocket = DefaultHelperSocket
 	}
@@ -165,6 +178,13 @@ func newService(opts Options) (*service, error) {
 	cfg, key := s.cfg, s.key
 	s.mu.Unlock()
 	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
+	if opts.ChromiumEnabled {
+		s.kbdSup = keyboard.New(s.runner, func() (string, error) { return keyboard.Find(s.lookPath) }, func() int {
+			_, h := s.screen()
+			return h
+		})
+		s.kbd = s.kbdSup
+	}
 	s.buildParts(cfg, key)
 	s.coord.SetStandby(s.maintenance())
 	return s, nil
@@ -302,7 +322,7 @@ func (s *service) serve(parent context.Context) error {
 	})
 	// Chromium erst, wenn die Kachelseite angenommen wird: Seine Fehlerseite
 	// lädt sonst nie von selbst nach.
-	local, admin, localErr, bound, err := s.startServers(ctx, &wg)
+	local, admin, localAdmin, localErr, bound, err := s.startServers(ctx, &wg)
 	browserDone := closedChan()
 	if err == nil {
 		browserDone = s.startBrowser(ctx)
@@ -321,7 +341,7 @@ func (s *service) serve(parent context.Context) error {
 	}
 	<-mgrDone
 	<-browserDone
-	shutdownServers(local, admin)
+	shutdownServers(local, admin, localAdmin)
 	wg.Wait()
 	return err
 }
@@ -389,9 +409,17 @@ func (s *service) startBrowser(ctx context.Context) <-chan struct{} {
 		w, _ := s.screen()
 		return w
 	})
-	sup.SetProfile(s.sessionProfile())
+	profile := s.sessionProfile()
+	sup.SetProfile(profile)
+	s.syncKeyboard(profile)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		if s.kbdSup != nil {
+			s.kbdSup.Run(ctx)
+		}
+	}()
 	go func() {
 		defer wg.Done()
 		sup.Run(ctx)
@@ -412,7 +440,10 @@ func (s *service) startBrowser(ctx context.Context) <-chan struct{} {
 func (s *service) feedBrowser(ctx context.Context, sup *browser.Supervisor) {
 	snaps, stop := s.mgr.Subscribe()
 	defer stop()
-	var last session.Snapshot
+	var (
+		last  session.Snapshot
+		shown browser.Target
+	)
 	for {
 		select {
 		case <-ctx.Done():
@@ -423,9 +454,17 @@ func (s *service) feedBrowser(ctx context.Context, sup *browser.Supervisor) {
 			}
 			last = snap
 		case <-s.browser:
-			sup.SetProfile(s.sessionProfile())
+			profile := s.sessionProfile()
+			sup.SetProfile(profile)
+			s.syncKeyboard(profile)
 		}
-		sup.Show(s.browserTarget(last))
+		t := s.browserTarget(last)
+		// Eine offene Tastatur gehört zur vorigen Seite: beim Wechsel verbergen.
+		if t != shown && s.kbd != nil {
+			_ = s.kbd.Hide()
+		}
+		shown = t
+		sup.Show(t)
 	}
 }
 
@@ -455,4 +494,12 @@ func closedChan() <-chan struct{} {
 	c := make(chan struct{})
 	close(c)
 	return c
+}
+
+// syncKeyboard: Die Bildschirmtastatur gibt es nur unter labwc (Wayland, layer-shell).
+// Unter X11 läuft keine; die Knöpfe bleiben ohne Wirkung.
+func (s *service) syncKeyboard(profile string) {
+	if s.kbdSup != nil {
+		s.kbdSup.SetEnabled(profile == "labwc")
+	}
 }

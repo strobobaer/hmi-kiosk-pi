@@ -124,7 +124,7 @@ func (f *fixture) saveConfig(mutate func(*config.Config)) config.Config {
 func (f *fixture) options() Options {
 	return Options{
 		DataDir: f.data, RunDir: f.run,
-		LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0",
+		LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
 		HelperSocket:       filepath.Join(f.run, "kein-helfer.sock"),
 		SessionProfileFile: filepath.Join(f.run, "keine-sitzung", "profile"),
 		Runner:             f.runner,

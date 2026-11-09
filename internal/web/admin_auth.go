@@ -23,16 +23,16 @@ const (
 	preSessionCookie = "hmi_admin_pre"
 	cookiePath       = "/admin"
 
-	sessionIdle     = 30 * time.Minute
+	sessionIdle = 30 * time.Minute
 
 	// Am Terminal (Loopback, HTTP) eigene Cookies ohne Secure und eine kurze Sitzung:
 	// Nach 5 Minuten ohne Eingabe geht es zurück zur Kachelseite.
 	localSessionCookie    = "hmi_admin_local"
 	localPreSessionCookie = "hmi_admin_local_pre"
 	localSessionIdle      = 5 * time.Minute
-	maxFailures     = 5
-	lockoutDuration = 5 * time.Minute
-	minPasswordLen  = 10
+	maxFailures           = 5
+	lockoutDuration       = 5 * time.Minute
+	minPasswordLen        = 10
 )
 
 func newToken() string {

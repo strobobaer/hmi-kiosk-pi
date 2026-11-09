@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -475,11 +476,25 @@ func TestChromiumUsesRunningSessionProfileAndStartsAfterLocalServer(t *testing.T
 	done := make(chan error, 1)
 	go func() { done <- s.serve(ctx) }()
 	<-ready
-	eventually(t, "Chromium", func() bool { return len(g.runner.started()) >= 1 })
+	byPath := func(p string) (client.Command, bool) {
+		for _, c := range g.runner.started() {
+			if c.Path == p {
+				return c, true
+			}
+		}
+		return client.Command{}, false
+	}
+	eventually(t, "Chromium", func() bool { _, ok := byPath("/opt/chromium"); return ok })
 	if !<-listening {
 		t.Error("Chromium startete, bevor die Kachelseite erreichbar war")
 	}
-	args := strings.Join(g.runner.started()[0].Args, " ")
+	// Unter labwc läuft auch die Bildschirmtastatur, verborgen.
+	eventually(t, "Bildschirmtastatur", func() bool { _, ok := byPath("/opt/wvkbd-mobintl"); return ok })
+	if kb, _ := byPath("/opt/wvkbd-mobintl"); !slices.Contains(kb.Args, "--hidden") {
+		t.Errorf("Tastatur nicht verborgen gestartet: %v", kb.Args)
+	}
+	chromium, _ := byPath("/opt/chromium")
+	args := strings.Join(chromium.Args, " ")
 	if !strings.Contains(args, "--ozone-platform=wayland") {
 		t.Errorf("Plattform nicht aus der laufenden Sitzung: %s", args)
 	}

@@ -87,7 +87,7 @@ func newRig(t *testing.T) *rig {
 	t.Helper()
 	r := &fakeRunner{started: make(chan client.Command, 16)}
 	clk := &fakeClock{afters: make(chan time.Duration, 16), fire: make(chan time.Time, 1)}
-	k := New(r, "/usr/bin/wvkbd-mobintl", func() int { return 1080 })
+	k := New(r, func() (string, error) { return "/usr/bin/wvkbd-mobintl", nil }, func() int { return 1080 })
 	k.clock = clk
 	k.logf = func(string, ...any) {}
 	return &rig{k, r, clk}
@@ -164,7 +164,7 @@ func TestDisabledStartsNothingAndShowDoesNotFail(t *testing.T) {
 }
 
 func TestWithoutRunNothingPanics(t *testing.T) {
-	k := New(&fakeRunner{started: make(chan client.Command, 1)}, "", func() int { return 0 })
+	k := New(&fakeRunner{started: make(chan client.Command, 1)}, nil, func() int { return 0 })
 	k.SetEnabled(true)
 	if err := k.Show(); err == nil {
 		t.Fatal("Show ohne laufendes wvkbd meldet keinen Fehler")

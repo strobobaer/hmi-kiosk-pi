@@ -64,7 +64,7 @@ func Find(lookPath func(string) (string, error)) (string, error) {
 // Supervisor startet wvkbd, startet es nach einem Absturz neu und schickt die Signale.
 type Supervisor struct {
 	runner  client.Runner
-	path    string
+	find    func() (string, error)
 	screenH func() int
 	clock   session.Clock
 	logf    func(string, ...any)
@@ -76,10 +76,14 @@ type Supervisor struct {
 	wake    chan struct{}
 }
 
-// New baut den Steuerer; screenH liefert die Bildschirmhöhe (0: unbekannt).
-func New(r client.Runner, path string, screenH func() int) *Supervisor {
+// New baut den Steuerer. find sucht das Programm bei jedem Start (nil: Find im Pfad),
+// screenH liefert die Bildschirmhöhe (0: unbekannt).
+func New(r client.Runner, find func() (string, error), screenH func() int) *Supervisor {
+	if find == nil {
+		find = func() (string, error) { return Find(nil) }
+	}
 	return &Supervisor{
-		runner: r, path: path, screenH: screenH,
+		runner: r, find: find, screenH: screenH,
 		clock: session.SystemClock{}, logf: log.Printf,
 		wake: make(chan struct{}, 1),
 	}
@@ -188,14 +192,10 @@ func (k *Supervisor) Run(ctx context.Context) {
 	}
 	launch := func() {
 		at := k.clock.Now()
-		var (
-			p   client.Process
-			err error
-		)
-		if k.path == "" {
-			err = fmt.Errorf("%s nicht gefunden", Program)
-		} else {
-			p, err = k.runner.Start(client.Command{Path: k.path, Args: k.args()})
+		var p client.Process
+		path, err := k.find()
+		if err == nil {
+			p, err = k.runner.Start(client.Command{Path: path, Args: k.args()})
 		}
 		if err != nil {
 			k.logf("Bildschirmtastatur startet nicht: %v (neuer Versuch in %v)", err, backoff)

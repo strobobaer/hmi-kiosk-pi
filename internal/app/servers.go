@@ -42,11 +42,11 @@ func newAdminServer(h http.Handler, getCert func(*tls.ClientHelloInfo) (*tls.Cer
 
 // startServers: Nur die Kachelseite ist Pflicht. Fehlt die Admin-Seite oder die
 // Terminal-API, bleibt das Terminal bedienbar und meldet es.
-func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, admin *http.Server, localErr <-chan error, bound Bound, err error) {
+func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, admin, localAdmin *http.Server, localErr <-chan error, bound Bound, err error) {
 	bound = Bound{Status: s.Status, Snapshot: s.mgr.Snapshot}
 	l, err := s.listenTilesAtStart()
 	if err != nil {
-		return nil, nil, nil, bound, fmt.Errorf("Kachelseite: %w", err)
+		return nil, nil, nil, nil, bound, fmt.Errorf("Kachelseite: %w", err)
 	}
 	bound.Local = l.Addr().String()
 	local = newLocalServer(ctx, s.localHandler())
@@ -59,8 +59,10 @@ func (s *service) startServers(ctx context.Context, wg *sync.WaitGroup) (local, 
 		}
 	}()
 
-	admin, bound.Admin = s.startAdmin(wg)
-	return local, admin, errs, bound, nil
+	remote, onTerminal := s.adminHandlers()
+	admin, bound.Admin = s.startAdmin(wg, remote)
+	localAdmin, bound.LocalAdmin = s.startLocalAdmin(ctx, wg, onTerminal)
+	return local, admin, localAdmin, errs, bound, nil
 }
 
 // listenTilesAtStart bindet die Kachelseite nach der Einstellung. Ist der Port im Netz
@@ -81,7 +83,7 @@ func (s *service) listenTilesAtStart() (*tileListener, error) {
 	return l, nil
 }
 
-func (s *service) startAdmin(wg *sync.WaitGroup) (*http.Server, string) {
+func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, string) {
 	cert, dir, ok := s.loadCert()
 	if !ok {
 		return nil, ""
@@ -91,7 +93,7 @@ func (s *service) startAdmin(wg *sync.WaitGroup) (*http.Server, string) {
 		s.warn(fmt.Sprintf("Admin-Seite und Terminal-API nicht verfügbar: %v", err))
 		return nil, ""
 	}
-	srv := newAdminServer(s.adminMux(), web.NewCertSource(dir, cert).GetCertificate)
+	srv := newAdminServer(s.adminMux(h), web.NewCertSource(dir, cert).GetCertificate)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -120,10 +122,10 @@ func (s *service) loadCert() (tls.Certificate, string, bool) {
 	return cert, dir, true
 }
 
-func (s *service) adminMux() http.Handler {
+func (s *service) adminMux(admin http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/peer/", coord.NewHandlerFunc(s.coord, s.peerKey))
-	mux.Handle("/admin/", s.adminHandler())
+	mux.Handle("/admin/", admin)
 	// Die kurze Adresse https://<Gerät>:8443 führt zur Admin-Seite.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
@@ -134,9 +136,11 @@ func (s *service) adminMux() http.Handler {
 	return mux
 }
 
-func (s *service) adminHandler() http.Handler {
+// adminHandlers baut beide Zugänge der Admin-Seite (HTTPS und am Terminal) mit
+// gemeinsamen Sitzungen und gemeinsamer Sperre.
+func (s *service) adminHandlers() (remote, local http.Handler) {
 	// Ohne Schlüsseldatei bleibt die Admin-Seite erreichbar: Sie leitet auf die Reparatur um.
-	return web.NewAdmin(web.AdminDeps{
+	return web.NewAdminHandlers(web.AdminDeps{
 		Store:        s.store,
 		Box:          s.box,
 		Apply:        s.Apply,
@@ -164,6 +168,9 @@ func (s *service) adminHandler() http.Handler {
 		KeyFile:              filepath.Join(s.opts.DataDir, secretsFile),
 		CheckPeer:            s.checkPeer,
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
+		Keyboard:             s.kbd,
+		LocalActive:          s.presence.touch,
+		LocalLeft:            s.localAdminLeft,
 	})
 }
 

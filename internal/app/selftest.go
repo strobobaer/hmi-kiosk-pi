@@ -189,7 +189,13 @@ func (s *service) localHandler() http.Handler {
 	mux.Handle("POST /api/selftest/run", api)
 	mux.Handle("GET /api/selftest/status", api)
 	mux.Handle("/", web.NewLocalWith(s.mgr, s.tiles, func() string { return s.config().Kiosk.Layout },
-		web.LocalExtras{TouchHit: s.touch.Hit, Network: func() bool { return s.config().Kiosk.NetworkTiles }}))
+		web.LocalExtras{
+			TouchHit:   s.touch.Hit,
+			Network:    func() bool { return s.config().Kiosk.NetworkTiles },
+			Keyboard:   s.kbd,
+			InputMode:  func() string { return s.config().Kiosk.InputMode },
+			TilesShown: s.localAdminLeft,
+		}))
 	return mux
 }
 
