@@ -6,7 +6,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung und
 
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen
-3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Kachelseite im Netz für Tests)
+3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests)
 4. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -225,7 +225,7 @@ Danach:
 **Ausgesperrt?**
 
 - Während der Frist: 2 Minuten warten, dann gilt die alte Adresse wieder.
-- Nach einer Bestätigung mit falschen Werten (z. B. falsches Gateway, Netz später umgebaut): Einen Laptop direkt oder am selben Switch mit einer Adresse im neuen Netz verbinden und die Admin-Seite unter der festen Adresse öffnen; dort „Automatisch (DHCP)“ wählen. Der Browser am Bildschirm des Terminals hilft nicht: Er zeigt wegen der Navigationssperre nur die Kachelseite, nicht `https://localhost:8443`. Auf einem System ohne SD-Abbild (install.sh) mit Desktop-Zugang geht `https://localhost:8443/admin/network` am Gerät selbst.
+- Nach einer Bestätigung mit falschen Werten (z. B. falsches Gateway, Netz später umgebaut): Einen Laptop direkt oder am selben Switch mit einer Adresse im neuen Netz verbinden und die Admin-Seite unter der festen Adresse öffnen; dort „Automatisch (DHCP)“ wählen. Oder direkt am Terminal: auf der Kachelseite das Zahnrad oben rechts antippen, anmelden, **Netzwerk** → „Automatisch (DHCP)“ (Abschnitt „Admin-Seite am Terminal“). DHCP lässt sich dort auch bestätigen; eine feste Adresse nur von einem PC über die neue Adresse.
 - Letzter Ausweg: Die Datei `system/ethernet.json` auf der Datenpartition löschen (Karte an einem Linux-Rechner, oder SSH-Abbild: `sudo rm /data/system/ethernet.json`), danach neu starten. Ohne die Datei gilt die Einstellung des Systems (im Abbild DHCP).
 - Eine dateiweise SD-Sicherung oder ein Abbild nimmt die feste Adresse mit. Die Kopie auf einem zweiten Gerät zuerst getrennt vom Original starten (z. B. direkt am Laptop) und dort DHCP oder eine andere Adresse einstellen, sonst gibt es einen Adresskonflikt.
 
@@ -262,6 +262,33 @@ So baut man ein Abbild mit SSH:
 6. Ob `hmiadmin` per `sudo` Rechte bekommt, ist bei diesem Abbild nicht geprüft.
 
 Dieses Abbild ist ein anderes als das ohne SSH. Ob SSH in der Anlage erlaubt ist, ist eine Entscheidung der Anlage (Inbetriebnahme, Abschnitt 12). Eine Datei `ssh` auf der Boot-Partition schaltet SSH ebenfalls ein, hilft aber ohne Schlüssel nicht bei der Anmeldung.
+
+### Admin-Seite am Terminal
+
+Die Admin-Seite lässt sich direkt am Bildschirm des Terminals öffnen, ohne PC:
+
+1. Auf der Kachelseite oben rechts das **Zahnrad** antippen. Chromium öffnet die Admin-Seite im selben Fenster.
+2. Mit dem Admin-Passwort anmelden (dasselbe wie über `https://<IP>:8443`; dieselbe Sperre von 5 Minuten nach 5 Fehlversuchen).
+3. Oben steht ein großer Knopf **Zurück zum Kiosk**. Er meldet ab und zeigt wieder die Kachelseite.
+
+Wichtig:
+
+- Nach **5 Minuten ohne Eingabe** meldet die Seite ab und kehrt zur Kachelseite zurück. Die Sitzung am Terminal gilt auch auf dem Server nur 5 Minuten seit der letzten Anfrage; über HTTPS bleibt es bei 30 Minuten.
+- Solange die Admin-Seite am Terminal offen ist, startet **keine HMI-Sitzung und keine Daueranzeige**, auch nicht nach dem Speichern einer Einstellung. Die Daueranzeige startet wieder, sobald die Kachelseite zurück ist (Zurück, Inaktivität oder Neustart von Chromium).
+- Technisch läuft diese Admin-Seite über HTTP nur auf `127.0.0.1:8081`, nie im Netz (die Chromium-Richtlinie erlaubt genau diese Adresse zusätzlich zur Kachelseite). Sie hat eigene Cookies; eine Anmeldung am Terminal und eine über HTTPS stören sich nicht. Die Terminal-API (`/peer/`) gibt es dort nicht.
+- Eine feste Ethernet-Adresse lässt sich am Terminal einstellen, aber nur von einem PC über die neue Adresse bestätigen (Abschnitt „Feste IP-Adresse“); DHCP lässt sich auch am Terminal bestätigen.
+- Wird die Kachelseite von einem PC aus geöffnet (Kachelseite im Netz), führt das Zahnrad dort zu `https://<IP>:8443/admin/`.
+
+### Bildschirmtastatur
+
+Für Eingaben ohne Tastatur gibt es eine Bildschirmtastatur (wvkbd, Paket `wvkbd`, Programm `wvkbd-mobintl`). Der Kiosk-Dienst startet sie unter labwc verborgen, etwa ein Drittel der Bildschirmhöhe hoch, und startet sie nach einem Absturz neu.
+
+- **Admin-Seite am Terminal:** Bei Touch-Bedienung erscheint sie beim Antippen eines Text-, Passwort- oder Zahlenfelds und verschwindet beim Verlassen des Felds oder beim Absenden.
+- **Leiste während einer Sitzung:** Der Knopf **Tastatur** blendet sie ein und aus, etwa für Eingaben im HMI.
+- **Maus-Bedienung** (Admin-Seite → Kiosk → Bedienung „Maus“): Sie erscheint nie von selbst, der Knopf in der Leiste bleibt.
+- **Layout:** wvkbd hat kein deutsches Layout. Es gilt QWERTY mit Ziffernreihe; Umlaute und ß über die Taste **Cmp** und danach den Grundbuchstaben (a, o, u, s), Sonderzeichen über die zweite Ebene.
+- **X11-Ausweichprofil:** Dort gibt es keine Bildschirmtastatur (wvkbd braucht Wayland). Der Knopf in der Leiste bleibt ohne Wirkung, Fehler entstehen keine.
+- Fehlt das Programm (z. B. install.sh-System ohne das Paket), meldet das Protokoll „Bildschirmtastatur startet nicht“ und der Dienst versucht es in wachsenden Abständen bis 30 s erneut.
 
 ### Kachelseite im Netz (Test)
 

@@ -57,6 +57,9 @@ func FindChromium(lookPath func(string) (string, error)) (string, error) {
 	return "", fmt.Errorf("kein Chromium gefunden (chromium, chromium-browser)")
 }
 
+// Supervisor überwacht nur den Prozess: Navigiert Chromium im selben Fenster weiter (etwa
+// über das Zahnrad zur Admin-Seite am Terminal, 127.0.0.1:8081), ist das kein Absturz und
+// löst keinen Neustart aus. Ein Neustart (Absturz) zeigt wieder die Kachelseite.
 type Supervisor struct {
 	runner  client.Runner
 	path    string
