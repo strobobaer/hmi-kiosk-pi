@@ -13,6 +13,7 @@ Kiosk-System für HMI-Terminals auf dem **Raspberry Pi 5**. Ein Touchbildschirm 
 - **Web-Kacheln** für Grafana-Dashboards und HMI-Webseiten; Navigation nur auf demselben Server, Anmeldung bleibt gespeichert
 - **Mehrere Terminals**: Übernahme, Sperre und Vorrang direkt zwischen den Geräten, ohne zentralen Server
 - **Daueranzeige** eines HMIs, auf Wunsch ohne Leiste, mit Rückkehr bei Inaktivität
+- **PDH-Fernsteuerung**: PDH öffnet ein HMI auf diesem Bildschirm („Am Terminal zeigen“), mit eigenem Schlüssel je Terminal und Prüfung des Zertifikats per Fingerabdruck
 - **Admin-Seite** über HTTPS im Netz (`https://<IP>:8443`) und am Terminal selbst über das Zahnrad, mit Bildschirmtastatur
 - **Netzwerk**: feste IP-Adresse mit 2-Minuten-Rückfallfrist, WLAN und Bluetooth abschaltbar, NTP
 - **Betriebssicherheit**: schreibgeschütztes System (Overlay), eigene Datenpartition, signierte Programm-Updates mit automatischem Rückfall, Sicherung des ganzen Datenträgers auf USB, Wartungsmodus
@@ -82,7 +83,7 @@ sudo ./install.sh
 ## Dokumentation
 
 - [Inbetriebnahme](docs/inbetriebnahme.md): Abbild bauen, Karte schreiben, erster Start, Einrichtung, Selbst- und Dauerprüfung, mehrere Terminals, install.sh
-- [Betrieb](docs/betrieb.md): Update, Rückfall, Sicherung, Wartung, feste IP, Web-Kacheln, Fehlersuche
+- [Betrieb](docs/betrieb.md): Update, Rückfall, Sicherung, Wartung, feste IP, Web-Kacheln, PDH-Fernsteuerung, Fehlersuche
 - [Entscheidungen](docs/entscheidungen.md): Begründungen der technischen Entscheidungen
 
 ## Für Entwickler
@@ -138,6 +139,7 @@ Kiosk system for HMI terminals on the **Raspberry Pi 5**. A touchscreen shows ti
 - **Web tiles** for Grafana dashboards and HMI web pages; navigation restricted to the same server, logins are kept
 - **Multiple terminals**: takeover, lock and priority negotiated directly between devices, no central server
 - **Permanent display** of one HMI, optionally without the bar, with return on inactivity
+- **PDH remote control**: PDH opens an HMI on this screen ("Am Terminal zeigen"), with a per-terminal key and certificate pinning by fingerprint
 - **Admin page** over HTTPS on the network (`https://<IP>:8443`) and on the terminal itself via the gear icon, with on-screen keyboard
 - **Network**: static IP with a 2-minute rollback window, Wi-Fi and Bluetooth can be disabled, NTP
 - **Robustness**: read-only system (overlay), separate data partition, signed program updates with automatic rollback, full-disk backup to USB, maintenance mode
@@ -207,7 +209,7 @@ sudo ./install.sh
 ## Documentation (German)
 
 - [Inbetriebnahme](docs/inbetriebnahme.md) – building the image, flashing, first boot, setup, self-test and soak test, multiple terminals, install.sh
-- [Betrieb](docs/betrieb.md) – updates, rollback, backup, maintenance, static IP, web tiles, troubleshooting
+- [Betrieb](docs/betrieb.md) – updates, rollback, backup, maintenance, static IP, web tiles, PDH remote control, troubleshooting
 - [Entscheidungen](docs/entscheidungen.md) – rationale for technical decisions
 
 ## For developers

@@ -6,7 +6,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung und
 
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen
-3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln)
+3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
 4. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -365,6 +365,34 @@ Einrichten: Admin-Seite → **HMIs** → **Webseite anlegen** (oder im Formular 
 - **Nach einer Änderung:** Eine neue oder geänderte Adresse lässt sich erst öffnen, wenn der Helfer die Richtlinie geschrieben hat (meist sofort). Gelingt das 5 s lang nicht, steht auf der Kachelseite „Die Freigabe für „…“ steht noch nicht in der Chromium-Richtlinie“; die Daueranzeige versucht es erneut.
 
 Technik: Jede geöffnete Web-Kachel ist ein eigener Chromium-Prozess im App-Fenster (`--app=<Adresse>`, Profil `<Daten>/web-profile`, Profilordner und Klasse `hmi-kiosk-web`). Die Fensterregeln (labwc `chrome-*-hmi-kiosk-web`, openbox `class="hmi-kiosk-web"`) legen es ohne Rahmen unter die Leiste. Die Chromium-Richtlinie in `/etc/chromium/policies/managed/hmi-kiosk.json` schreibt der root-Helfer: bei jeder Änderung der Web-Kacheln (Befehl `set-web-origins`) und beim Start vor dem Kiosk-Dienst (`hmi-kiosk-helper web-policy` aus `/data/system/web-origins`), weil `/etc` auf dem Abbild bei jedem Start aus dem Paket kommt. Fest erlaubt bleiben immer die Kachelseite (`127.0.0.1:8080`, `localhost:8080`) und die Admin-Seite am Terminal (`127.0.0.1:8081`, `localhost:8081`). Chromium liest die geänderte Richtlinie im Lauf nach, ein Neustart ist nicht nötig. Schlägt das Schreiben fehl (Helfer nicht erreichbar), steht im Protokoll „Chromium-Richtlinie für Web-Kacheln nicht geschrieben“, und der Dienst versucht es alle 30 s erneut; eine Web-Kachel mit neuer Adresse öffnet bis dahin nicht (Hinweis auf der Kachelseite).
+
+### PDH-Fernsteuerung (HMI aus PDH am Terminal zeigen)
+
+PDH kann über die Admin-Adresse des Terminals (`https://<IP>:8443`) ein HMI auf dem **Bildschirm dieses Terminals** öffnen („Am Terminal zeigen“ bzw. „Am Terminal bedienen“) und wieder schließen. Die Schnittstelle (Version 1) steht in `docs/superpowers/specs/2026-11-09-pdh-integration.md`.
+
+Einrichten am Terminal: Admin-Seite → **Netzwerk** → **Fernsteuerung (PDH)**.
+
+1. **Schlüssel erzeugen** drücken. Der Schlüssel (`hmik_…`) wird **nur dieses eine Mal** angezeigt; gespeichert wird nur sein SHA-256. Sofort in PDH unter **Kiosk-Terminals** beim passenden Terminal eintragen. Geht er verloren, einfach neu erzeugen.
+2. Den **Fingerabdruck** von derselben Seite in PDH eintragen. PDH prüft damit das selbstsignierte HTTPS-Zertifikat (SHA-256 über den öffentlichen Schlüssel); eine Zertifizierungsstelle ist nicht nötig. Der Fingerabdruck bleibt gleich, wenn das Terminal sein Zertifikat erneuert (neue IP-Adresse, Ablauf). Er ändert sich nur, wenn die Schlüsseldatei verloren geht oder das Gerät im Wartungsmodus **als neues Terminal** eingerichtet wird; dann in PDH neu eintragen. Als **Ersatz** eingerichtet, bleiben Fingerabdruck und Schlüssel gleich.
+3. In PDH **Verbindung prüfen**.
+
+- **Neuen Schlüssel erzeugen** macht den alten sofort ungültig. **Aus** löscht ihn; PDH erhält dann „Schlüssel falsch“.
+- **Firewall:** PDH-Server → Terminal, TCP **8443** freigeben (derselbe Port wie Admin-Seite und Terminal-Abstimmung). Kachelseite (8080) und Admin-Seite am Terminal (8081) beantworten keine Fernbefehle.
+- **Falscher Schlüssel:** Nach 5 Fehlversuchen sperrt das Terminal Fernbefehle **von dieser Quelladresse** für 5 Minuten (Antwort 429), wie die Admin-Anmeldung. Die Admin-Anmeldung selbst und andere Absender bleiben frei.
+- **Belegt:** Ist am Terminal eine Sitzung offen (auch die Daueranzeige oder ihr Neuverbinden), lehnt es ab; PDH zeigt „belegt“ mit HMI und Beginn. Startet oder endet gerade eine Sitzung, läuft der Wartungsmodus, eine Dauerprüfung, eine Sicherung oder ist die Admin-Seite am Terminal offen, meldet es „nicht bereit“ (503).
+- **Welche Sitzung:** Gibt es eine VNC-Kachel mit gleichem Host und Port, öffnet das Terminal **diese** und stimmt sich wie beim Antippen mit den anderen Terminals ab. Hält ein anderes Terminal das HMI, heißt das „belegt“ (PDH übernimmt nie; Mitschauen bei einer Daueranzeige geht nur zum Ansehen). Ohne passende Kachel startet eine nur lokale Sitzung ohne Abstimmung. Passwort und Modus kommen immer von PDH (**ansehen** = nur ansehen); ein von PDH falsch übergebenes Passwort markiert keine Kachel.
+- Die Leiste zeigt „<Label> – von PDH: <Benutzer>“. **Zurück** und die Rückkehr bei Inaktivität gelten wie sonst; danach startet eine eingestellte Daueranzeige wieder. PDH kann nur eine **von PDH** geöffnete Sitzung schließen.
+- **Protokoll:** Jeder Befehl steht mit Label, Benutzer, Modus und Quelladresse im Protokoll (`Fernsteuerung (PDH): …`), das Sitzungsprotokoll mit Modus „PDH, nur ansehen“ bzw. „PDH, bedienen“. Das VNC-Passwort wird nie gespeichert oder protokolliert; es liegt nur für die Dauer der Sitzung im RAM-Profil des VNC-Clients.
+- **Export/Import:** Der Schlüssel gehört zu diesem Terminal. Der Export enthält ihn nicht, der Import ändert ihn nicht.
+
+#### PDH-Terminalmodus (PDH als Kachel)
+
+Damit Bediener am Terminal selbst in PDH arbeiten:
+
+1. In PDH einen **System-Benutzer** für das Terminal anlegen (nur die Rechte, die am Terminal gebraucht werden).
+2. Am Terminal eine **Web-Kachel** mit der PDH-Adresse anlegen (siehe Web-Kacheln oben), z. B. `https://pdh.werk/`. PDH muss ein Zertifikat haben, dem das Terminal vertraut, oder im Werksnetz über `http://` laufen; Anmeldung und Anmeldeserver müssen auf demselben Server liegen.
+3. Die Kachel einmal öffnen und als System-Benutzer anmelden. Die Anmeldung bleibt im Web-Profil des Terminals (Cookie mit Ablaufdatum nötig).
+4. Personen melden sich für Aktionen in PDH per Karte oder Override an (vorhandenes PDH-Konzept).
 
 ## 4. Fehlersuche
 
