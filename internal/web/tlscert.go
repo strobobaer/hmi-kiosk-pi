@@ -207,4 +207,3 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 }
 
 func mkdirCert(dir string) error { return os.MkdirAll(dir, 0o700) }
-

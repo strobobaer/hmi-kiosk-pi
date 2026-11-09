@@ -140,10 +140,10 @@ func TestRemoteKeyFormatAndHash(t *testing.T) {
 func TestRemoteAuthRequired(t *testing.T) {
 	e := newRemoteEnv(t)
 	for name, auth := range map[string]string{
-		"ohne":          "",
-		"falsch":        "Bearer hmik_falsch",
-		"ohne Bearer":   e.key,
-		"Basic":         "Basic " + e.key,
+		"ohne":           "",
+		"falsch":         "Bearer hmik_falsch",
+		"ohne Bearer":    e.key,
+		"Basic":          "Basic " + e.key,
 		"Hash statt Key": "Bearer " + e.cfg.Admin.RemoteKeyHash,
 	} {
 		for _, p := range []struct{ m, path string }{{"GET", "/api/remote/v1/status"}, {"POST", "/api/remote/v1/open"}, {"POST", "/api/remote/v1/close"}} {
@@ -296,24 +296,24 @@ func TestRemoteOpenValidation(t *testing.T) {
 	e := newRemoteEnv(t)
 	repl := func(old, nw string) string { return strings.Replace(validOpen, old, nw, 1) }
 	cases := map[string]string{
-		"kein JSON":         "host=x",
-		"unbekanntes Feld":  repl(`"user"`, `"extra":1,"user"`),
-		"zwei Objekte":      validOpen + validOpen,
-		"Host leer":         repl(`"10.1.2.3"`, `""`),
-		"Host mit Leerzeichen": repl(`"10.1.2.3"`, `"10.1.2.3 x"`),
+		"kein JSON":              "host=x",
+		"unbekanntes Feld":       repl(`"user"`, `"extra":1,"user"`),
+		"zwei Objekte":           validOpen + validOpen,
+		"Host leer":              repl(`"10.1.2.3"`, `""`),
+		"Host mit Leerzeichen":   repl(`"10.1.2.3"`, `"10.1.2.3 x"`),
 		"Host mit Zeilenumbruch": repl(`"10.1.2.3"`, `"10.1.2.3\nx"`),
-		"Port 0":            repl(`5900`, `0`),
-		"Port zu groß":      repl(`5900`, `65536`),
-		"Port als Text":     repl(`5900`, `"5900"`),
-		"Port fehlt":        repl(`"port":5900,`, ``),
-		"Passwort zu lang":  repl(`"geheim"`, `"`+strings.Repeat("ä", 33)+`"`),
-		"Modus unbekannt":   repl(`"view"`, `"admin"`),
-		"Modus fehlt":       repl(`"mode":"view",`, ``),
-		"Label fehlt":       repl(`"label":"Linie 3 / Presse 2",`, ``),
-		"Label Steuerzeichen": repl(`Linie 3`, `Linie\u00073`),
-		"Label zu lang":     repl(`Linie 3 / Presse 2`, strings.Repeat("x", 121)),
-		"Benutzer leer":     repl(`"M. Muster"`, `""`),
-		"zu groß":           repl(`"M. Muster"`, `"`+strings.Repeat("x", 5000)+`"`),
+		"Port 0":                 repl(`5900`, `0`),
+		"Port zu groß":           repl(`5900`, `65536`),
+		"Port als Text":          repl(`5900`, `"5900"`),
+		"Port fehlt":             repl(`"port":5900,`, ``),
+		"Passwort zu lang":       repl(`"geheim"`, `"`+strings.Repeat("ä", 33)+`"`),
+		"Modus unbekannt":        repl(`"view"`, `"admin"`),
+		"Modus fehlt":            repl(`"mode":"view",`, ``),
+		"Label fehlt":            repl(`"label":"Linie 3 / Presse 2",`, ``),
+		"Label Steuerzeichen":    repl(`Linie 3`, `Linie\u00073`),
+		"Label zu lang":          repl(`Linie 3 / Presse 2`, strings.Repeat("x", 121)),
+		"Benutzer leer":          repl(`"M. Muster"`, `""`),
+		"zu groß":                repl(`"M. Muster"`, `"`+strings.Repeat("x", 5000)+`"`),
 	}
 	for name, body := range cases {
 		w := e.call("POST", "/api/remote/v1/open", body)

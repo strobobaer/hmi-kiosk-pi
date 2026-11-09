@@ -76,8 +76,8 @@ type attempt struct {
 	barHidden bool // beim Start festgelegt: automatische Daueranzeige mit ausgeblendeter Leiste
 	confirmed bool // Rückfrage ist bejaht, nicht erneut fragen
 	watch     bool
-	web       bool // Web-Kachel: lokal, keine Abstimmung mit anderen Terminals
-	adHoc     bool // PDH-Sitzung ohne passende Kachel: lokal, keine Abstimmung
+	web       bool        // Web-Kachel: lokal, keine Abstimmung mit anderen Terminals
+	adHoc     bool        // PDH-Sitzung ohne passende Kachel: lokal, keine Abstimmung
 	remote    *remoteInfo // von PDH geöffnet
 	since     time.Time
 	decision  coord.Decision
