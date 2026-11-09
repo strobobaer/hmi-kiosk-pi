@@ -196,7 +196,7 @@ func TestBackToKioskOnlyOnTerminal(t *testing.T) {
 	body := term.get("/admin/hmis").Body.String()
 	wantContains(t, body, "Zurück zum Kiosk", `action="/admin/local/back"`, `src="/admin/local.js"`, `src="/keyboard.js"`, `data-idle="300"`)
 	login := e.terminal().get("/admin/login").Body.String()
-	wantContains(t, login, "Zurück zum Kiosk", `href="http://127.0.0.1:8080/"`, `data-osk="auto"`)
+	wantContains(t, login, "Zurück zum Kiosk", `action="/admin/local/back"`, `data-osk="auto"`)
 
 	remote := e.login().get("/admin/hmis").Body.String()
 	wantNotContains(t, remote, "Zurück zum Kiosk", "/admin/local", "keyboard.js", "data-idle")
@@ -262,19 +262,83 @@ func TestLocalAdminReportsActivity(t *testing.T) {
 	e := newEnv(t)
 	var active atomic.Int32
 	e.a.d.LocalActive = func() { active.Add(1) }
-	e.terminal().get("/admin/login")
-	if active.Load() == 0 {
-		t.Fatal("Aufruf am Terminal nicht gemeldet")
+	count := func() int32 { return active.Load() }
+
+	// Ohne Sitzung zählen weder Unterseiten (CSS, Bilder) noch Abrufe fremder Seiten.
+	anon := e.terminal()
+	anon.get("/admin/admin.css")
+	anon.get("/admin/login")
+	for _, site := range []string{"cross-site", "same-site"} {
+		for _, mode := range []string{"no-cors", "cors"} {
+			serveLocal(e, localReq(http.MethodGet, "127.0.0.1:8081", "/admin/login", map[string]string{"Sec-Fetch-Site": site, "Sec-Fetch-Mode": mode}))
+		}
 	}
-	n := active.Load()
+	serveLocal(e, localReq(http.MethodGet, "127.0.0.1:8081", "/admin/login", map[string]string{"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate"}))
+	if n := count(); n != 0 {
+		t.Fatalf("%d Aufrufe ohne Sitzung gezählt", n)
+	}
+	// Das Zahnrad (Navigation von der Kachelseite) zählt, ebenso eine Sitzung am Terminal.
+	serveLocal(e, localReq(http.MethodGet, "127.0.0.1:8081", "/admin/", map[string]string{"Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate"}))
+	if count() != 1 {
+		t.Fatal("Navigation über das Zahnrad nicht gezählt")
+	}
+	b := e.terminalLogin()
+	n := count()
+	b.get("/admin/hmis")
+	if count() <= n {
+		t.Fatal("Aufruf mit Sitzung nicht gezählt")
+	}
+	// Mit Sitzung zählt ein Abruf fremder Seiten trotzdem nicht.
+	n = count()
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/admin/hmis", nil)
+	req.Host = "127.0.0.1:8081"
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	req.Header.Set("Sec-Fetch-Mode", "no-cors")
+	for k, v := range b.jar {
+		req.AddCookie(&http.Cookie{Name: k, Value: v})
+	}
+	serveLocal(e, req)
+	if count() != n {
+		t.Fatal("fremder Abruf mit Sitzung gezählt")
+	}
 	e.browser().get("/admin/login")
-	if active.Load() != n {
-		t.Fatal("HTTPS-Aufruf zählt als Terminal")
+	e.login().get("/admin/hmis")
+	serveLocal(e, localReq(http.MethodGet, "evil.example:8081", "/admin/hmis", nil))
+	if count() != n {
+		t.Fatal("HTTPS oder abgelehnter Host zählt als Terminal")
 	}
-	serveLocal(e, localReq(http.MethodGet, "evil.example:8081", "/admin/login", nil))
-	if active.Load() != n {
-		t.Fatal("abgelehnter Host zählt als Terminal")
+}
+
+func TestLocalBackWorksWithoutValidSession(t *testing.T) {
+	e := newEnv(t)
+	var left atomic.Int32
+	e.a.d.LocalLeft = func() { left.Add(1) }
+	b := e.terminalLogin()
+	tok := csrfRe.FindStringSubmatch(b.get("/admin/hmis").Body.String())[1]
+	e.clock.advance(localSessionIdle + time.Minute)
+	r := b.postRaw("/admin/local/back", url.Values{"csrf": {tok}})
+	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL {
+		t.Fatalf("Zurück mit abgelaufener Sitzung: %d %q", r.Code, r.Header().Get("Location"))
 	}
+	if left.Load() != 1 {
+		t.Fatal("Rückkehr nicht gemeldet")
+	}
+	// Auch ganz ohne Cookie (Anmeldeseite).
+	r = e.terminal().postRaw("/admin/local/back", nil)
+	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL {
+		t.Fatalf("Zurück ohne Sitzung: %d %q", r.Code, r.Header().Get("Location"))
+	}
+	// Fremder Ursprung bleibt abgelehnt.
+	w := serveLocal(e, localReq(http.MethodPost, "127.0.0.1:8081", "/admin/local/back", map[string]string{"Origin": "http://evil.example"}))
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("fremder Ursprung: %d", w.Code)
+	}
+}
+
+func TestLoginPageBackIsFormOnTerminal(t *testing.T) {
+	e := newEnv(t)
+	body := e.terminal().get("/admin/login").Body.String()
+	wantContains(t, body, `id="kiosk-back"`, `action="/admin/local/back"`)
 }
 
 func TestLocalAdminHasNoPeerAndRedirectsRoot(t *testing.T) {

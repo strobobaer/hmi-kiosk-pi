@@ -27,7 +27,6 @@ var maintenancePaths = map[string]bool{
 	pathMaintenance + "/new":     true,
 	pathMaintenance + "/cancel":  true,
 	"/admin/logout":              true,
-	pathLocalBack:                true,
 	"/admin/system/log":          true,
 }
 

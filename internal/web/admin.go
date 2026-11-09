@@ -219,7 +219,6 @@ func (a *admin) routes() []route {
 
 		get("/admin/{$}", func(w http.ResponseWriter, r *http.Request, _ sessionRef) { redirect(w, r, "/admin/hmis") }),
 		post("/admin/logout", a.handleLogout),
-		post(pathLocalBack, a.handleLocalBack),
 
 		get("/admin/hmis", a.handleHMIList),
 		get("/admin/hmis/new", a.handleHMINewForm),
@@ -328,6 +327,9 @@ func (a *admin) wrap(rt route) http.Handler {
 		if !ok {
 			redirect(w, r, "/admin/login")
 			return
+		}
+		if onTerminal(r) && !foreignFetch(r) {
+			a.localActive()
 		}
 		forced := a.repairForced(cfg)
 		if forced && !repairPaths[r.URL.Path] {

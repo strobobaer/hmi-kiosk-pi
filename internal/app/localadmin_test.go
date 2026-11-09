@@ -81,6 +81,10 @@ func (f *fixture) adminLocal(method, path, origin string) (int, string, http.Hea
 	req.Host = "127.0.0.1:8081"
 	if origin != "" {
 		req.Header.Set("Origin", origin)
+	} else {
+		// wie Chromium nach dem Antippen des Zahnrads auf der Kachelseite
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+		req.Header.Set("Sec-Fetch-Site", "same-site")
 	}
 	resp, err := insecureClient().Do(req)
 	if err != nil {
@@ -231,5 +235,25 @@ func TestLocalOnlyAPIsRejectForgedHostFromNetwork(t *testing.T) {
 	}
 	if !f.s.presence.active() {
 		t.Fatal("Aufruf aus dem Netz beendet die Admin-Seite am Terminal")
+	}
+}
+
+func TestForeignRequestsDoNotHoldLocalAdminOpen(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	for _, path := range []string{"/admin/admin.css", "/admin/login", "/admin/setup"} {
+		req, _ := http.NewRequest(http.MethodGet, "http://"+f.bound.LocalAdmin+path, nil)
+		req.Host = "127.0.0.1:8081"
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Sec-Fetch-Mode", "no-cors")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	if msg := f.s.sessionBlocked(); msg != "" {
+		t.Fatalf("Abruf einer fremden Seite sperrt Sitzungen: %q", msg)
 	}
 }

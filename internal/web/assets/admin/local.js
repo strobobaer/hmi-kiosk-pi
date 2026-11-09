@@ -24,15 +24,23 @@
     document.addEventListener(ev, mark, { passive: true, capture: true });
   });
 
+  // Zurück zum Kiosk wirkt auch mit abgelaufener Sitzung (Server), also direkt zur Kachelseite.
+  var leaving = false;
   function leave() {
+    if (leaving) { return; }
+    leaving = true;
     forget();
     var back = document.getElementById("kiosk-back");
-    if (back && back.tagName === "FORM") { back.submit(); return; }
+    if (back) { back.submit(); return; }
     location.href = body.dataset.kiosk;
   }
 
   var back = document.getElementById("kiosk-back");
-  if (back) { back.addEventListener("submit", forget); back.addEventListener("click", forget); }
+  if (back) { back.addEventListener("submit", forget); }
+
+  // Nach dem Ablauf auf eine andere Seite gekommen (z. B. Anmeldeseite nach abgelaufener
+  // Sitzung): sofort zurück, nicht noch einmal 5 Minuten warten.
+  if (Date.now() - last() >= idle) { leave(); return; }
 
   setInterval(function () {
     if (Date.now() - last() >= idle) { leave(); }

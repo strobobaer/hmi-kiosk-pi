@@ -44,6 +44,9 @@ func (a *admin) buildLocal() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", a.h)
+	// Zurück zum Kiosk geht immer, auch mit abgelaufener oder ohne Sitzung: Sonst führte
+	// die Inaktivität erst auf die Anmeldeseite und von dort erst nach weiteren 5 Minuten zurück.
+	mux.HandleFunc("POST "+pathLocalBack, a.handleLocalBack)
 	mux.Handle("POST /api/keyboard/{action}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		KeyboardHandler(a.d.Keyboard).ServeHTTP(w, r)
 	}))
@@ -68,8 +71,9 @@ func (a *admin) buildLocal() http.Handler {
 			http.Error(w, "Anfrage nicht erlaubt", http.StatusForbidden)
 			return
 		}
-		if a.d.LocalActive != nil {
-			a.d.LocalActive()
+		// Das Zahnrad (Navigation von der Kachelseite) öffnet die Seite auch ohne Sitzung.
+		if trustedNavigation(r) {
+			a.localActive()
 		}
 		mux.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), terminalKey{}, true)))
 	})
@@ -88,14 +92,44 @@ func localAdminOrigin(r *http.Request) bool {
 	return false
 }
 
-// handleLocalBack beendet die Sitzung am Terminal und kehrt zur Kachelseite zurück.
-// Das Skript der Seite nutzt denselben Weg nach 5 Minuten ohne Eingabe.
-func (a *admin) handleLocalBack(w http.ResponseWriter, r *http.Request, s sessionRef) {
-	if !onTerminal(r) {
-		notFound(w)
-		return
+// trustedNavigation: Chromium öffnet die Seite als Dokument, nicht von einer fremden Seite
+// aus (Sec-Fetch-Site none, same-origin oder same-site wie die Kachelseite an 8080).
+func trustedNavigation(r *http.Request) bool {
+	if r.Header.Get("Sec-Fetch-Mode") != "navigate" {
+		return false
 	}
-	a.sessions.remove(s)
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "none", "same-origin", "same-site":
+		return true
+	}
+	return false
+}
+
+// foreignFetch: Abruf von einer anderen Seite (Bild, fetch, Formular einer Web-Kachel).
+// Er hält die Admin-Seite am Terminal nicht offen, auch wenn das Cookie mitkommt.
+func foreignFetch(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "cross-site":
+		return true
+	case "same-site":
+		return r.Header.Get("Sec-Fetch-Mode") != "navigate"
+	}
+	return false
+}
+
+func (a *admin) localActive() {
+	if a.d.LocalActive != nil {
+		a.d.LocalActive()
+	}
+}
+
+// handleLocalBack beendet eine Sitzung am Terminal, falls es eine gibt, und kehrt immer
+// zur Kachelseite zurück. Das Skript der Seite nutzt denselben Weg nach 5 Minuten ohne
+// Eingabe. Host und Ursprung hat buildLocal geprüft.
+func (a *admin) handleLocalBack(w http.ResponseWriter, r *http.Request) {
+	if s, ok := a.sessionFrom(r); ok {
+		a.sessions.remove(s)
+	}
 	name, _ := cookieNames(true)
 	clearCookie(w, name, false)
 	if a.d.LocalLeft != nil {
