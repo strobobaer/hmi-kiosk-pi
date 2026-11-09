@@ -4,11 +4,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
 )
 
@@ -196,5 +198,38 @@ func TestGearOnlyWhileLocalAdminRuns(t *testing.T) {
 	}
 	if _, body := g.local(http.MethodGet, "/"); strings.Contains(body, `class="gear"`) {
 		t.Fatal("Zahnrad ohne Admin-Seite am Terminal")
+	}
+}
+
+func TestLocalOnlyAPIsRejectForgedHostFromNetwork(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(func(c *config.Config) { c.Kiosk.NetworkTiles = true })
+	kb := &recordingKeyboard{}
+	f.startWith(func(s *service) { s.kbd = kb })
+	f.adminLocal(http.MethodGet, "/admin/setup", "")
+	f.s.presence.touch()
+	h := f.s.localHandler()
+	for _, path := range []string{"/api/selftest/run", "/api/selftest/status", "/api/keyboard/show"} {
+		method := http.MethodPost
+		if strings.HasSuffix(path, "status") {
+			method = http.MethodGet
+		}
+		req := httptest.NewRequest(method, "http://127.0.0.1:8080"+path, nil)
+		req.Host, req.RemoteAddr = "127.0.0.1:8080", "192.168.1.20:4444"
+		req.Header.Set("Origin", "http://127.0.0.1:8080")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s aus dem Netz: %d", path, w.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8080/", nil)
+	req.Host, req.RemoteAddr = "127.0.0.1:8080", "192.168.1.20:4444"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if kb.got() != "" {
+		t.Fatalf("Tastatur aus dem Netz: %q", kb.got())
+	}
+	if !f.s.presence.active() {
+		t.Fatal("Aufruf aus dem Netz beendet die Admin-Seite am Terminal")
 	}
 }

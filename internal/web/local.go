@@ -122,7 +122,7 @@ func NewLocalWith(s SessionAPI, tiles func() []TileView, layout func() string, e
 	mux.Handle("POST /api/keyboard/{action}", onlyLocalHost(KeyboardHandler(ex.Keyboard)))
 	mux.HandleFunc("GET /selftest/touch", l.asset("selftest.html", "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /selftest.js", l.asset("selftest.js", "text/javascript; charset=utf-8"))
-	mux.HandleFunc("POST /api/selftest/touch", touchHit(ex.TouchHit))
+	mux.Handle("POST /api/selftest/touch", onlyLocalHost(touchHit(ex.TouchHit)))
 	mux.HandleFunc("GET /api/events", l.handleEvents)
 	mux.HandleFunc("POST /api/hmi/{id}/open", l.handleOpen)
 	mux.HandleFunc("POST /api/confirm", l.handleConfirm)
@@ -133,7 +133,7 @@ func NewLocalWith(s SessionAPI, tiles func() []TileView, layout func() string, e
 
 // SecureLocal setzt Host- und Origin-Prüfung der lokalen Seite vor weitere lokale
 // Routen. Sie gilt immer nur lokal, auch wenn die Kachelseite im Netz freigegeben ist.
-func SecureLocal(next http.Handler) http.Handler { return secure(next) }
+func SecureLocal(next http.Handler) http.Handler { return secure(onlyLocalHost(next)) }
 
 func secure(next http.Handler) http.Handler { return secureWith(next, nil) }
 
@@ -203,10 +203,22 @@ func (l *local) asset(name, ctype string) http.HandlerFunc {
 	}
 }
 
-// onlyLocalHost lässt nur die lokalen Namen der Kachelseite zu.
+// fromTerminal: lokaler Name als Host und eine Verbindung über Loopback. Der Host allein
+// reicht nicht: Bei Netzfreigabe kann ein Client im Netz Host und Origin vortäuschen.
+func fromTerminal(r *http.Request) bool {
+	return allowedHosts[r.Host] && loopbackPeer(r)
+}
+
+// loopbackPeer: Die Gegenstelle ist eine Loopback-Adresse; Unlesbares gilt als fremd.
+func loopbackPeer(r *http.Request) bool {
+	ap, err := netip.ParseAddrPort(r.RemoteAddr)
+	return err == nil && ap.Addr().Unmap().IsLoopback()
+}
+
+// onlyLocalHost lässt nur Anfragen vom Terminal selbst zu (fromTerminal).
 func onlyLocalHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !allowedHosts[r.Host] {
+		if !fromTerminal(r) {
 			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
 			return
 		}
@@ -266,7 +278,7 @@ func (l *local) handleTiles(w http.ResponseWriter, r *http.Request) {
 	if l.layout != nil {
 		layout = l.layout()
 	}
-	if allowedHosts[r.Host] && l.ex.TilesShown != nil {
+	if fromTerminal(r) && l.ex.TilesShown != nil {
 		l.ex.TilesShown()
 	}
 	render(w, l.page, "tiles.html", tilesPage{
