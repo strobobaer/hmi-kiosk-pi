@@ -297,6 +297,9 @@ func (s *service) buildParts(cfg config.Config, key []byte) {
 		MarkAuthFailed: s.markAuthFailed,
 		Web:            s.webProfile,
 		WebReady:       s.webReady,
+		Resolve: func(ctx context.Context, host string) ([]net.IP, error) {
+			return net.DefaultResolver.LookupIP(ctx, "ip", strings.Trim(host, "[]"))
+		},
 	})
 	s.reach = newReachability(
 		func() []config.HMI { return s.config().HMIs },

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -56,6 +57,9 @@ type Deps struct {
 	// WebReady wartet, bis die Chromium-Richtlinie den Ursprung der Web-Kachel erlaubt (nil: sofort).
 	// Läuft außerhalb der Zustands-Goroutine; ein Fehler bricht den Start mit Hinweis ab.
 	WebReady func(ctx context.Context, h config.HMI) error
+	// Resolve löst einen Rechnernamen auf (IP-Literale ergeben sich selbst); nil: nur Vergleich der Schreibweise.
+	// Für PDH-Befehle: Kachel auch bei anderer Schreibweise finden, Ziel auf dem Terminal selbst ablehnen.
+	Resolve func(ctx context.Context, host string) ([]net.IP, error)
 }
 
 // ErrPasswordMissing meldet ein VNC-Passwort, das fehlt oder sich nicht öffnen lässt.
@@ -340,13 +344,12 @@ func (m *Manager) buildSnapshot() Snapshot {
 	switch {
 	case m.cur != nil:
 		s.HMI, s.HMIName = m.cur.hmi.ID, m.cur.hmi.Name
-		s.ViewOnly = m.cur.hmi.ViewOnly || m.cur.watch
+		s.ViewOnly = m.cur.viewOnly()
 		s.HideBar = m.cur.barHidden
 		s.Web = m.cur.web
 		s.Since = m.cur.since
 		if r := m.cur.remote; r != nil {
 			s.HMIName, s.Remote, s.RemoteLabel = r.display(), true, r.label
-			s.ViewOnly = r.viewOnly || m.cur.watch
 		}
 		if m.state == StateConfirming && m.cur.decision.Holder != nil {
 			h := *m.cur.decision.Holder

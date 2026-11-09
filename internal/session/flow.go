@@ -135,15 +135,16 @@ func (m *Manager) onProbe(a *attempt, r rfb.ProbeResult) {
 	if m.cur != a {
 		return
 	}
+	if a.remote != nil {
+		m.onRemoteProbe(a, r)
+		return
+	}
 	switch {
 	case !r.Reachable:
 		m.end(a, fmt.Sprintf("„%s“ nicht erreichbar", a.hmi.Name), false)
 	case r.Locked:
 		a.locked = true
 		m.end(a, lockoutNotice(r.Err), false)
-	case r.AuthRejected && a.remote != nil:
-		// Das Passwort kam von PDH, nicht aus der Kachel: nichts markieren.
-		m.end(a, remoteAuthNotice, false)
 	case r.AuthRejected:
 		a.authRejected = true
 		if m.d.MarkAuthFailed != nil {
@@ -327,6 +328,7 @@ func (m *Manager) end(a *attempt, notice string, operator bool) {
 		m.answer(a, RemoteResult{Outcome: RemoteNotReady, Message: msg})
 		a.remote.password = ""
 	}
+	a.password = ""
 	m.cleanupRAM(a)
 	m.release(a)
 	m.reportEnd(a, notice, operator)
@@ -364,7 +366,7 @@ func (m *Manager) reportEnd(a *attempt, notice string, operator bool) {
 		Reason:    reason,
 	}
 	if r := a.remote; r != nil {
-		e.Remote, e.HMIName, e.ViewOnly = true, r.display(), r.viewOnly
+		e.Remote, e.HMIName, e.ViewOnly = true, r.display(), r.viewOnly || a.hmi.ViewOnly
 	}
 	m.d.OnEnd(e)
 }
@@ -505,7 +507,8 @@ func (m *Manager) launchWeb(a *attempt, p client.Profile) {
 // viewOnly: Bei PDH gilt der Modus des Befehls, sonst die Einstellung der Kachel; Mitschauen immer.
 func (a *attempt) viewOnly() bool {
 	if a.remote != nil {
-		return a.remote.viewOnly || a.watch
+		// Eine Kachel „nur ansehen“ bleibt es, auch wenn PDH bedienen will.
+		return a.remote.viewOnly || a.hmi.ViewOnly || a.watch
 	}
 	return a.hmi.ViewOnly || a.watch
 }

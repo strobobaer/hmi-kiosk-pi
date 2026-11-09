@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"sync"
@@ -227,17 +228,19 @@ func (p *fakeProfile) last() client.Spec {
 }
 
 type harness struct {
-	t        *testing.T
-	m        *Manager
-	clk      *fakeClock
-	coord    *fakeCoord
-	runner   *fakeRunner
-	profile  *fakeProfile
-	log      *eventLog
-	web      *fakeProfile // Web-Kacheln; nil heißt: nicht verfügbar
-	webReady func(context.Context, config.HMI) error
-	sub      <-chan Snapshot
-	tcp      atomic.Bool
+	t         *testing.T
+	m         *Manager
+	clk       *fakeClock
+	coord     *fakeCoord
+	runner    *fakeRunner
+	profile   *fakeProfile
+	log       *eventLog
+	web       *fakeProfile // Web-Kacheln; nil heißt: nicht verfügbar
+	webReady  func(context.Context, config.HMI) error
+	resolve   func(context.Context, string) ([]net.IP, error) // nil: keine Namensauflösung
+	probeGate chan struct{}                                   // gesetzt: die RFB-Prüfung wartet darauf
+	sub       <-chan Snapshot
+	tcp       atomic.Bool
 
 	mu          sync.Mutex
 	cfg         config.Config
@@ -346,7 +349,20 @@ func newHarness(t *testing.T, mutate func(*harness)) *harness {
 			}
 			return ""
 		},
-		Probe: func(context.Context, config.HMI, string) rfb.ProbeResult {
+		Resolve: func(ctx context.Context, host string) ([]net.IP, error) {
+			if h.resolve == nil {
+				return nil, errors.New("keine Auflösung")
+			}
+			return h.resolve(ctx, host)
+		},
+		Probe: func(ctx context.Context, _ config.HMI, _ string) rfb.ProbeResult {
+			if h.probeGate != nil {
+				select {
+				case <-h.probeGate:
+				case <-ctx.Done():
+					return rfb.ProbeResult{}
+				}
+			}
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			h.probes++

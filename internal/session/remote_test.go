@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -196,21 +198,6 @@ func TestRemoteOpenBlockedIsNotReady(t *testing.T) {
 	}
 }
 
-// Ein von PDH falsch übergebenes Passwort markiert die Kachel nicht.
-func TestRemoteWrongPasswordDoesNotMarkTile(t *testing.T) {
-	h := newHarness(t, func(h *harness) { h.probe = rfb.ProbeResult{Reachable: true, AuthRejected: true} })
-	if res := h.openRemote(remoteReq("10.0.0.1", 5900, false)); res.Outcome != RemoteOpened {
-		t.Fatalf("Ergebnis %+v", res)
-	}
-	h.waitNotice(StateTiles, "PDH")
-	h.mu.Lock()
-	marked := len(h.marked)
-	h.mu.Unlock()
-	if marked != 0 {
-		t.Fatal("Kachel als abgelehnt markiert")
-	}
-}
-
 func TestRemoteCloseOnlyClosesPDHSession(t *testing.T) {
 	h := newHarness(t, nil)
 	if h.m.CloseRemote() {
@@ -256,4 +243,192 @@ func TestRemoteSnapshotForLocalSessionHasNoRemote(t *testing.T) {
 	if s.Remote || s.RemoteLabel != "" || s.HMIName != "Presse" || s.Since.IsZero() {
 		t.Fatalf("Snapshot %+v", s)
 	}
+}
+
+// Ein falsches PDH-Passwort: Antwort erst nach der RFB-Prüfung, kein Client, keine Markierung der Kachel.
+func TestRemoteWrongPasswordAnswersInvalidWithoutClient(t *testing.T) {
+	for _, host := range []string{"10.0.0.1", "10.9.9.9"} {
+		h := newHarness(t, func(h *harness) { h.probe = rfb.ProbeResult{Reachable: true, AuthRejected: true} })
+		res := h.openRemote(remoteReq(host, 5900, false))
+		if res.Outcome != RemoteInvalid || !strings.Contains(res.Message, "VNC-Anmeldung am HMI fehlgeschlagen") {
+			t.Fatalf("%s: Ergebnis %+v", host, res)
+		}
+		s := h.waitState(StateTiles)
+		h.mu.Lock()
+		marked := len(h.marked)
+		h.mu.Unlock()
+		if marked != 0 || h.runner.count() != 0 || s.Notice != "" {
+			t.Fatalf("%s: markiert %d, Clients %d, Hinweis %q", host, marked, h.runner.count(), s.Notice)
+		}
+	}
+}
+
+func TestRemoteUnreachableAnswersNotReady(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.probe = rfb.ProbeResult{} })
+	res := h.openRemote(remoteReq("10.9.9.9", 5900, true))
+	if res.Outcome != RemoteNotReady || !strings.Contains(res.Message, "nicht erreichbar") || h.runner.count() != 0 {
+		t.Fatalf("Ergebnis %+v", res)
+	}
+}
+
+// „Geöffnet“ erst nach erfolgreicher Prüfung.
+func TestRemoteOpenedOnlyAfterProbe(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.probeGate = make(chan struct{}) })
+	done := make(chan RemoteResult, 1)
+	go func() { res, _ := h.m.OpenRemote(context.Background(), remoteReq("10.9.9.9", 5900, true)); done <- res }()
+	h.waitState(StateRequesting)
+	select {
+	case res := <-done:
+		t.Fatalf("Antwort vor der Prüfung: %+v", res)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(h.probeGate)
+	if res := <-done; res.Outcome != RemoteOpened {
+		t.Fatalf("Ergebnis %+v", res)
+	}
+}
+
+func TestRemoteOpenMatchesTileByResolvedAddress(t *testing.T) {
+	names := map[string][]net.IP{
+		"10.0.0.1":    {net.ParseIP("10.0.0.1")},
+		"hmi-3.local": {net.ParseIP("10.0.0.1")},
+		"presse.werk": {net.ParseIP("10.0.0.1")},
+	}
+	resolve := func(_ context.Context, host string) ([]net.IP, error) {
+		if ips, ok := names[host]; ok {
+			return ips, nil
+		}
+		return nil, errors.New("unbekannt")
+	}
+	// Anfrage per Name, Kachel per IP.
+	h := newHarness(t, func(h *harness) { h.resolve = resolve })
+	if res := h.openRemote(remoteReq("hmi-3.local", 5900, true)); res.Outcome != RemoteOpened {
+		t.Fatalf("Ergebnis %+v", res)
+	}
+	if s := h.waitState(StateStarting); s.HMI != "a" || h.log.count("request:a") != 1 {
+		t.Fatalf("Snapshot %+v, %v", s, h.log.all())
+	}
+	// Anfrage per IP, Kachel per Name.
+	h = newHarness(t, func(h *harness) {
+		h.resolve = resolve
+		h.cfg.HMIs[0].Host = "presse.werk"
+	})
+	h.openRemote(remoteReq("10.0.0.1", 5900, true))
+	if s := h.waitState(StateStarting); s.HMI != "a" {
+		t.Fatalf("Snapshot %+v", s)
+	}
+	// Nicht auflösbar: keine Kachel, nur lokal.
+	h = newHarness(t, func(h *harness) { h.resolve = resolve })
+	h.openRemote(remoteReq("gibtsnicht.werk", 5900, true))
+	if s := h.waitState(StateStarting); s.HMI != RemoteAdHocID {
+		t.Fatalf("Snapshot %+v", s)
+	}
+}
+
+func TestRemoteOpenRejectsLoopbackByResolution(t *testing.T) {
+	h := newHarness(t, func(h *harness) {
+		h.resolve = func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("127.0.1.1")}, nil }
+	})
+	res := h.openRemote(remoteReq("kiosk.werk", 5900, true))
+	if res.Outcome != RemoteInvalid || h.runner.count() != 0 {
+		t.Fatalf("Ergebnis %+v", res)
+	}
+}
+
+// Bricht PDH die Anfrage ab, entsteht keine Sitzung.
+func TestRemoteCancelledDuringCoordinationEndsAttempt(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.coord.gate = make(chan struct{}) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := h.m.OpenRemote(ctx, remoteReq("10.0.0.1", 5900, false)); done <- err }()
+	h.waitState(StateRequesting)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Fehler %v", err)
+	}
+	h.waitState(StateTiles)
+	close(h.coord.gate)
+	h.advance(2 * PollEvery)
+	if h.runner.count() != 0 || h.m.Snapshot().State != StateTiles {
+		t.Fatalf("Sitzung trotz Abbruch: %v", h.log.all())
+	}
+	if h.log.count("release:a") == 0 {
+		t.Fatalf("keine Freigabe: %v", h.log.all())
+	}
+}
+
+func TestRemoteCancelledDuringProbeEndsAttempt(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.probeGate = make(chan struct{}) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := h.m.OpenRemote(ctx, remoteReq("10.9.9.9", 5900, false)); done <- err }()
+	h.waitState(StateRequesting)
+	cancel()
+	<-done
+	h.waitState(StateTiles)
+	close(h.probeGate)
+	h.advance(2 * PollEvery)
+	if h.runner.count() != 0 {
+		t.Fatal("Client trotz Abbruch")
+	}
+}
+
+// Eine Kachel „nur ansehen“ bleibt es, auch wenn PDH bedienen will.
+func TestRemoteControlOnViewOnlyTileStaysViewOnly(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.cfg.HMIs[0].ViewOnly = true })
+	h.openRemote(remoteReq("10.0.0.1", 5900, false))
+	s := h.waitState(StateStarting)
+	if !s.ViewOnly || !h.profile.last().ViewOnly {
+		t.Fatalf("Snapshot %+v, Spec %+v", s, h.profile.last())
+	}
+}
+
+func TestRemoteCloseWhileRequesting(t *testing.T) {
+	h := newHarness(t, func(h *harness) { h.coord.gate = make(chan struct{}) })
+	done := make(chan RemoteResult, 1)
+	go func() {
+		res, _ := h.m.OpenRemote(context.Background(), remoteReq("10.0.0.1", 5900, false))
+		done <- res
+	}()
+	h.waitState(StateRequesting)
+	if !h.m.CloseRemote() {
+		t.Fatal("nicht geschlossen")
+	}
+	if res := <-done; res.Outcome == RemoteOpened {
+		t.Fatalf("Ergebnis %+v", res)
+	}
+	h.waitState(StateTiles)
+	close(h.coord.gate)
+	h.advance(2 * PollEvery)
+	if h.runner.count() != 0 {
+		t.Fatal("Client nach Schließen")
+	}
+}
+
+func TestRemoteSessionIgnoresLocalTap(t *testing.T) {
+	h := newHarness(t, nil)
+	h.openRemote(remoteReq("10.9.9.9", 5900, true))
+	h.waitState(StateStarting)
+	h.open("b")
+	h.sync()
+	if h.runner.count() != 1 || h.m.Snapshot().HMI != RemoteAdHocID {
+		t.Fatalf("Tippen während PDH-Sitzung: %v", h.log.all())
+	}
+}
+
+func TestRemoteTileSessionTakenOverByPeer(t *testing.T) {
+	h := newHarness(t, nil)
+	h.openRemote(remoteReq("10.0.0.1", 5900, false))
+	h.waitState(StateStarting)
+	h.coord.events <- coord.Event{HMI: "a", By: coord.Holder{Terminal: "t2", Name: "Nebenan"}}
+	h.waitNotice(StateTiles, "Übernommen von Nebenan")
+}
+
+func TestRemoteTileSessionEndsWhenTileHostChanges(t *testing.T) {
+	h := newHarness(t, nil)
+	h.openRemote(remoteReq("10.0.0.1", 5900, false))
+	h.waitState(StateStarting)
+	h.setConfig(func(c *config.Config) { c.HMIs[0].Host = "10.0.0.99" })
+	h.advance(PollEvery)
+	h.waitNotice(StateTiles, "geändert")
 }
