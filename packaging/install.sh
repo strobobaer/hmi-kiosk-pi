@@ -309,8 +309,11 @@ Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID"
 RequiresMountsFor=
 RequiresMountsFor=$DATA_DIR
 [Service]
+ExecStartPre=
+ExecStartPre=/bin/chgrp $KIOSK_USER /run/hmi-kiosk-helper
+ExecStartPre=-/usr/local/bin/hmi-kiosk-helper web-policy -state $DATA_DIR/system/web-origins
 ExecStart=
-ExecStart=/usr/local/bin/hmi-kiosk-helper -uid $KIOSK_UID -gid $(id -g "$KIOSK_USER") -socket $sock -root $DATA_DIR -ntp-state $DATA_DIR/system/ntp-server -net-saved $DATA_DIR/system/ethernet.json"
+ExecStart=/usr/local/bin/hmi-kiosk-helper -uid $KIOSK_UID -gid $(id -g "$KIOSK_USER") -socket $sock -root $DATA_DIR -ntp-state $DATA_DIR/system/ntp-server -net-saved $DATA_DIR/system/ethernet.json -web-origins $DATA_DIR/system/web-origins"
 
 	write_dropin hmi-kiosk-update-guard.service "# Von install.sh erzeugt: Datenordner dieses Systems.
 [Unit]

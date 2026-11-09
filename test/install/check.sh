@@ -87,6 +87,8 @@ check "Programm wvkbd-mobintl vorhanden" bash -c "command -v wvkbd-mobintl"
 pol=/etc/chromium/policies/managed/hmi-kiosk.json
 check "Chromium-Richtlinie erlaubt nur Kacheln (8080) und Admin am Terminal (8081)" bash -c "tr -d '\n\t' <$pol | tr -s ' ' | grep -Fq '\"URLAllowlist\": [\"http://127.0.0.1:8080\", \"http://localhost:8080\", \"http://127.0.0.1:8081\", \"http://localhost:8081\"]'"
 check "Chromium-Richtlinie sperrt alles andere" grep -Fq '"URLBlocklist": ["*"]' $pol
+check "Chromium-Richtlinie ohne Passwortmanager" grep -Fq '"PasswordManagerEnabled": false' $pol
+check "Fensterregel für Web-Kacheln (labwc und openbox)" bash -c "grep -Fq '<windowRule identifier=\"chrome-*-hmi-kiosk-web\"' /etc/hmi-kiosk/labwc/rc.xml && grep -Fq '<application class=\"hmi-kiosk-web\"' /etc/xdg/openbox/rc.xml"
 for c in rsync mkfs.vfat mkfs.ext4 sfdisk losetup partx resize2fs blkid findmnt; do
 	check "Programm $c vorhanden" bash -c "command -v $c"
 done
@@ -110,6 +112,9 @@ check "network-Drop-in nennt Datenordner und Datei der Ethernet-Einstellung" bas
 check "Helfer-Drop-in nennt -net-saved" grep -q -- "-net-saved $DATA/system/ethernet.json" /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf
 check "network in der Aktivierungsliste" grep -q 'UNITS=.*hmi-kiosk-network.service' /bundle/install.sh
 check "net-boot ohne Einstellung endet mit 0" /usr/local/bin/hmi-kiosk-helper net-boot -saved $DATA/system/ethernet.json
+check "Helfer-Drop-in schreibt die Web-Richtlinie aus dem Datenordner" bash -c "grep -q -- '^ExecStartPre=-/usr/local/bin/hmi-kiosk-helper web-policy -state $DATA/system/web-origins\$' /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf && grep -q -- '-web-origins $DATA/system/web-origins\$' /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf && grep -q '^ExecStartPre=/bin/chgrp hmikiosk /run/hmi-kiosk-helper\$' /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf"
+check "web-policy ohne gespeicherte Ursprünge endet mit 0 und lässt die Richtlinie" bash -c "a=\$(sha256sum <$pol); /usr/local/bin/hmi-kiosk-helper web-policy -state $DATA/system/web-origins && [ \"\$(sha256sum <$pol)\" = \"\$a\" ]"
+check "web-policy schreibt gespeicherte Ursprünge in die Richtlinie" bash -c "d=\$(mktemp -d) && chmod 755 \$d && mkdir -m 755 \$d/system && printf '[\"http://grafana:3000\"]\n' >\$d/system/web-origins && cp $pol \$d/pol.json && /usr/local/bin/hmi-kiosk-helper web-policy -policy \$d/pol.json -state \$d/system/web-origins && grep -Fq '\"http://.grafana:3000\"' \$d/pol.json && grep -Fq '\"http://127.0.0.1:8081\"' \$d/pol.json && rm -rf \$d"
 for t in arping ping; do
 	check "$t installiert" bash -c "command -v $t >/dev/null || test -x /usr/sbin/$t || test -x /usr/bin/$t"
 done

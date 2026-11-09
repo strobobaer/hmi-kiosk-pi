@@ -317,13 +317,21 @@ else
 	bad rc-openbox "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/openbox/rc.xml"
 fi
 
+if printf '%s' "$lw" | grep -Eq '<windowRule identifier="chrome-\*-hmi-kiosk-web"[^>]*serverDecoration="no"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
+	printf '%s' "$ob" | grep -Eq '<application class="hmi-kiosk-web"[^>]*> *<decor>no</decor> *<position force="yes"> *<x>0</x> *<y>48</y> *</position> *<maximized>yes</maximized>'; then
+	ok rc-web "Web-Kachel (app_id chrome-*-hmi-kiosk-web, WM_CLASS hmi-kiosk-web) ohne Rahmen bei 0,48, maximiert"
+else
+	bad rc-web "Fensterregel für Web-Kacheln fehlt (labwc chrome-*-hmi-kiosk-web, openbox class hmi-kiosk-web)"
+fi
+
 # Navigationssperre: Chromium-Richtlinie sperrt alles außer der Kachelseite und der Admin-Seite am Terminal (Loopback)
 pol="$R/etc/chromium/policies/managed/hmi-kiosk.json"
 pf=$(flat "$pol" 2>/dev/null || true)
 if printf '%s' "$pf" | grep -Fq '"URLBlocklist": ["*"]' &&
 	printf '%s' "$pf" | grep -Fq '"URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080", "http://127.0.0.1:8081", "http://localhost:8081"]' &&
+	printf '%s' "$pf" | grep -Fq '"PasswordManagerEnabled": false' &&
 	[ "$(stat -c %u:%g:%a "$pol")" = 0:0:644 ]; then
-	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), root 644"
+	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), kein Passwortmanager, root 644 (Web-Kacheln ergänzt der Helfer beim Start)"
 else
 	bad chromium-richtlinie "/etc/chromium/policies/managed/hmi-kiosk.json fehlt oder weicht ab (URLBlocklist [\"*\"], URLAllowlist nur Kachelseite und Admin-Seite am Terminal auf Loopback)"
 fi
@@ -348,6 +356,7 @@ if grep -Eq '^(PartOf|BindsTo)=.*hmi-kiosk\.service' "$S/$h"; then msg="$msg; $h
 unit_has "$h" "ExecStart=/usr/local/bin/hmi-kiosk-helper -uid $KIOSK_UID -gid $KIOSK_UID -socket /run/hmi-kiosk-helper/helper.sock" ||
 	msg="$msg; $h ohne -uid/-gid $KIOSK_UID"
 unit_has "$h" RuntimeDirectoryMode=0750 || msg="$msg; $h ohne RuntimeDirectoryMode=0750"
+unit_has "$h" "ExecStartPre=-/usr/local/bin/hmi-kiosk-helper web-policy" || msg="$msg; $h schreibt die Web-Richtlinie nicht vor dem Dienst (ExecStartPre web-policy)"
 unit_has hmi-kiosk-update-guard.service Type=oneshot || msg="$msg; Update-Wächter nicht oneshot"
 masked getty@tty1.service || msg="$msg; getty@tty1.service nicht maskiert"
 [ -x "$R/usr/local/bin/hmi-kiosk-session" ] || msg="$msg; /usr/local/bin/hmi-kiosk-session fehlt"
