@@ -61,6 +61,17 @@ func (p *execProcess) Done() <-chan error { return p.done }
 // Pid ist zugleich die Prozessgruppe (Setpgid).
 func (p *execProcess) Pid() int { return p.cmd.Process.Pid }
 
+// Signal schickt sig nur an den Prozess selbst (nicht an die Gruppe). Nach dem Ende
+// meldet es einen Fehler, statt eine inzwischen wiederverwendete PID zu treffen.
+func (p *execProcess) Signal(sig os.Signal) error {
+	select {
+	case <-p.exit:
+		return os.ErrProcessDone
+	default:
+	}
+	return p.cmd.Process.Signal(sig)
+}
+
 func (p *execProcess) signalGroup(sig syscall.Signal) {
 	err := syscall.Kill(-p.cmd.Process.Pid, sig)
 	if err != nil && !errors.Is(err, syscall.ESRCH) {

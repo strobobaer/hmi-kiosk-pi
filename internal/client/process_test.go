@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -131,5 +132,31 @@ func TestProcessEnvAppendedAndOverrides(t *testing.T) {
 func TestProcessStartFailure(t *testing.T) {
 	if _, err := NewExecRunner().Start(Command{Path: "/nonexistent/x"}); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestProcessSignalReachesProcess(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "usr2")
+	ready := filepath.Join(dir, "ready")
+	p, err := NewExecRunner().Start(sh(`trap 'echo ok > "$OUT"; exit 0' USR2; echo 1 > "$READY"; while :; do sleep 0.05; done`, "OUT="+out, "READY="+ready))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Stop(time.Second)
+	waitFile(t, ready)
+	sp, ok := p.(interface{ Signal(os.Signal) error })
+	if !ok {
+		t.Fatal("Prozess bietet kein Signal")
+	}
+	if err := sp.Signal(syscall.SIGUSR2); err != nil {
+		t.Fatal(err)
+	}
+	if got := waitFile(t, out); got != "ok" {
+		t.Fatalf("Ausgabe %q", got)
+	}
+	_ = waitDone(t, p)
+	if err := sp.Signal(syscall.SIGUSR2); err == nil {
+		t.Fatal("Signal an beendeten Prozess meldet keinen Fehler")
 	}
 }
