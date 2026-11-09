@@ -7,10 +7,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
 	"hmikiosk/internal/coord"
+	"hmikiosk/internal/platform"
+	"hmikiosk/internal/web"
 )
 
 const (
@@ -101,4 +104,13 @@ func (s *service) startLocalAdmin(ctx context.Context, wg *sync.WaitGroup, h htt
 		}
 	}()
 	return srv, l.Addr().String()
+}
+
+// localAdminOrigin ist der Ursprung, den das Zahnrad öffnet.
+var localAdminOrigin = strings.TrimSuffix(web.LocalAdminURL, "/admin/")
+
+// localAdminShown: Das Zahnrad erscheint nur, wenn die Admin-Seite am Terminal läuft und die
+// Chromium-Richtlinie sie öffnen lässt. Systemteile vor 0.1.6 sperren sie („This page is blocked“).
+func (s *service) localAdminShown() bool {
+	return s.localAdminUp.Load() && platform.ChromiumAllows(rootFS, localAdminOrigin)
 }

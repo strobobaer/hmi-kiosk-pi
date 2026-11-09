@@ -81,7 +81,7 @@ func TestPackVerifyRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "hmi-kiosk"), []byte("BIN"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	blob, err := Pack(dir, "1.2.3", priv)
+	blob, err := Pack(dir, "1.2.3", 1, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,11 +99,11 @@ func TestPackRejectsBadVersion(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "hmi-kiosk"), []byte("BIN"), 0o755)
 	for _, v := range []string{"", "1.2", "v1.2.3", "../1.2.3", "1.2.3\n", strings.Repeat("1", 40) + ".0.0"} {
-		if _, err := Pack(dir, v, priv); err == nil {
+		if _, err := Pack(dir, v, 1, priv); err == nil {
 			t.Errorf("Version %q angenommen", v)
 		}
 	}
-	if _, err := Pack(t.TempDir(), "1.0.0", priv); err == nil {
+	if _, err := Pack(t.TempDir(), "1.0.0", 1, priv); err == nil {
 		t.Error("fehlende Binärdatei angenommen")
 	}
 }

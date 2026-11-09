@@ -29,6 +29,9 @@ import (
 	"hmikiosk/internal/web"
 )
 
+// rootFS ist die Wurzel für Systemteile (Chromium-Richtlinie, Systemstand); Tests setzen einen Ordner.
+var rootFS = "/"
+
 const (
 	procRoot = "/proc"
 	sysRoot  = "/sys"

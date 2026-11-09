@@ -1,6 +1,7 @@
 package update
 
 import (
+	"archive/tar"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -34,7 +35,8 @@ func Install(root string, p *Package) (version string, err error) {
 			os.RemoveAll(tmp)
 		}
 	}()
-	err = walk(p.targz, func(name string, r io.Reader) error {
+	err = walk(p.targz, func(h *tar.Header, r io.Reader) error {
+		name := h.Name
 		if name == versionName {
 			v, err := readVersion(r)
 			if err != nil {
@@ -142,6 +144,8 @@ type Installer struct {
 	Activate func(ctx context.Context, version string) error
 	// FreeBytes liefert den freien Platz; nil bedeutet das echte Dateisystem.
 	FreeBytes func(path string) (uint64, error)
+	// SystemLevel liefert den Stand der Systemteile des Geräts; nil prüft nicht.
+	SystemLevel func() int
 
 	mu sync.Mutex
 }
@@ -154,6 +158,9 @@ func (in *Installer) Install(ctx context.Context, blob []byte) (string, error) {
 	}
 	p, err := Verify(blob, in.PublicKey)
 	if err != nil {
+		return "", err
+	}
+	if err := in.checkSystemLevel(p); err != nil {
 		return "", err
 	}
 	cur, err := readLink(in.Root, currentLink)
@@ -197,4 +204,18 @@ func (in *Installer) Install(ctx context.Context, blob []byte) (string, error) {
 		return "", err
 	}
 	return version, nil
+}
+
+// checkSystemLevel lehnt ein Paket ab, das neuere Systemteile braucht, als das Gerät hat:
+// Ein Programm-Update tauscht nur hmi-kiosk, Helfer und /etc kommen mit Abbild oder install.sh.
+func (in *Installer) checkSystemLevel(p *Package) error {
+	if in.SystemLevel == nil {
+		return nil
+	}
+	if have := in.SystemLevel(); p.SystemLevel > have {
+		return fmt.Errorf("Version %s braucht neuere Systemteile (Stand %d, dieses Gerät hat Stand %d). "+
+			"Ein Programm-Update reicht dafür nicht: Bitte die Konfiguration sichern und das SD-Abbild %s neu schreiben "+
+			"oder install.sh aus dem Bundle %s ausführen.", p.Version, p.SystemLevel, have, p.Version, p.Version)
+	}
+	return nil
 }

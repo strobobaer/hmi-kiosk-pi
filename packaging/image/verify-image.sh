@@ -417,6 +417,12 @@ if [ -f "$rf" ]; then
 else
 	bad image-release "/etc/hmi-kiosk/image-release fehlt"
 fi
+sl=$R/etc/hmi-kiosk/system-level
+if [ -f "$sl" ] && [ "$(stat -c %u:%g:%a "$sl")" = 0:0:644 ] && grep -Eqx '[1-9][0-9]{0,3}' "$sl"; then
+	ok system-level "Stand $(cat "$sl"), root:root 644"
+else
+	bad system-level "/etc/hmi-kiosk/system-level fehlt oder ungültig (Programm-Updates prüfen damit den Stand der Systemteile)"
+fi
 iv=$R/opt/hmi-kiosk/initial/$version
 if [ -n "$version" ] && [ -x "$iv/hmi-kiosk" ] && is_arm64_elf "$iv/hmi-kiosk" &&
 	[ "$(cat "$iv/VERSION" 2>/dev/null)" = "$version" ]; then

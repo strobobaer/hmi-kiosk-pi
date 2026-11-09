@@ -246,6 +246,7 @@ install_system_files() {
 	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/rc.xml" /etc/hmi-kiosk/labwc/rc.xml
 	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/environment" /etc/hmi-kiosk/labwc/environment
 	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/autostart" /etc/hmi-kiosk/labwc/autostart
+	put 644 "$HERE/rootfs/etc/hmi-kiosk/system-level" /etc/hmi-kiosk/system-level
 	restore_desktop_labwc
 	put 644 "$HERE/rootfs/etc/xdg/openbox/rc.xml" /etc/xdg/openbox/rc.xml
 	put 644 "$HERE/rootfs/etc/chromium/policies/managed/hmi-kiosk.json" /etc/chromium/policies/managed/hmi-kiosk.json

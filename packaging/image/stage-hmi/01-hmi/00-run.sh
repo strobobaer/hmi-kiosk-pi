@@ -64,6 +64,8 @@ install -d -m 755 -o root -g root "${R}/etc/hmi-kiosk"
 printf 'version=%s\n' "${HMI_VERSION}" >"${R}/etc/hmi-kiosk/image-release"
 chown root:root "${R}/etc/hmi-kiosk/image-release"
 chmod 644 "${R}/etc/hmi-kiosk/image-release"
+# Stand der Systemteile: Programm-Updates, die neuere Systemteile brauchen, lehnt das Gerät ab.
+install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/system-level" "${R}/etc/hmi-kiosk/system-level"
 
 # Einhängepunkt für /data. Partition und fstab-Eintrag (ohne nofail) entstehen beim ersten Start
 # (hmi-kiosk-firstboot prepare-data), damit kein Eintrag auf eine noch fehlende Partition wartet.

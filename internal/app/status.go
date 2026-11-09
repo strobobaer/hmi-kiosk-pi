@@ -56,6 +56,9 @@ func (s *service) Status() web.SystemStatus {
 	if !st.OverlayActive {
 		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
 	}
+	if have := platform.InstalledSystemLevel(rootFS); have < release.SystemLevel {
+		add(fmt.Sprintf(systemPartsNotice, have, release.SystemLevel))
+	}
 
 	w, h, found := platform.DisplaySize(sysRoot)
 	rw, rh := platform.Resolve(cfg.Display.OverrideW, cfg.Display.OverrideH, w, h, found)
@@ -92,3 +95,8 @@ func overlayActive(root string) bool {
 	}
 	return active
 }
+
+// systemPartsNotice: Programm-Updates tauschen nur hmi-kiosk; Helfer und /etc bleiben vom Abbild.
+const systemPartsNotice = "Die Systemteile dieses Geräts (Stand %d) sind älter, als diese Programmversion braucht (Stand %d). " +
+	"Zahnrad, Bildschirmtastatur und Web-Kacheln funktionieren erst nach einem neuen SD-Abbild oder erneutem install.sh " +
+	"aus dem Bundle dieser Version (vorher die Konfiguration sichern)."

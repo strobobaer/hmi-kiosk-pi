@@ -195,7 +195,7 @@ func (s *service) localHandler() http.Handler {
 			Keyboard:   s.kbd,
 			InputMode:  func() string { return s.config().Kiosk.InputMode },
 			TilesShown: s.localAdminLeft,
-			LocalAdmin: s.localAdminUp.Load,
+			LocalAdmin: s.localAdminShown,
 		}))
 	return mux
 }

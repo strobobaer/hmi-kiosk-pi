@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"hmikiosk/internal/release"
 	"hmikiosk/internal/update"
 )
 
@@ -88,6 +89,7 @@ func pack(args []string, stdout io.Writer) error {
 	version := fs.String("version", "", "Version x.y.z")
 	in := fs.String("in", "", "Ordner mit hmi-kiosk")
 	out := fs.String("out", "", "Ausgabedatei")
+	level := fs.Int("system-level", release.SystemLevel, "Stand der Systemteile, den das Programm braucht")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -102,7 +104,7 @@ func pack(args []string, stdout io.Writer) error {
 	if err != nil || len(priv) != ed25519.PrivateKeySize {
 		return fmt.Errorf("Schlüsseldatei ungültig")
 	}
-	blob, err := update.Pack(*in, *version, ed25519.PrivateKey(priv))
+	blob, err := update.Pack(*in, *version, *level, ed25519.PrivateKey(priv))
 	if err != nil {
 		return err
 	}

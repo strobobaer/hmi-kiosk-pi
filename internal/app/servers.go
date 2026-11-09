@@ -158,6 +158,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		Update: &update.Installer{
 			Root:      s.opts.DataDir,
 			PublicKey: release.PublicKey(),
+			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS) },
 			Activate: func(ctx context.Context, version string) error {
 				return s.helper.Call(ctx, "update-activate", version)
 			},

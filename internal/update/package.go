@@ -3,7 +3,10 @@
 //
 // Ein Paket ist eine 64-Byte-Ed25519-Signatur gefolgt von einem tar.gz. Signiert
 // wird der SHA-256 der tar.gz-Bytes. Der Inhalt besteht nur aus der Dienstdatei
-// hmi-kiosk und der Datei VERSION; der Helfer gehört zum Abbild.
+// hmi-kiosk und der Datei VERSION; der Helfer gehört zum Abbild. Den Stand der
+// Systemteile, den das Programm braucht, trägt der Eintrag hmi-kiosk als PAX-Datensatz
+// HMIKIOSK.system-level: Ältere Terminals lesen nur Name und Art des Eintrags und nehmen
+// solche Pakete weiter an.
 package update
 
 import (
@@ -18,12 +21,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 )
 
 const (
 	BinaryName  = "hmi-kiosk"
 	versionName = "VERSION"
 	maxVersion  = 32
+
+	systemLevelPAX = "HMIKIOSK.system-level"
+	maxSystemLevel = 9999
 
 	maxBinaryBytes  = 256 << 20
 	maxVersionBytes = 64
@@ -39,13 +46,18 @@ func ValidVersion(v string) bool { return len(v) <= maxVersion && versionRe.Matc
 // Package ist ein geprüftes Paket.
 type Package struct {
 	Version string
-	targz   []byte
+	// SystemLevel ist der Stand der Systemteile, den das Programm braucht (0: keine Angabe).
+	SystemLevel int
+	targz       []byte
 }
 
-// Pack baut ein signiertes Paket aus dir/hmi-kiosk.
-func Pack(dir, version string, priv ed25519.PrivateKey) ([]byte, error) {
+// Pack baut ein signiertes Paket aus dir/hmi-kiosk für Systemteile ab Stand systemLevel.
+func Pack(dir, version string, systemLevel int, priv ed25519.PrivateKey) ([]byte, error) {
 	if !ValidVersion(version) {
 		return nil, errors.New("Versionsangabe ungültig (erwartet x.y.z)")
+	}
+	if systemLevel < 1 || systemLevel > maxSystemLevel {
+		return nil, errors.New("Systemstand ungültig")
 	}
 	if len(priv) != ed25519.PrivateKeySize {
 		return nil, errors.New("Privater Schlüssel ungültig")
@@ -64,11 +76,16 @@ func Pack(dir, version string, priv ed25519.PrivateKey) ([]byte, error) {
 		name string
 		mode int64
 		body []byte
+		pax  map[string]string
 	}{
-		{versionName, 0o644, []byte(version + "\n")},
-		{BinaryName, 0o755, bin},
+		{versionName, 0o644, []byte(version + "\n"), nil},
+		{BinaryName, 0o755, bin, map[string]string{systemLevelPAX: strconv.Itoa(systemLevel)}},
 	} {
-		if err := tw.WriteHeader(&tar.Header{Name: f.name, Typeflag: tar.TypeReg, Mode: f.mode, Size: int64(len(f.body))}); err != nil {
+		h := &tar.Header{Name: f.name, Typeflag: tar.TypeReg, Mode: f.mode, Size: int64(len(f.body)), PAXRecords: f.pax}
+		if f.pax != nil {
+			h.Format = tar.FormatPAX
+		}
+		if err := tw.WriteHeader(h); err != nil {
 			return nil, err
 		}
 		if _, err := tw.Write(f.body); err != nil {
@@ -100,19 +117,38 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 		return nil, errors.New("Signatur ungültig, das Paket stammt nicht aus der Freigabe")
 	}
 	var version string
-	err := walk(targz, func(name string, r io.Reader) error {
-		if name == versionName {
+	var level int
+	err := walk(targz, func(h *tar.Header, r io.Reader) error {
+		if h.Name == versionName {
 			v, err := readVersion(r)
 			version = v
 			return err
 		}
-		_, err := io.Copy(io.Discard, r)
+		l, err := readSystemLevel(h)
+		if err != nil {
+			return err
+		}
+		level = l
+		_, err = io.Copy(io.Discard, r)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &Package{Version: version, targz: targz}, nil
+	return &Package{Version: version, SystemLevel: level, targz: targz}, nil
+}
+
+// readSystemLevel liest den Systemstand aus dem PAX-Datensatz; Pakete bis 0.1.6 haben keinen.
+func readSystemLevel(h *tar.Header) (int, error) {
+	s, ok := h.PAXRecords[systemLevelPAX]
+	if !ok {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 || n > maxSystemLevel {
+		return 0, errors.New("Systemstand im Paket ungültig")
+	}
+	return n, nil
 }
 
 func readVersion(r io.Reader) (string, error) {
@@ -132,7 +168,7 @@ func readVersion(r io.Reader) (string, error) {
 
 // walk liest das Archiv streng: genau je einmal hmi-kiosk und VERSION, beides
 // reguläre Dateien ohne Pfad. Alles andere ist ein Fehler.
-func walk(targz []byte, visit func(name string, r io.Reader) error) error {
+func walk(targz []byte, visit func(h *tar.Header, r io.Reader) error) error {
 	gz, err := gzip.NewReader(bytes.NewReader(targz))
 	if err != nil {
 		return errors.New("Paket ist kein gültiges Archiv")
@@ -165,7 +201,7 @@ func walk(targz []byte, visit func(name string, r io.Reader) error) error {
 		if h.Size > limit {
 			return fmt.Errorf("%s ist zu groß", h.Name)
 		}
-		if err := visit(h.Name, tr); err != nil {
+		if err := visit(h, tr); err != nil {
 			return err
 		}
 	}

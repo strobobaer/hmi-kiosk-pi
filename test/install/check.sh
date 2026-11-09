@@ -129,6 +129,7 @@ check "system/ root-eigen 755" test "$(stat -c '%U %a' $DATA/system)" = "root 75
 check "Datenordner hmikiosk 750" test "$(stat -c '%U %a' $DATA)" = "hmikiosk 750"
 check "Overlay nicht eingeschaltet (kein overlayroot in cmdline)" bash -c '! grep -qs overlayroot /boot/firmware/cmdline.txt /boot/cmdline.txt'
 check "keine Abbild-Kennung" test ! -e /etc/hmi-kiosk/image-release
+check "Systemstand aus dem Bundle" test "$(cat /etc/hmi-kiosk/system-level)" = "$(cat /bundle/rootfs/etc/hmi-kiosk/system-level)"
 
 uid=$(id -u hmikiosk)
 check "Benutzer hmikiosk gesperrt (keine Anmeldung)" bash -c "passwd -S hmikiosk | awk '{print \$2}' | grep -q '^L'"
