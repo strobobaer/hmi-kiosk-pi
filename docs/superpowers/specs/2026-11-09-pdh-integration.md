@@ -50,7 +50,18 @@ Body (höchstens 4 KiB, unbekannte Felder ablehnen):
   wird nie gespeichert oder protokolliert; das Protokoll nennt label, user, mode, Quelladresse.
 
 ### `POST /api/remote/v1/close`
-Beendet eine **von PDH** geöffnete Sitzung (`200 {"status":"closed"}`), sonst `409`.
+Beendet eine **von PDH** geöffnete Sitzung (`200 {"status":"closed"}`), sonst `409 {"error":"…"}`.
+
+### Ergänzungen nach der Umsetzung
+- `429 {"error":"…"}`, solange die Quelladresse nach Fehlversuchen gesperrt ist (5 Fehlversuche, 5 Minuten;
+  auch der richtige Schlüssel wird dann abgewiesen).
+- Bei `409 busy` ist `since` **optional**: Hält ein anderes Terminal die HMI, fehlt es, und `hmi` lautet
+  „<Kachel> (an <Terminal>)“.
+- `404`/`405` kommen als JSON erst nach gültigem Schlüssel (sonst `401`); jede ungültige Eingabe
+  (auch zu groß oder kein JSON) ist `422`.
+- PDH verdrängt nie: Hält ein anderes Terminal die HMI, gibt es immer `409`, auch im Übernahme-Modus.
+  Ausnahme: Ansehen (`view`) einer laufenden Daueranzeige.
+- `503` zusätzlich bei Selbst-/Dauerprüfung und bei offener Admin-Seite am Terminal.
 
 ## PDH-Seite
 
