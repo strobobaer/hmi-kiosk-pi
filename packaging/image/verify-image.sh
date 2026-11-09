@@ -329,9 +329,10 @@ pol="$R/etc/chromium/policies/managed/hmi-kiosk.json"
 pf=$(flat "$pol" 2>/dev/null || true)
 if printf '%s' "$pf" | grep -Fq '"URLBlocklist": ["*"]' &&
 	printf '%s' "$pf" | grep -Fq '"URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080", "http://127.0.0.1:8081", "http://localhost:8081"]' &&
-	printf '%s' "$pf" | grep -Fq '"PasswordManagerEnabled": false' &&
+	printf '%s' "$pf" | grep -Fq '"PasswordManagerEnabled": false,' &&
+	printf '%s' "$pf" | grep -Fq '"DownloadRestrictions": 3' &&
 	[ "$(stat -c %u:%g:%a "$pol")" = 0:0:644 ]; then
-	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), kein Passwortmanager, root 644 (Web-Kacheln ergänzt der Helfer beim Start)"
+	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), kein Passwortmanager, keine Downloads, root 644 (Web-Kacheln ergänzt der Helfer beim Start)"
 else
 	bad chromium-richtlinie "/etc/chromium/policies/managed/hmi-kiosk.json fehlt oder weicht ab (URLBlocklist [\"*\"], URLAllowlist nur Kachelseite und Admin-Seite am Terminal auf Loopback)"
 fi

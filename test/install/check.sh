@@ -88,6 +88,7 @@ pol=/etc/chromium/policies/managed/hmi-kiosk.json
 check "Chromium-Richtlinie erlaubt nur Kacheln (8080) und Admin am Terminal (8081)" bash -c "tr -d '\n\t' <$pol | tr -s ' ' | grep -Fq '\"URLAllowlist\": [\"http://127.0.0.1:8080\", \"http://localhost:8080\", \"http://127.0.0.1:8081\", \"http://localhost:8081\"]'"
 check "Chromium-Richtlinie sperrt alles andere" grep -Fq '"URLBlocklist": ["*"]' $pol
 check "Chromium-Richtlinie ohne Passwortmanager" grep -Fq '"PasswordManagerEnabled": false' $pol
+check "Chromium-Richtlinie sperrt Downloads" grep -Fq '"DownloadRestrictions": 3' $pol
 check "Fensterregel für Web-Kacheln (labwc und openbox)" bash -c "grep -Fq '<windowRule identifier=\"chrome-*-hmi-kiosk-web\"' /etc/hmi-kiosk/labwc/rc.xml && grep -Fq '<application class=\"hmi-kiosk-web\"' /etc/xdg/openbox/rc.xml"
 for c in rsync mkfs.vfat mkfs.ext4 sfdisk losetup partx resize2fs blkid findmnt; do
 	check "Programm $c vorhanden" bash -c "command -v $c"

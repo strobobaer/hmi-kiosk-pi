@@ -72,7 +72,8 @@ func allowFilter(origin string) string {
 
 // ChromiumPolicy ist der Inhalt der Richtlinie: alles gesperrt außer den festen
 // Einträgen und den Ursprüngen der Web-Kacheln; kein Passwortmanager (die Anmeldung
-// einer Web-Kachel bleibt als Cookie im Profil, Passwörter werden nie gespeichert).
+// einer Web-Kachel bleibt als Cookie im Profil, Passwörter werden nie gespeichert) und keine
+// Downloads (DownloadRestrictions 3: alle gesperrt), auch nicht aus einer Web-Kachel.
 func ChromiumPolicy(origins []string) []byte {
 	allow := slices.Clone(fixedAllow)
 	for _, o := range origins {
@@ -86,7 +87,8 @@ func ChromiumPolicy(origins []string) []byte {
 	return []byte("{\n" +
 		"  \"URLBlocklist\": [\"*\"],\n" +
 		"  \"URLAllowlist\": [" + strings.Join(quoted, ", ") + "],\n" +
-		"  \"PasswordManagerEnabled\": false\n" +
+		"  \"PasswordManagerEnabled\": false,\n" +
+		"  \"DownloadRestrictions\": 3\n" +
 		"}\n")
 }
 

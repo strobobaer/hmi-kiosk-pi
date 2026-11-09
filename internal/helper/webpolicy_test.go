@@ -28,6 +28,7 @@ type policyFile struct {
 	URLBlocklist           []string
 	URLAllowlist           []string
 	PasswordManagerEnabled *bool
+	DownloadRestrictions   *int
 }
 
 func readPolicy(t *testing.T, p string) policyFile {
@@ -65,6 +66,9 @@ func TestSetWebOriginsWritesPolicyWithFixedEntries(t *testing.T) {
 	}
 	if pf.PasswordManagerEnabled == nil || *pf.PasswordManagerEnabled {
 		t.Fatal("Passwortmanager nicht abgeschaltet")
+	}
+	if pf.DownloadRestrictions == nil || *pf.DownloadRestrictions != 3 {
+		t.Fatal("Downloads nicht gesperrt (DownloadRestrictions 3)")
 	}
 	fi, err := os.Stat(e.srv.ChromiumPolicyPath)
 	if err != nil || fi.Mode().Perm() != 0o644 {
