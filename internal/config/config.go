@@ -47,6 +47,10 @@ type HMI struct {
 	AuthFailed bool `json:"authFailed,omitempty"`
 	// Reach wählt die Erreichbarkeitsprüfung für die Kachel: ReachPing (Standard, auch leer), ReachPort oder ReachOff.
 	Reach string `json:"reach,omitempty"`
+	// Kind ist KindVNC (Standard, auch leer) oder KindWeb. Eine Web-Kachel zeigt URL in
+	// einem eigenen Chromium-Fenster; Host, Port, Passwort und Abstimmung gelten dann nicht.
+	Kind string `json:"kind,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 type Peer struct {

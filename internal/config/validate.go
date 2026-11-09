@@ -73,11 +73,21 @@ func Validate(c Config) error {
 		if err := checkName(fmt.Sprintf("HMI %q: Name", h.ID), h.Name); err != nil {
 			return err
 		}
-		if err := checkHost(fmt.Sprintf("HMI %q: Host", h.ID), h.Host); err != nil {
-			return err
-		}
-		if h.Port < 1 || h.Port > 65535 {
-			return fmt.Errorf("HMI %q: Port außerhalb 1-65535: %d", h.ID, h.Port)
+		switch h.Kind {
+		case "", KindVNC:
+			if err := checkHost(fmt.Sprintf("HMI %q: Host", h.ID), h.Host); err != nil {
+				return err
+			}
+			if h.Port < 1 || h.Port > 65535 {
+				return fmt.Errorf("HMI %q: Port außerhalb 1-65535: %d", h.ID, h.Port)
+			}
+		case KindWeb:
+			// Host, Port und Passwort gelten nur für VNC; die Adresse trägt alles.
+			if err := checkWebURL(h.ID, h.URL); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("HMI %q: unbekannte Art %q (erlaubt: vnc, web)", h.ID, h.Kind)
 		}
 		if h.Mode != nil && !validMode(*h.Mode) {
 			return fmt.Errorf("HMI %q: Modus ungültig: %q", h.ID, *h.Mode)
