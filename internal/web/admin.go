@@ -95,6 +95,8 @@ type AdminDeps struct {
 	CheckPeer            func(ctx context.Context, p config.Peer) coord.PeerState
 	UpdateKeyFingerprint string
 	Clock                coord.Clock
+	// TileURLs liefert die Adressen der Kachelseite im Netz (nil: unbekannt); nur bei Netzfreigabe angezeigt.
+	TileURLs func() []string
 	// ConfigMu schützt Laden, Ändern und Speichern der Konfiguration auch gegenüber dem Dienst (leer: eigener Mutex).
 	ConfigMu *sync.Mutex
 }
@@ -485,7 +487,10 @@ type adminView struct {
 	TerminalName   string
 	Notice, Error  string
 	Refresh        int
-	Body           any
+	// NetworkTiles: Die Kachelseite ist im Netz freigegeben; TileURLs nennt ihre Adressen.
+	NetworkTiles bool
+	TileURLs     []string
+	Body         any
 }
 
 func (a *admin) writePage(w http.ResponseWriter, status int, page string, v adminView) {
@@ -507,13 +512,14 @@ func (a *admin) page(w http.ResponseWriter, s sessionRef, status int, page, sect
 
 // pageRefresh lädt die Seite nach refresh Sekunden selbst neu (0: nie; ohne Skript, wegen der CSP).
 func (a *admin) pageRefresh(w http.ResponseWriter, s sessionRef, status int, page, section, title, errMsg string, refresh int, body any) {
-	name := ""
+	name, netTiles := "", false
 	if cfg, _, err := a.d.Store.Load(); err == nil {
-		name = cfg.Terminal.Name
+		name, netTiles = cfg.Terminal.Name, cfg.Kiosk.NetworkTiles
 	}
 	a.writePage(w, status, page, adminView{
 		Title: title, Section: section, CSRF: s.csrf, LoggedIn: true, TerminalName: name,
 		Notice: a.sessions.takeFlash(s), Error: errMsg, Refresh: refresh, Body: body,
+		NetworkTiles: netTiles, TileURLs: a.tileURLs(netTiles),
 	})
 }
 
@@ -530,4 +536,12 @@ func formStatus(err error) int {
 		return http.StatusInternalServerError
 	}
 	return http.StatusUnprocessableEntity
+}
+
+// tileURLs nennt die Adressen der Kachelseite im Netz, nur wenn sie freigegeben ist.
+func (a *admin) tileURLs(on bool) []string {
+	if !on || a.d.TileURLs == nil {
+		return nil
+	}
+	return a.d.TileURLs()
 }

@@ -31,6 +31,12 @@
     <label class="check"><input type="checkbox" name="hide_bar"{{if .HideBar}} checked{{end}}> Leiste bei der Daueranzeige ausblenden</label>
     <p class="hint">Nur mit festem HMI und nur für dessen automatischen Start. Jede Sitzung, die per Touch auf einer Kachel beginnt, zeigt die Leiste mit „Zurück“.</p>
   </fieldset>
+  <fieldset class="stack">
+    <legend>Test</legend>
+    <label class="check"><input type="checkbox" name="network_tiles"{{if .NetworkTiles}} checked{{end}}> Kachelseite im Netz freigeben (nur für Tests)</label>
+    <p class="msg warn">Die Kachelseite hat keine Anmeldung. Jeder im Netz kann dann HMI-Sitzungen auf diesem Terminal starten. Nach dem Test wieder ausschalten.</p>
+    <p class="hint">Erreichbar unter http://&lt;IP des Terminals&gt;:8080/. Eine gestartete Sitzung (Remmina-Fenster) öffnet sich auf dem Bildschirm des Terminals, nicht auf dem PC, der die Kachelseite aufruft.</p>
+  </fieldset>
   <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
 </form>
 {{end}}

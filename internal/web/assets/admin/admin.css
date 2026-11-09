@@ -172,3 +172,4 @@ dd { margin: 0; overflow-wrap: anywhere; }
 code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 .steps li.check { border-color: var(--amber); }
 .tag.warn { color: var(--amber); border-color: var(--amber); }
+.msg.warn.banner { margin: 0 0 16px; }

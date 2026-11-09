@@ -125,7 +125,7 @@ func (a *admin) handleClientSave(w http.ResponseWriter, r *http.Request, s sessi
 
 type kioskFormData struct {
 	Inactivity, Layout, Permanent, InputMode string
-	HideBar                                  bool
+	HideBar, NetworkTiles                    bool
 	HMIs                                     []option
 }
 
@@ -150,13 +150,13 @@ func (a *admin) handleKioskForm(w http.ResponseWriter, _ *http.Request, s sessio
 		mode = config.InputTouch
 	}
 	a.renderKiosk(w, s, http.StatusOK, "", kioskFormData{
-		Inactivity: strconv.Itoa(k.InactivityMinutes), Layout: k.Layout, Permanent: k.PermanentHMI, HideBar: k.HideBar, InputMode: mode,
+		Inactivity: strconv.Itoa(k.InactivityMinutes), Layout: k.Layout, Permanent: k.PermanentHMI, HideBar: k.HideBar, InputMode: mode, NetworkTiles: k.NetworkTiles,
 	})
 }
 
 func (a *admin) handleKioskSave(w http.ResponseWriter, r *http.Request, s sessionRef) {
 	v := r.PostForm
-	f := kioskFormData{Inactivity: strings.TrimSpace(v.Get("inactivity")), Layout: v.Get("layout"), Permanent: v.Get("permanent"), HideBar: v.Get("hide_bar") != "", InputMode: v.Get("input_mode")}
+	f := kioskFormData{Inactivity: strings.TrimSpace(v.Get("inactivity")), Layout: v.Get("layout"), Permanent: v.Get("permanent"), HideBar: v.Get("hide_bar") != "", InputMode: v.Get("input_mode"), NetworkTiles: v.Get("network_tiles") != ""}
 	err := a.update(func(c *config.Config) error {
 		n, err := strconv.Atoi(f.Inactivity)
 		if err != nil {
@@ -169,7 +169,7 @@ func (a *admin) handleKioskSave(w http.ResponseWriter, r *http.Request, s sessio
 		if mode == "" {
 			mode = config.InputTouch
 		}
-		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode}
+		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode, NetworkTiles: f.NetworkTiles}
 		if err := checkKiosk(next); err != nil {
 			return err
 		}
@@ -180,7 +180,11 @@ func (a *admin) handleKioskSave(w http.ResponseWriter, r *http.Request, s sessio
 		a.renderKiosk(w, s, formStatus(err), err.Error(), f)
 		return
 	}
-	a.done(w, r, s, "/admin/kiosk", "Gespeichert.")
+	msg := "Gespeichert."
+	if f.NetworkTiles {
+		msg = "Gespeichert. Die Kachelseite ist ohne Neustart im Netz freigegeben (nur für Tests), die Adresse steht oben."
+	}
+	a.done(w, r, s, "/admin/kiosk", msg)
 }
 
 // --- Terminals ---

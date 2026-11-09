@@ -95,6 +95,7 @@ type adminEnv struct {
 	backup    *fakeBackup
 	net       *fakeNet
 	checkPeer func(context.Context, config.Peer) coord.PeerState
+	tileURLs  []string // Adressen der Kachelseite im Netz
 	mu        sync.Mutex
 	applied   []config.Config
 	a         *admin
@@ -148,6 +149,7 @@ func newEnvNoPassword(t *testing.T) *adminEnv {
 		Backup:       e.backup,
 		Net:          e.net,
 		HardwareID:   func() string { return e.hw },
+		TileURLs:     func() []string { return e.tileURLs },
 		TLSDir:       e.tlsDir,
 		KeyFile:      dir + "/secrets.key",
 		CheckPeer: func(ctx context.Context, p config.Peer) coord.PeerState {
@@ -207,6 +209,15 @@ func (e *adminEnv) appliedCount() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.applied)
+}
+
+func (e *adminEnv) lastApplied() config.Config {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(e.applied) == 0 {
+		e.t.Fatal("nichts übernommen")
+	}
+	return e.applied[len(e.applied)-1]
 }
 
 func (e *adminEnv) hmi(id string) config.HMI {

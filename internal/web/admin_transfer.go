@@ -115,6 +115,8 @@ func (a *admin) merge(ex exportFile, cur config.Config) (config.Config, error) {
 	next.Terminal = cur.Terminal
 	next.Admin = cur.Admin
 	next.Network = cur.Network
+	// Die Freigabe der Kachelseite im Netz ist ein Testzustand dieses Geräts.
+	next.Kiosk.NetworkTiles = cur.Kiosk.NetworkTiles
 
 	// Beim Übertragen auf ein Nachbarterminal steht dieses selbst in der Liste.
 	peers := make([]config.Peer, 0, len(next.Peers))
@@ -202,5 +204,5 @@ func (a *admin) handleImport(w http.ResponseWriter, r *http.Request, s sessionRe
 		fail(formStatus(err), err.Error())
 		return
 	}
-	a.done(w, r, s, "/admin/system", "Konfiguration importiert. Name, Kennung, Rolle, Admin-Passwort und Netzwerk blieben unverändert.")
+	a.done(w, r, s, "/admin/system", "Konfiguration importiert. Name, Kennung, Rolle, Admin-Passwort, Netzwerk und die Freigabe der Kachelseite im Netz blieben unverändert.")
 }

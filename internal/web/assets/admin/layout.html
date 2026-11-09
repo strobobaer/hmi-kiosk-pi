@@ -28,6 +28,7 @@
 </header>
 <main class="main{{if not .LoggedIn}} narrow{{end}}">
   <h1>{{.Title}}</h1>
+  {{if and .LoggedIn .NetworkTiles}}<p class="msg warn banner" role="alert"><strong>Kachelseite im Netz freigegeben (nur für Tests):</strong> {{range $i, $u := .TileURLs}}{{if $i}}, {{end}}{{$u}}{{else}}http://&lt;IP des Terminals&gt;:8080/{{end}} – ohne Anmeldung, jeder im Netz kann HMI-Sitzungen auf diesem Terminal starten. Nach dem Test unter <a href="/admin/kiosk">Kiosk</a> wieder ausschalten.</p>{{end}}
   {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
   {{if .Error}}<p class="msg err" role="alert">{{.Error}}</p>{{end}}
   {{template "content" .}}
