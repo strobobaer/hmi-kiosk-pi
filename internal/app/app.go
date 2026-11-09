@@ -98,8 +98,9 @@ type service struct {
 	// kbd steuert die Bildschirmtastatur (Seiten, Leiste); kbdSup ist wvkbd selbst, nil ohne Chromium.
 	kbd          web.KeyboardAPI
 	kbdSup       *keyboard.Supervisor
-	presence     adminPresence // Admin-Seite am Terminal offen
-	localAdminUp atomic.Bool   // Admin-Seite am Terminal läuft (sonst kein Zahnrad)
+	presence     adminPresence                  // Admin-Seite am Terminal offen
+	localAdminUp atomic.Bool                    // Admin-Seite am Terminal läuft (sonst kein Zahnrad)
+	certSrc      atomic.Pointer[web.CertSource] // Zertifikat des HTTPS-Listeners, ab startServers
 
 	tileMu sync.Mutex    // schützt tileLn und das Umschalten der Kachelseite
 	tileLn *tileListener // Port der Kachelseite, ab startServers

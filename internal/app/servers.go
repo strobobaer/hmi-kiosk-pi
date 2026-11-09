@@ -93,7 +93,9 @@ func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, 
 		s.warn(fmt.Sprintf("Admin-Seite und Terminal-API nicht verfügbar: %v", err))
 		return nil, ""
 	}
-	srv := newAdminServer(s.adminMux(h), web.NewCertSource(dir, cert).GetCertificate)
+	src := web.NewCertSource(dir, cert)
+	s.certSrc.Store(src)
+	srv := newAdminServer(s.adminMux(h), src.GetCertificate)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -126,6 +128,7 @@ func (s *service) adminMux(admin http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/peer/", coord.NewHandlerFunc(s.coord, s.peerKey))
 	mux.Handle("/admin/", admin)
+	mux.Handle("/api/remote/", s.remoteAPI())
 	// Die kurze Adresse https://<Gerät>:8443 führt zur Admin-Seite.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
@@ -171,6 +174,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		HardwareID:           func() string { return s.hwID },
 		TileURLs:             s.tileURLs,
 		TLSDir:               filepath.Join(s.opts.DataDir, tlsDirName),
+		TLSFingerprint:       s.tlsFingerprint,
 		KeyFile:              filepath.Join(s.opts.DataDir, secretsFile),
 		CheckPeer:            s.checkPeer,
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),

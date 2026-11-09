@@ -230,6 +230,10 @@ func (s *service) tiles() []web.TileView {
 func (s *service) onSessionEnd(e session.Ended) {
 	mode := "Bedienen"
 	switch {
+	case e.Remote && (e.ViewOnly || e.Watch):
+		mode = "PDH, nur ansehen"
+	case e.Remote:
+		mode = "PDH, bedienen"
 	case e.Permanent && e.Web:
 		mode = "Daueranzeige Webseite"
 	case e.Permanent:
