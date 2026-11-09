@@ -384,6 +384,7 @@ Einrichten am Terminal: Admin-Seite → **Netzwerk** → **Fernsteuerung (PDH)**
 - Die Leiste zeigt „<Label> – von PDH: <Benutzer>“. **Zurück** und die Rückkehr bei Inaktivität gelten wie sonst; danach startet eine eingestellte Daueranzeige wieder. PDH kann nur eine **von PDH** geöffnete Sitzung schließen.
 - **Protokoll:** Jeder Befehl steht mit Label, Benutzer, Modus und Quelladresse im Protokoll (`Fernsteuerung (PDH): …`), das Sitzungsprotokoll mit Modus „PDH, nur ansehen“ bzw. „PDH, bedienen“. Das VNC-Passwort wird nie gespeichert oder protokolliert; es liegt nur für die Dauer der Sitzung im RAM-Profil des VNC-Clients.
 - **Export/Import:** Der Schlüssel gehört zu diesem Terminal. Der Export enthält ihn nicht, der Import ändert ihn nicht.
+- **Ende-zu-Ende-Test (Entwicklung):** `PDH_DIR=<PDH-Repository> bash test/pdh-e2e/run.sh` prüft den echten PDH-Client gegen die echten Fernbefehle über TLS in zwei Docker-Containern (Build-Tag `e2e`, nur die Sitzungsverwaltung ist nachgebildet; nicht im Image).
 
 #### PDH-Terminalmodus (PDH als Kachel)
 
