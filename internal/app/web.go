@@ -13,6 +13,7 @@ import (
 
 	"hmikiosk/internal/browser"
 	"hmikiosk/internal/client"
+	"hmikiosk/internal/rfb"
 )
 
 const (
@@ -124,3 +125,7 @@ func (o *originSync) run(ctx context.Context) {
 		log.Printf("Chromium-Richtlinie: %d Web-Server freigegeben", len(want))
 	}
 }
+
+// tcpReachable prüft den Port einer Web-Kachel (im Test ersetzbar: Loopback-Adressen sind
+// für Web-Kacheln verboten, ein echter Testserver ginge also nicht).
+var tcpReachable = rfb.TCPReachable

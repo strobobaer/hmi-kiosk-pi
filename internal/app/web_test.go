@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -223,31 +222,23 @@ func TestWebSessionJournalMode(t *testing.T) {
 }
 
 func TestAdminProbeOfWebTileChecksPortOnly(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				return
-			}
-			c.Close()
-		}
-	}()
+	var gotHost string
+	var gotPort int
+	answer := true
+	old := tcpReachable
+	tcpReachable = func(_ context.Context, host string, port int) bool { gotHost, gotPort = host, port; return answer }
+	t.Cleanup(func() { tcpReachable = old })
 	f := newFixture(t)
 	f.saveConfig(nil)
 	f.start()
-	res := f.s.adminProbe(context.Background(), config.HMI{ID: "w", Kind: config.KindWeb, URL: "http://" + l.Addr().String() + "/"})
-	if !res.Reachable || res.AuthOK || res.AuthRejected {
-		t.Fatalf("Ergebnis %+v", res)
+	h := config.HMI{ID: "w", Kind: config.KindWeb, URL: "https://grafana.werk/d/x"}
+	res := f.s.adminProbe(context.Background(), h)
+	if !res.Reachable || res.AuthOK || res.AuthRejected || gotHost != "grafana.werk" || gotPort != 443 {
+		t.Fatalf("Ergebnis %+v, geprüft %q:%d", res, gotHost, gotPort)
 	}
-	l.Close()
-	res = f.s.adminProbe(context.Background(), config.HMI{ID: "w", Kind: config.KindWeb, URL: "http://" + l.Addr().String() + "/"})
-	if res.Reachable {
-		t.Fatalf("geschlossen erreichbar: %+v", res)
+	answer = false
+	if res = f.s.adminProbe(context.Background(), h); res.Reachable {
+		t.Fatalf("nicht erreichbar gemeldet als %+v", res)
 	}
 }
 

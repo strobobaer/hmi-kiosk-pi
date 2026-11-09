@@ -189,7 +189,7 @@ func (s *service) adminProbe(ctx context.Context, h config.HMI) rfb.ProbeResult 
 		}
 		ctx, cancel := context.WithTimeout(ctx, adminProbeLimit)
 		defer cancel()
-		return rfb.ProbeResult{Reachable: rfb.TCPReachable(ctx, host, port)}
+		return rfb.ProbeResult{Reachable: tcpReachable(ctx, host, port)}
 	}
 	pw, err := s.password(h)
 	if err != nil {
