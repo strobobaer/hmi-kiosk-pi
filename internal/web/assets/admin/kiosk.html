@@ -39,5 +39,13 @@
   </fieldset>
   <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
 </form>
+{{if .WebLogins}}
+<form method="post" action="/admin/kiosk/web-logins/delete" class="panel stack" data-confirm="Alle gespeicherten Anmeldungen der Web-Kacheln löschen? Danach muss man sich an jeder Webseite neu anmelden.">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <h2>Web-Kacheln</h2>
+  <p class="hint">Anmeldungen an Webseiten (z. B. Grafana) bleiben im Web-Profil des Terminals gespeichert, auch über Neustarts. Löschen geht nur, wenn keine Web-Kachel geöffnet ist.</p>
+  <div class="actions"><button type="submit" class="btn danger">Gespeicherte Web-Anmeldungen löschen</button></div>
+</form>
+{{end}}
 {{end}}
 {{end}}

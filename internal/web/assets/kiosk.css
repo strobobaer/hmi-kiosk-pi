@@ -140,6 +140,7 @@ button { font: inherit; color: inherit; cursor: default; }
 .badge { font-size: 28px; line-height: 1.1; font-weight: 700; padding: 2px 14px; border-radius: 999px; border: 2px solid; white-space: nowrap; }
 .badge.operate { color: var(--green); border-color: var(--green); }
 .badge.view { color: var(--amber); border-color: var(--amber); }
+.badge.web { color: var(--blue); border-color: var(--blue); }
 .bar-notice { flex: 1; min-width: 0; font-size: 28px; font-weight: 700; color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar-back {
   margin-left: auto;

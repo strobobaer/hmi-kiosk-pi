@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/session"
 )
 
 const (
@@ -126,6 +127,7 @@ func (a *admin) handleClientSave(w http.ResponseWriter, r *http.Request, s sessi
 type kioskFormData struct {
 	Inactivity, Layout, Permanent, InputMode string
 	HideBar, NetworkTiles                    bool
+	WebLogins                                bool // Knopf „Gespeicherte Web-Anmeldungen löschen“
 	HMIs                                     []option
 }
 
@@ -135,10 +137,16 @@ func (a *admin) renderKiosk(w http.ResponseWriter, s sessionRef, status int, err
 			f.HMIs = append(f.HMIs, option{h.ID, h.Name})
 		}
 	}
+	f.WebLogins = a.d.ClearWebLogins != nil
 	a.page(w, s, status, "kiosk.html", "kiosk", "Kiosk", errMsg, f)
 }
 
 func (a *admin) handleKioskForm(w http.ResponseWriter, _ *http.Request, s sessionRef) {
+	a.renderKioskStored(w, s, http.StatusOK, "")
+}
+
+// renderKioskStored zeigt das Kiosk-Formular mit den gespeicherten Werten.
+func (a *admin) renderKioskStored(w http.ResponseWriter, s sessionRef, status int, errMsg string) {
 	cfg, _, err := a.d.Store.Load()
 	if err != nil {
 		http.Error(w, "Konfiguration nicht lesbar", http.StatusInternalServerError)
@@ -149,7 +157,7 @@ func (a *admin) handleKioskForm(w http.ResponseWriter, _ *http.Request, s sessio
 	if mode == "" {
 		mode = config.InputTouch
 	}
-	a.renderKiosk(w, s, http.StatusOK, "", kioskFormData{
+	a.renderKiosk(w, s, status, errMsg, kioskFormData{
 		Inactivity: strconv.Itoa(k.InactivityMinutes), Layout: k.Layout, Permanent: k.PermanentHMI, HideBar: k.HideBar, InputMode: mode, NetworkTiles: k.NetworkTiles,
 	})
 }
@@ -413,4 +421,22 @@ func (a *admin) handleNTP(w http.ResponseWriter, r *http.Request, s sessionRef) 
 		return
 	}
 	a.done(w, r, s, "/admin/network", "NTP-Server gesetzt.")
+}
+
+// handleWebLoginsDelete löscht das Profil der Web-Kacheln (Cookies, also gespeicherte
+// Anmeldungen). Bei offener Web-Kachel lehnt der Dienst ab.
+func (a *admin) handleWebLoginsDelete(w http.ResponseWriter, r *http.Request, s sessionRef) {
+	if a.d.ClearWebLogins == nil {
+		notFound(w)
+		return
+	}
+	if err := a.d.ClearWebLogins(); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, session.ErrWebOpen) {
+			status = http.StatusConflict
+		}
+		a.renderKioskStored(w, s, status, err.Error())
+		return
+	}
+	a.done(w, r, s, "/admin/kiosk", "Gespeicherte Web-Anmeldungen gelöscht.")
 }

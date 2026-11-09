@@ -250,3 +250,23 @@ func TestAdminProbeOfWebTileChecksPortOnly(t *testing.T) {
 		t.Fatalf("geschlossen erreichbar: %+v", res)
 	}
 }
+
+func TestAdminDeletesWebLoginsThroughService(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	f.start()
+	profile := filepath.Join(f.data, "web-profile")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	deps := f.s.adminDeps()
+	if deps.ClearWebLogins == nil {
+		t.Fatal("Admin-Seite ohne Löschen der Web-Anmeldungen")
+	}
+	if err := deps.ClearWebLogins(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(profile); !os.IsNotExist(err) {
+		t.Fatalf("Profil noch da: %v", err)
+	}
+}

@@ -306,6 +306,7 @@ func layoutClass(v string) string {
 type barPage struct {
 	Name     string
 	ViewOnly bool
+	Web      bool
 	Warned   bool
 	Notice   string
 }
@@ -313,7 +314,7 @@ type barPage struct {
 func (l *local) handleBar(w http.ResponseWriter, _ *http.Request) {
 	snap := l.s.Snapshot()
 	render(w, l.bar, "bar.html", barPage{
-		Name: snap.HMIName, ViewOnly: snap.ViewOnly,
+		Name: snap.HMIName, ViewOnly: snap.ViewOnly, Web: snap.Web,
 		Warned: snap.State == session.StateWarned, Notice: snap.Notice,
 	})
 }
@@ -329,6 +330,7 @@ type wireSnapshot struct {
 	HMI         string   `json:"hmi"`
 	HMIName     string   `json:"hmiName"`
 	ViewOnly    bool     `json:"viewOnly"`
+	Web         bool     `json:"web"`
 	Notice      string   `json:"notice"`
 	ConfirmName string   `json:"confirmName"`
 	Unreachable []string `json:"unreachable"`
@@ -337,7 +339,7 @@ type wireSnapshot struct {
 
 func toWire(s session.Snapshot) wireSnapshot {
 	w := wireSnapshot{
-		State: string(s.State), HMI: s.HMI, HMIName: s.HMIName, ViewOnly: s.ViewOnly, Notice: s.Notice,
+		State: string(s.State), HMI: s.HMI, HMIName: s.HMIName, ViewOnly: s.ViewOnly, Web: s.Web, Notice: s.Notice,
 		Unreachable: append([]string{}, s.Unreachable...), BadKey: append([]string{}, s.BadKey...),
 	}
 	if s.Confirm != nil {

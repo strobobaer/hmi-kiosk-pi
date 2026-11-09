@@ -50,7 +50,7 @@
     var busy = s.state === "requesting" || s.state === "starting" || s.state === "reconnecting";
     $("overlay").hidden = !busy;
     if (busy) {
-      $("overlay-text").textContent = "Verbinde mit " + s.hmiName + " …";
+      $("overlay-text").textContent = (s.web ? "Öffne " : "Verbinde mit ") + s.hmiName + " …";
       $("overlay-cancel").hidden = s.state === "reconnecting";
     }
     var confirming = s.state === "confirming";
@@ -81,8 +81,8 @@
   function renderBar(s) {
     $("bar-name").textContent = s.hmiName;
     var m = $("bar-mode");
-    m.textContent = s.viewOnly ? "Nur ansehen" : "Bedienen";
-    m.className = "badge " + (s.viewOnly ? "view" : "operate");
+    m.textContent = s.web ? "Webseite" : s.viewOnly ? "Nur ansehen" : "Bedienen";
+    m.className = "badge " + (s.web ? "web" : s.viewOnly ? "view" : "operate");
     var n = $("bar-notice");
     n.textContent = s.state === "warned" ? s.notice : "";
     n.hidden = s.state !== "warned";

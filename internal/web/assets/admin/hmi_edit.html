@@ -2,25 +2,59 @@
 {{with .Body}}
 <form method="post" action="/admin/hmis/{{if .IsNew}}new{{else}}{{.ID}}{{end}}" class="panel stack">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <label>Art
+    <select name="kind" data-kind-select>
+      <option value="vnc"{{if eq .Kind "vnc"}} selected{{end}}>VNC (HMI)</option>
+      <option value="web"{{if eq .Kind "web"}} selected{{end}}>Webseite (z. B. Grafana-Dashboard)</option>
+    </select>
+  </label>
   <label>Name
     <input type="text" name="name" value="{{.Name}}" maxlength="120" required>
   </label>
-  <div class="row">
-    <label class="grow">Adresse
-      <input type="text" name="host" value="{{.Host}}" autocapitalize="off" spellcheck="false" required>
+  <fieldset class="stack" data-kind="web"{{if ne .Kind "web"}} hidden disabled{{end}}>
+    <legend>Webseite</legend>
+    <label>Adresse
+      <input type="url" name="url" value="{{.URL}}" placeholder="{{.URLExample}}" autocapitalize="off" spellcheck="false" required>
     </label>
-    <label class="short">Port
-      <input type="text" name="port" value="{{.Port}}" inputmode="numeric" required>
+    <p class="hint">Nur http oder https, ohne Benutzer und Passwort in der Adresse (Anmeldung in der Webseite; sie bleibt gespeichert). Die Seite darf nur auf demselben Server (Schema, Rechner, Port) weiternavigieren.</p>
+    <p class="hint">Grafana: „?kiosk“ an die Dashboard-Adresse hängen (oder „&amp;kiosk“, wenn schon ein „?“ darin steht) blendet die Grafana-Menüs aus, z. B. {{.URLExample}}. Ein selbstsigniertes HTTPS-Zertifikat zeigt eine Warnseite; bitte http im Werksnetz oder ein vertrauenswürdiges Zertifikat verwenden.</p>
+  </fieldset>
+  <fieldset class="stack" data-kind="vnc"{{if eq .Kind "web"}} hidden disabled{{end}}>
+    <legend>VNC</legend>
+    <div class="row">
+      <label class="grow">Adresse
+        <input type="text" name="host" value="{{.Host}}" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <label class="short">Port
+        <input type="text" name="port" value="{{.Port}}" inputmode="numeric" required>
+      </label>
+    </div>
+    <label>VNC-Passwort
+      <input type="password" name="password" autocomplete="new-password" placeholder="{{if .HasPassword}}gesetzt – leer lassen zum Beibehalten{{else}}keines gesetzt{{end}}">
     </label>
-  </div>
-  <label>VNC-Passwort
-    <input type="password" name="password" autocomplete="new-password" placeholder="{{if .HasPassword}}gesetzt – leer lassen zum Beibehalten{{else}}keines gesetzt{{end}}">
-  </label>
-  {{if eq .PasswordNote "lost"}}<p class="msg warn">Das Passwort fehlt: Es ging bei einer Schlüsselreparatur verloren. Bitte hier neu eingeben.</p>{{end}}
-  {{if eq .PasswordNote "unreadable"}}<p class="msg warn">Das gespeicherte Passwort ist nicht lesbar (falscher Geräteschlüssel). Hier ein neues eingeben oder alle betroffenen Passwörter über die Reparatur zurücksetzen. <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
-  {{if .HasPassword}}
-  <label class="check"><input type="checkbox" name="remove_password"> Passwort entfernen</label>
-  {{end}}
+    {{if eq .PasswordNote "lost"}}<p class="msg warn">Das Passwort fehlt: Es ging bei einer Schlüsselreparatur verloren. Bitte hier neu eingeben.</p>{{end}}
+    {{if eq .PasswordNote "unreadable"}}<p class="msg warn">Das gespeicherte Passwort ist nicht lesbar (falscher Geräteschlüssel). Hier ein neues eingeben oder alle betroffenen Passwörter über die Reparatur zurücksetzen. <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
+    {{if .HasPassword}}
+    <label class="check"><input type="checkbox" name="remove_password"> Passwort entfernen</label>
+    {{end}}
+    <div class="row">
+      <label class="grow">Modus
+        <select name="mode">
+          <option value=""{{if eq .Mode ""}} selected{{end}}>Wie global eingestellt</option>
+          <option value="takeover"{{if eq .Mode "takeover"}} selected{{end}}>Übernahme</option>
+          <option value="lock"{{if eq .Mode "lock"}} selected{{end}}>Sperre</option>
+        </select>
+      </label>
+      <label class="grow">Art der Übernahme
+        <select name="takeover">
+          <option value="confirm"{{if eq .Takeover "confirm"}} selected{{end}}>Mit Rückfrage</option>
+          <option value="immediate"{{if eq .Takeover "immediate"}} selected{{end}}>Sofort</option>
+        </select>
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" name="view_only"{{if .ViewOnly}} checked{{end}}> Nur ansehen</label>
+    <label class="check"><input type="checkbox" name="allow_watch"{{if .AllowWatch}} checked{{end}}> Mitschauen erlauben</label>
+  </fieldset>
   <div class="row">
     <label class="grow">Symbol
       <select name="icon">
@@ -36,29 +70,12 @@
       <input type="text" name="order" value="{{.Order}}" inputmode="numeric">
     </label>
   </div>
-  <div class="row">
-    <label class="grow">Modus
-      <select name="mode">
-        <option value=""{{if eq .Mode ""}} selected{{end}}>Wie global eingestellt</option>
-        <option value="takeover"{{if eq .Mode "takeover"}} selected{{end}}>Übernahme</option>
-        <option value="lock"{{if eq .Mode "lock"}} selected{{end}}>Sperre</option>
-      </select>
-    </label>
-    <label class="grow">Art der Übernahme
-      <select name="takeover">
-        <option value="confirm"{{if eq .Takeover "confirm"}} selected{{end}}>Mit Rückfrage</option>
-        <option value="immediate"{{if eq .Takeover "immediate"}} selected{{end}}>Sofort</option>
-      </select>
-    </label>
-  </div>
   <label>Erreichbarkeit prüfen
     <select name="reach">
       {{$v := .Reach}}{{range .ReachOptions}}<option value="{{.Value}}"{{if eq .Value $v}} selected{{end}}>{{.Label}}</option>{{end}}
     </select>
-    <span class="hint">Die Kachel zeigt damit, ob das HMI antwortet. VNC-Port kann bei RealVNC zur Sperre führen (zu viele Fehlversuche).</span>
+    <span class="hint">Die Kachel zeigt damit, ob das Ziel antwortet (bei einer Webseite: Rechner und Port der Adresse). Der VNC-Port kann bei RealVNC zur Sperre führen (zu viele Fehlversuche).</span>
   </label>
-  <label class="check"><input type="checkbox" name="view_only"{{if .ViewOnly}} checked{{end}}> Nur ansehen</label>
-  <label class="check"><input type="checkbox" name="allow_watch"{{if .AllowWatch}} checked{{end}}> Mitschauen erlauben</label>
   <div class="actions">
     <button type="submit" class="btn primary">Speichern</button>
     <a class="btn" href="/admin/hmis">Abbrechen</a>

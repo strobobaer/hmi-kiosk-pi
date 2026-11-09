@@ -11,10 +11,10 @@
 <div id="hints" class="hints" hidden></div>
 <div id="notice" class="notice" role="alert" hidden></div>
 <main id="grid" class="grid {{.Layout}}">
-{{range .Tiles}}<button type="button" class="tile {{color .Color}}{{if not .Reachable}} muted{{end}}{{if .BusyBy}} busy{{end}}" data-id="{{.ID}}"{{if .Disabled}} disabled{{end}}>
+{{range .Tiles}}<button type="button" class="tile {{color .Color}}{{if not .Reachable}} muted{{end}}{{if .BusyBy}} busy{{end}}{{if .Web}} tile-web{{end}}" data-id="{{.ID}}"{{if .Disabled}} disabled{{end}}>
 <span class="tile-icon">{{icon .Icon}}</span>
 <span class="tile-name">{{.Name}}</span>
-{{if .BusyBy}}<span class="tile-sub">belegt durch {{.BusyBy}}</span>{{else if .AuthFailed}}<span class="tile-sub">Passwort falsch</span>{{else if not .Reachable}}<span class="tile-sub">nicht erreichbar</span>{{end}}
+{{if .BusyBy}}<span class="tile-sub">belegt durch {{.BusyBy}}</span>{{else if .AuthFailed}}<span class="tile-sub">Passwort falsch</span>{{else if not .Reachable}}<span class="tile-sub">nicht erreichbar</span>{{else if .Web}}<span class="tile-sub">Webseite</span>{{end}}
 </button>
 {{end}}</main>
 <div id="overlay" class="overlay" hidden>

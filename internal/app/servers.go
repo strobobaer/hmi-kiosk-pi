@@ -140,7 +140,11 @@ func (s *service) adminMux(admin http.Handler) http.Handler {
 // gemeinsamen Sitzungen und gemeinsamer Sperre.
 func (s *service) adminHandlers() (remote, local http.Handler) {
 	// Ohne Schlüsseldatei bleibt die Admin-Seite erreichbar: Sie leitet auf die Reparatur um.
-	return web.NewAdminHandlers(web.AdminDeps{
+	return web.NewAdminHandlers(s.adminDeps())
+}
+
+func (s *service) adminDeps() web.AdminDeps {
+	return web.AdminDeps{
 		Store:        s.store,
 		Box:          s.box,
 		Apply:        s.Apply,
@@ -171,7 +175,8 @@ func (s *service) adminHandlers() (remote, local http.Handler) {
 		Keyboard:             s.kbd,
 		LocalActive:          s.presence.touch,
 		LocalLeft:            s.localAdminLeft,
-	})
+		ClearWebLogins:       s.clearWebLogins,
+	}
 }
 
 func shutdownServers(servers ...*http.Server) {

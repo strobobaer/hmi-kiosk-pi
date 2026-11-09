@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strconv"
@@ -56,6 +57,9 @@ func validColor(s string) bool { return slices.Contains(config.HMIColors, s) }
 type hmiFormData struct {
 	IsNew                bool
 	ID                   string
+	Kind                 string // "vnc" oder "web"
+	URL                  string // nur Web-Kachel
+	URLExample           string // Beispiel einer Grafana-Adresse für den Hinweis
 	Name, Host, Port     string
 	Icon, Color, Order   string
 	Mode, Takeover       string
@@ -67,12 +71,13 @@ type hmiFormData struct {
 	ReachOptions         []option
 }
 
-func newHMIFormData() hmiFormData {
-	return hmiFormData{IsNew: true, Port: "5900", Icon: "monitor", Color: "blue", Order: "0", Takeover: string(config.StyleConfirm), AllowWatch: true, Reach: config.ReachPing, Icons: iconOptions(), Colors: colorOptions(), ReachOptions: reachOptions()}
+func newHMIFormData(kind string) hmiFormData {
+	return hmiFormData{IsNew: true, Kind: formKind(kind), Port: "5900", Icon: "monitor", Color: "blue", Order: "0", Takeover: string(config.StyleConfirm), AllowWatch: true, Reach: config.ReachPing, Icons: iconOptions(), Colors: colorOptions(), ReachOptions: reachOptions()}
 }
 
 func hmiFormFrom(h config.HMI) hmiFormData {
 	f := hmiFormData{
+		Kind: formKind(h.Kind), URL: h.URL,
 		ID: h.ID, Name: h.Name, Host: h.Host, Port: strconv.Itoa(h.Port),
 		Icon: h.Icon, Color: h.Color, Order: strconv.Itoa(h.Order),
 		Takeover: string(h.Takeover), ViewOnly: h.ViewOnly, AllowWatch: h.AllowWatch,
@@ -88,6 +93,7 @@ func hmiFormFromRequest(r *http.Request, id string, isNew, hasPassword bool) hmi
 	v := r.PostForm
 	return hmiFormData{
 		IsNew: isNew, ID: id, HasPassword: hasPassword,
+		Kind: formKind(v.Get("kind")), URL: strings.TrimSpace(v.Get("url")),
 		Name: strings.TrimSpace(v.Get("name")), Host: strings.TrimSpace(v.Get("host")), Port: strings.TrimSpace(v.Get("port")),
 		Icon: v.Get("icon"), Color: v.Get("color"), Order: strings.TrimSpace(v.Get("order")),
 		Mode: v.Get("mode"), Takeover: v.Get("takeover"),
@@ -98,22 +104,24 @@ func hmiFormFromRequest(r *http.Request, id string, isNew, hasPassword bool) hmi
 
 // apply überträgt das Formular auf h. Das Passwort behandelt applyPassword.
 func (f hmiFormData) apply(h *config.HMI) error {
-	port, err := strconv.Atoi(f.Port)
-	if err != nil {
-		return fmt.Errorf("Port muss eine Zahl sein: %q", f.Port)
-	}
-	order := 0
-	if f.Order != "" {
-		if order, err = strconv.Atoi(f.Order); err != nil {
-			return fmt.Errorf("Reihenfolge muss eine Zahl sein: %q", f.Order)
-		}
-	}
 	if !validIcon(f.Icon) {
 		return errors.New("Unbekanntes Symbol.")
 	}
 	if !validColor(f.Color) {
 		return errors.New("Unbekannte Farbe.")
 	}
+	order, err := parseOrder(f.Order)
+	if err != nil {
+		return err
+	}
+	if f.Kind == config.KindWeb {
+		return f.applyWeb(h, order)
+	}
+	port, err := strconv.Atoi(f.Port)
+	if err != nil {
+		return fmt.Errorf("Port muss eine Zahl sein: %q", f.Port)
+	}
+	h.Kind, h.URL = "", ""
 	h.Name, h.Host, h.Port = f.Name, f.Host, port
 	h.Icon, h.Color, h.Order = f.Icon, f.Color, order
 	h.ViewOnly, h.AllowWatch = f.ViewOnly, f.AllowWatch
@@ -128,6 +136,9 @@ func (f hmiFormData) apply(h *config.HMI) error {
 }
 
 func (a *admin) applyPassword(h *config.HMI, r *http.Request) error {
+	if h.IsWeb() {
+		return nil // eine Webseite hat kein VNC-Passwort; die Anmeldung bleibt im Web-Profil
+	}
 	pw, remove := r.PostForm.Get("password"), r.PostForm.Get("remove_password") != ""
 	switch {
 	case remove && pw != "":
@@ -156,6 +167,8 @@ func newHMIID() (string, error) {
 
 type hmiCard struct {
 	ID, Name, Host        string
+	Web                   bool // Web-Kachel: URL statt Host und Port
+	URL                   string
 	Port, Order           int
 	Icon, Color           string
 	ViewOnly, HasPassword bool
@@ -192,6 +205,7 @@ func hmiCards(c config.Config, probeID string, probe *rfb.ProbeResult) []hmiCard
 			ID: h.ID, Name: h.Name, Host: h.Host, Port: h.Port, Order: h.Order,
 			Icon: h.Icon, Color: h.Color, ViewOnly: h.ViewOnly, HasPassword: h.PasswordEnc != "",
 		}
+		card.Web, card.URL = h.IsWeb(), h.URL
 		card.AuthFailed = h.AuthFailed
 		if h.ID == probeID {
 			card.Probe = probe
@@ -244,6 +258,8 @@ func (a *admin) findHMI(id string) (config.HMI, bool) {
 // --- Anlegen und Bearbeiten ---
 
 func (a *admin) renderHMIForm(w http.ResponseWriter, s sessionRef, status int, errMsg string, f hmiFormData) {
+	f.URL = withoutUserinfo(f.URL)
+	f.URLExample = grafanaExample
 	title := "HMI bearbeiten"
 	if f.IsNew {
 		title = "HMI anlegen"
@@ -253,8 +269,8 @@ func (a *admin) renderHMIForm(w http.ResponseWriter, s sessionRef, status int, e
 	a.page(w, s, status, "hmi_edit.html", "hmis", title, errMsg, f)
 }
 
-func (a *admin) handleHMINewForm(w http.ResponseWriter, _ *http.Request, s sessionRef) {
-	a.renderHMIForm(w, s, http.StatusOK, "", newHMIFormData())
+func (a *admin) handleHMINewForm(w http.ResponseWriter, r *http.Request, s sessionRef) {
+	a.renderHMIForm(w, s, http.StatusOK, "", newHMIFormData(r.URL.Query().Get("kind")))
 }
 
 func (a *admin) handleHMIEditForm(w http.ResponseWriter, r *http.Request, s sessionRef) {
@@ -377,7 +393,52 @@ func clearAuthFailed(id string) func(*config.Config) error {
 func reachOptions() []option {
 	return []option{
 		{config.ReachPing, "Ping (Standard)"},
-		{config.ReachPort, "VNC-Port"},
+		{config.ReachPort, "Port (VNC-Port bzw. Port der Webseite)"},
 		{config.ReachOff, "aus"},
 	}
+}
+
+// formKind: alles außer "web" ist VNC (auch alte Formulare ohne das Feld).
+func formKind(k string) string {
+	if k == config.KindWeb {
+		return config.KindWeb
+	}
+	return config.KindVNC
+}
+
+func parseOrder(s string) (int, error) {
+	if s == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("Reihenfolge muss eine Zahl sein: %q", s)
+	}
+	return n, nil
+}
+
+// applyWeb setzt eine Web-Kachel: nur Name, Adresse, Symbol, Farbe, Reihenfolge und
+// Erreichbarkeit. Die VNC-Felder (auch das Passwort) werden geleert.
+func (f hmiFormData) applyWeb(h *config.HMI, order int) error {
+	if _, err := config.ParseWebURL(f.URL); err != nil {
+		return err
+	}
+	*h = config.HMI{
+		ID: h.ID, Name: f.Name, Kind: config.KindWeb, URL: f.URL,
+		Icon: f.Icon, Color: f.Color, Order: order, Reach: f.Reach,
+	}
+	return nil
+}
+
+const grafanaExample = "http://grafana:3000/d/abc/linie-1?orgId=1&kiosk"
+
+// withoutUserinfo entfernt Benutzer und Passwort aus einer abgelehnten Adresse, damit sie
+// nicht im Formular (und in der Antwort) stehen bleiben.
+func withoutUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }

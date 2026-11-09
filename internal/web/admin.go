@@ -105,6 +105,8 @@ type AdminDeps struct {
 	// zur Kachelseite über „Zurück zum Kiosk“ oder nach Inaktivität. nil: nicht gebraucht.
 	LocalActive func()
 	LocalLeft   func()
+	// ClearWebLogins löscht das Profil der Web-Kacheln (nil: Knopf fehlt); session.ErrWebOpen bei offener Web-Kachel.
+	ClearWebLogins func() error
 }
 
 const formBodyLimit = 64 << 10
@@ -231,6 +233,7 @@ func (a *admin) routes() []route {
 		post("/admin/client", a.handleClientSave),
 		get("/admin/kiosk", a.handleKioskForm),
 		post("/admin/kiosk", a.handleKioskSave),
+		post("/admin/kiosk/web-logins/delete", a.handleWebLoginsDelete),
 		get("/admin/terminals", a.handleTerminalsForm),
 		post("/admin/terminals", a.handleTerminalsSave),
 		post("/admin/terminals/generate-key", a.handleKeyGenerate),

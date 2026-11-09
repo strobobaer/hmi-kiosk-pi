@@ -9,7 +9,7 @@
 <body class="page-bar" data-page="bar">
 <header class="bar">
 <span id="bar-name" class="bar-name">{{.Name}}</span>
-<span id="bar-mode" class="badge {{if .ViewOnly}}view{{else}}operate{{end}}">{{if .ViewOnly}}Nur ansehen{{else}}Bedienen{{end}}</span>
+<span id="bar-mode" class="badge {{if .Web}}web{{else if .ViewOnly}}view{{else}}operate{{end}}">{{if .Web}}Webseite{{else if .ViewOnly}}Nur ansehen{{else}}Bedienen{{end}}</span>
 <span id="bar-notice" class="bar-notice"{{if not .Warned}} hidden{{end}}>{{if .Warned}}{{.Notice}}{{end}}</span>
 <button type="button" class="bar-osk" data-osk-toggle aria-label="Bildschirmtastatur ein- oder ausblenden">Tastatur</button>
 <button type="button" id="bar-back" class="bar-back">Zurück</button>
