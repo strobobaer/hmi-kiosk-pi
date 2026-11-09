@@ -45,6 +45,9 @@
     if (t) { send("toggle"); }
   });
 
+  // autofocus (Anmeldung) kann vor diesem Skript greifen: dann hier zeigen.
+  if (auto && isTextField(document.activeElement)) { send("show"); }
+
   // Seite verlassen (Zurück zum Kiosk, Abmelden): die Tastatur bleibt nicht stehen.
   window.addEventListener("pagehide", function () {
     if (auto && navigator.sendBeacon) { navigator.sendBeacon("/api/keyboard/hide"); }
