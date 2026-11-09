@@ -12,7 +12,6 @@ import (
 	"testing"
 )
 
-
 func packLevelWith(t *testing.T, priv []byte, version string, level int) []byte {
 	t.Helper()
 	dir := t.TempDir()

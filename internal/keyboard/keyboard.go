@@ -24,14 +24,14 @@ import (
 const Program = "wvkbd-mobintl"
 
 const (
-	stopGrace     = 2 * time.Second
-	backoffMin    = time.Second
-	backoffMax    = 30 * time.Second
-	stableAfter   = 60 * time.Second
+	stopGrace   = 2 * time.Second
+	backoffMin  = time.Second
+	backoffMax  = 30 * time.Second
+	stableAfter = 60 * time.Second
 	// startGrace: So lange nach dem Start schickt der Steuerer keine Signale. wvkbd richtet
 	// seine Signalbehandlung erst beim Start ein; vorher beendete SIGUSR1/2 das Programm.
 	// Wünsche aus dieser Zeit gelten danach (der letzte gewinnt).
-	startGrace = 300 * time.Millisecond
+	startGrace    = 300 * time.Millisecond
 	defaultHeight = 360 // ein Drittel von 1080
 	// layers: wvkbd hat kein deutsches Layout. „full“ ist QWERTY mit Ziffernreihe, Umlaute
 	// und ß über die Taste „Cmp“ und den Grundbuchstaben (a, o, u, s); „special“ für Zeichen.

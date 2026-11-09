@@ -227,17 +227,17 @@ func (p *fakeProfile) last() client.Spec {
 }
 
 type harness struct {
-	t       *testing.T
-	m       *Manager
-	clk     *fakeClock
-	coord   *fakeCoord
-	runner  *fakeRunner
-	profile *fakeProfile
-	log     *eventLog
-	web     *fakeProfile // Web-Kacheln; nil heißt: nicht verfügbar
+	t        *testing.T
+	m        *Manager
+	clk      *fakeClock
+	coord    *fakeCoord
+	runner   *fakeRunner
+	profile  *fakeProfile
+	log      *eventLog
+	web      *fakeProfile // Web-Kacheln; nil heißt: nicht verfügbar
 	webReady func(context.Context, config.HMI) error
-	sub     <-chan Snapshot
-	tcp     atomic.Bool
+	sub      <-chan Snapshot
+	tcp      atomic.Bool
 
 	mu          sync.Mutex
 	cfg         config.Config
