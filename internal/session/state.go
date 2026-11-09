@@ -56,6 +56,11 @@ type Snapshot struct {
 	Confirm      *coord.Holder
 	Unreachable  []string
 	BadKey       []string
+	// Since ist der Beginn der Sitzung oder des Wartens der Daueranzeige (Null auf den Kacheln).
+	Since time.Time
+	// Remote: von PDH geöffnet (HMIName ist dann „<Label> – von PDH: <Benutzer>“), RemoteLabel das Label.
+	Remote      bool
+	RemoteLabel string
 }
 
 // Ended beschreibt eine beendete Sitzung für das Sitzungsprotokoll.
@@ -65,6 +70,7 @@ type Ended struct {
 	Watch        bool // Mitschauen
 	Permanent    bool
 	Web          bool // Web-Kachel
+	Remote       bool // von PDH geöffnet
 	Connected    bool // die Verbindung stand mindestens einmal
 	Duration     time.Duration
 	Reason       string

@@ -98,6 +98,9 @@ type DisplayCfg struct {
 
 type AdminCfg struct {
 	PasswordHash string `json:"passwordHash"`
+	// RemoteKeyHash ist SHA-256 (hex klein) des Schlüssels für die Fernbefehle von PDH; leer: aus.
+	// Er gehört zu diesem Terminal: Export und Import übernehmen ihn nicht (wie das Admin-Passwort).
+	RemoteKeyHash string `json:"remoteKeyHash,omitempty"`
 }
 
 type Config struct {

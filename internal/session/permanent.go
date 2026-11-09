@@ -18,6 +18,7 @@ type permanentState struct {
 	waitingID      string
 	waitingName    string
 	waitingWeb     bool
+	waitingSince   time.Time
 
 	// Nach abgelehntem Passwort bleibt die Daueranzeige stehen, bis die Konfiguration
 	// ein anderes Passwort oder eine aufgehobene Markierung zeigt (das Speichern der
@@ -143,7 +144,7 @@ func (m *Manager) scheduleReconnect(h config.HMI, reason string) {
 // scheduleWait plant den nächsten Versuch der Daueranzeige nach wait.
 func (m *Manager) scheduleWait(h config.HMI, reason string, wait time.Duration) {
 	p := &m.perm
-	p.waitingID, p.waitingName, p.waitingWeb = h.ID, h.Name, h.IsWeb()
+	p.waitingID, p.waitingName, p.waitingWeb, p.waitingSince = h.ID, h.Name, h.IsWeb(), m.d.Clock.Now()
 	m.state = StateReconnecting
 	m.notice = "Neuer Versuch in " + waitText(wait)
 	if reason != "" {

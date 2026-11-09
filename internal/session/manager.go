@@ -77,6 +77,9 @@ type attempt struct {
 	confirmed bool // Rückfrage ist bejaht, nicht erneut fragen
 	watch     bool
 	web       bool // Web-Kachel: lokal, keine Abstimmung mit anderen Terminals
+	adHoc     bool // PDH-Sitzung ohne passende Kachel: lokal, keine Abstimmung
+	remote    *remoteInfo // von PDH geöffnet
+	since     time.Time
 	decision  coord.Decision
 
 	ctx    context.Context
@@ -340,6 +343,11 @@ func (m *Manager) buildSnapshot() Snapshot {
 		s.ViewOnly = m.cur.hmi.ViewOnly || m.cur.watch
 		s.HideBar = m.cur.barHidden
 		s.Web = m.cur.web
+		s.Since = m.cur.since
+		if r := m.cur.remote; r != nil {
+			s.HMIName, s.Remote, s.RemoteLabel = r.display(), true, r.label
+			s.ViewOnly = r.viewOnly || m.cur.watch
+		}
 		if m.state == StateConfirming && m.cur.decision.Holder != nil {
 			h := *m.cur.decision.Holder
 			s.Confirm = &h
@@ -347,6 +355,7 @@ func (m *Manager) buildSnapshot() Snapshot {
 	case m.state == StateReconnecting:
 		s.HMI, s.HMIName = m.perm.waitingID, m.perm.waitingName
 		s.Web = m.perm.waitingWeb
+		s.Since = m.perm.waitingSince
 	}
 	return s
 }
@@ -416,9 +425,12 @@ func (m *Manager) WhenNoWeb(f func() error) error {
 	})
 }
 
-// release gibt die Belegung frei; eine Web-Kachel belegt nie etwas.
+// release gibt die Belegung frei; eine Web-Kachel oder nur lokale PDH-Sitzung belegt nie etwas.
 func (m *Manager) release(a *attempt) {
-	if !a.web {
+	if !a.local() {
 		m.d.Coord.Release(a.hmi.ID)
 	}
 }
+
+// local meldet einen Versuch ohne Abstimmung mit anderen Terminals.
+func (a *attempt) local() bool { return a.web || a.adHoc }

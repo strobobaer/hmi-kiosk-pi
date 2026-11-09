@@ -138,6 +138,9 @@ func Validate(c Config) error {
 	default:
 		return fmt.Errorf("Unbekannte Bedienart: %q (erlaubt: Touch oder Maus)", c.Kiosk.InputMode)
 	}
+	if err := checkRemoteKeyHash(c.Admin.RemoteKeyHash); err != nil {
+		return err
+	}
 	if !ValidUpdateRepo(c.Update.Repo) {
 		return fmt.Errorf("Update-Quelle ungültig: %q (erwartet Besitzer/Repository)", c.Update.Repo)
 	}
@@ -163,6 +166,21 @@ func validateClientAndDisplay(c Config) error {
 	w, h := c.Display.OverrideW, c.Display.OverrideH
 	if (w != 0 || h != 0) && (w <= 0 || h <= 0) {
 		return fmt.Errorf("Auflösung unvollständig: %d×%d (beide Werte leer oder beide größer 0)", w, h)
+	}
+	return nil
+}
+
+// CheckName und CheckHost sind die Regeln für Namen und Hosts der Konfiguration, etwa für
+// die Eingaben der Fernbefehle von PDH.
+func CheckName(what, s string) error { return checkName(what, s) }
+
+func CheckHost(what, s string) error { return checkHost(what, s) }
+
+var remoteKeyHashRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func checkRemoteKeyHash(h string) error {
+	if h != "" && !remoteKeyHashRe.MatchString(h) {
+		return errors.New("Schlüssel der Fernsteuerung (PDH) ungültig gespeichert")
 	}
 	return nil
 }

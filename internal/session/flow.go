@@ -20,7 +20,7 @@ import (
 // Blockierende Schritte laufen in eigenen Goroutinen und melden sich per post.
 
 func (m *Manager) begin(h config.HMI, cfg config.Config, auto bool) {
-	a := &attempt{hmi: h, auto: auto, permanent: cfg.Kiosk.PermanentHMI == h.ID, web: h.IsWeb()}
+	a := &attempt{hmi: h, auto: auto, permanent: cfg.Kiosk.PermanentHMI == h.ID, web: h.IsWeb(), since: m.d.Clock.Now()}
 	a.ctx, a.cancel = context.WithCancel(m.runCtx)
 	if a.permanent {
 		m.perm.halted = false
@@ -58,6 +58,10 @@ func (m *Manager) onRequest(a *attempt, res coord.Result) {
 	addNames(&m.hint, res.Unreachable...)
 	addNames(&m.badKey, res.BadKey...)
 	a.decision = res.Decision
+	if a.remote != nil {
+		m.onRemoteRequest(a, res)
+		return
+	}
 	d := res.Decision
 	switch {
 	case res.Rejected || d.Outcome == coord.Reject:
@@ -99,6 +103,10 @@ func addNames(list *[]string, names ...string) {
 // precheck läuft vor einer Übernahme: Ein falsches Passwort oder ein totes HMI
 // soll niemanden vom HMI verdrängen.
 func (m *Manager) precheck(a *attempt) {
+	if a.remote != nil {
+		m.probe(a, a.remote.password)
+		return
+	}
 	pw, err := m.d.Password(a.hmi)
 	if err != nil {
 		log.Printf("Sitzung: Passwort von HMI %q nicht lesbar: %v", a.hmi.ID, err)
@@ -109,6 +117,10 @@ func (m *Manager) precheck(a *attempt) {
 		m.end(a, fmt.Sprintf("Passwort von „%s“ lässt sich nicht entschlüsseln", a.hmi.Name), false)
 		return
 	}
+	m.probe(a, pw)
+}
+
+func (m *Manager) probe(a *attempt, pw string) {
 	a.password, a.checked = pw, true
 	h := a.hmi
 	go func() {
@@ -129,6 +141,9 @@ func (m *Manager) onProbe(a *attempt, r rfb.ProbeResult) {
 	case r.Locked:
 		a.locked = true
 		m.end(a, lockoutNotice(r.Err), false)
+	case r.AuthRejected && a.remote != nil:
+		// Das Passwort kam von PDH, nicht aus der Kachel: nichts markieren.
+		m.end(a, remoteAuthNotice, false)
 	case r.AuthRejected:
 		a.authRejected = true
 		if m.d.MarkAuthFailed != nil {
@@ -184,7 +199,7 @@ func (m *Manager) buildSpec(a *attempt, cfg config.Config) client.Spec {
 		Host:       a.hmi.Host,
 		Port:       a.hmi.Port,
 		Password:   a.password,
-		ViewOnly:   a.hmi.ViewOnly || a.watch,
+		ViewOnly:   a.viewOnly(),
 		Quality:    cfg.Client.Quality,
 		ColorDepth: cfg.Client.ColorDepth,
 		Scale:      cfg.Client.Scale,
@@ -222,7 +237,7 @@ func (m *Manager) startClient(a *attempt) {
 		return
 	}
 	// Mitschauen belegt nicht.
-	if !a.watch {
+	if !a.watch && !a.local() {
 		m.d.Coord.Hold(a.hmi.ID, strconv.Itoa(m.sessionN))
 	}
 	m.launch(a, cmd, "Der VNC-Client konnte nicht gestartet werden")
@@ -304,6 +319,14 @@ func (m *Manager) cleanupRAM(a *attempt) {
 func (m *Manager) end(a *attempt, notice string, operator bool) {
 	now := m.d.Clock.Now()
 	a.cancel()
+	if a.remote != nil {
+		msg := notice
+		if msg == "" {
+			msg = remoteStartingMessage
+		}
+		m.answer(a, RemoteResult{Outcome: RemoteNotReady, Message: msg})
+		a.remote.password = ""
+	}
 	m.cleanupRAM(a)
 	m.release(a)
 	m.reportEnd(a, notice, operator)
@@ -332,14 +355,18 @@ func (m *Manager) reportEnd(a *attempt, notice string, operator bool) {
 	default:
 		reason = "Beendet"
 	}
-	m.d.OnEnd(Ended{
+	e := Ended{
 		HMI: a.hmi.ID, HMIName: a.hmi.Name,
 		Web:      a.web,
 		ViewOnly: a.hmi.ViewOnly, Watch: a.watch, Permanent: a.permanent,
 		Connected: !a.connectedAt.IsZero(),
 		Duration:  m.d.Clock.Now().Sub(a.startedAt),
 		Reason:    reason,
-	})
+	}
+	if r := a.remote; r != nil {
+		e.Remote, e.HMIName, e.ViewOnly = true, r.display(), r.viewOnly
+	}
+	m.d.OnEnd(e)
 }
 
 func (m *Manager) onBack() {
@@ -366,7 +393,7 @@ func (m *Manager) onBack() {
 // überholt. Beim Mitschauen belegen wir nichts, also gibt es nichts zu räumen.
 func (m *Manager) onTakeoverEvent(ev coord.Event) {
 	a := m.cur
-	if a == nil || a.hmi.ID != ev.HMI || a.watch || a.web || m.state == StateStopping {
+	if a == nil || a.hmi.ID != ev.HMI || a.watch || a.local() || m.state == StateStopping {
 		return
 	}
 	by := holderName(&ev.By)
@@ -394,7 +421,7 @@ func (m *Manager) onTakeoverEvent(ev coord.Event) {
 // würde. Alle anderen Änderungen lassen die Sitzung in Ruhe.
 func (m *Manager) checkConfig(cfg config.Config) {
 	a := m.cur
-	if a == nil || m.state == StateStopping {
+	if a == nil || a.adHoc || m.state == StateStopping {
 		return
 	}
 	h, ok := findHMI(cfg, a.hmi.ID)
@@ -402,11 +429,13 @@ func (m *Manager) checkConfig(cfg config.Config) {
 		m.endOrStop(a, fmt.Sprintf("„%s“ wurde gelöscht", a.hmi.Name))
 		return
 	}
-	if h.Kind != a.hmi.Kind || h.URL != a.hmi.URL || h.Host != a.hmi.Host || h.Port != a.hmi.Port || m.passwordChanged(a, h) {
+	if h.Kind != a.hmi.Kind || h.URL != a.hmi.URL || h.Host != a.hmi.Host || h.Port != a.hmi.Port || a.remote == nil && m.passwordChanged(a, h) {
 		m.endOrStop(a, fmt.Sprintf("Einstellungen von „%s“ wurden geändert", a.hmi.Name))
 		return
 	}
 	switch {
+	case a.remote != nil:
+		// Eine PDH-Sitzung wird nie zur Daueranzeige.
 	case cfg.Kiosk.PermanentHMI == a.hmi.ID:
 		a.permanent = true
 	case a.permanent:
@@ -471,4 +500,12 @@ func (m *Manager) launchWeb(a *attempt, p client.Profile) {
 		return
 	}
 	m.launch(a, cmd, "Die Webseite konnte nicht geöffnet werden")
+}
+
+// viewOnly: Bei PDH gilt der Modus des Befehls, sonst die Einstellung der Kachel; Mitschauen immer.
+func (a *attempt) viewOnly() bool {
+	if a.remote != nil {
+		return a.remote.viewOnly || a.watch
+	}
+	return a.hmi.ViewOnly || a.watch
 }
