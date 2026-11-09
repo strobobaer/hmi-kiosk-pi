@@ -55,6 +55,8 @@ func (tigervnc) Prepare(dir string, s Spec) (Command, error) {
 			fmt.Sprintf("-geometry=%dx%d+%d+%d", s.W, s.H, s.X, s.Y),
 			"-PasswordFile=" + pf,
 			"-ViewOnly=" + boolStr(s.ViewOnly),
+			// Geteilt: Andere Betrachter (anderes Terminal, noVNC in PDH) bleiben verbunden; TigerVNC trennt sonst.
+			"-Shared=1",
 			s.Host + "::" + strconv.Itoa(s.Port),
 		},
 		Env: []string{"HOME=" + dir},

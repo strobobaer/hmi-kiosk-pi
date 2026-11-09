@@ -56,7 +56,7 @@ func TestTigerVNCArgsPlaceWindowBelowBar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"-geometry=1920x1032+0+48", "-PasswordFile=" + filepath.Join(dir, "passwd"), "-ViewOnly=1", "10.0.0.5::5900"}
+	want := []string{"-geometry=1920x1032+0+48", "-PasswordFile=" + filepath.Join(dir, "passwd"), "-ViewOnly=1", "-Shared=1", "10.0.0.5::5900"}
 	if cmd.Path != "vncviewer" || strings.Join(cmd.Args, "|") != strings.Join(want, "|") {
 		t.Fatalf("cmd = %+v", cmd)
 	}
