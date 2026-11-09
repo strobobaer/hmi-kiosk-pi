@@ -67,6 +67,7 @@ type sessionData struct {
 	local    bool // am Terminal angemeldet (Loopback, HTTP)
 	lastSeen time.Time
 	flash    string
+	showOnce string // eben erzeugter Schlüssel der Fernsteuerung, für genau eine Anzeige
 }
 
 // sessionRef verweist auf eine Sitzung; der Schlüssel ist der Hash des
@@ -510,4 +511,25 @@ func readUpload(mr *multipart.Reader) (fields map[string]string, file []byte, er
 		}
 		fields[part.FormName()] = string(v)
 	}
+}
+
+// setShowOnce hält einen Wert für genau eine Anzeige in dieser Sitzung (POST-Redirect-GET).
+func (st *sessionStore) setShowOnce(s sessionRef, v string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if d, ok := st.byID[s.key]; ok {
+		d.showOnce = v
+	}
+}
+
+func (st *sessionStore) takeShowOnce(s sessionRef) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	d, ok := st.byID[s.key]
+	if !ok {
+		return ""
+	}
+	v := d.showOnce
+	d.showOnce = ""
+	return v
 }

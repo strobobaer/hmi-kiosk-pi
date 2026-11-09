@@ -356,7 +356,7 @@ func (a *admin) renderNetworkFull(w http.ResponseWriter, s sessionRef, status in
 }
 
 func (a *admin) handleNetworkPage(w http.ResponseWriter, _ *http.Request, s sessionRef) {
-	a.renderNetwork(w, s, http.StatusOK, "", nil)
+	a.renderNetworkFull(w, s, http.StatusOK, "", nil, nil, a.sessions.takeShowOnce(s))
 }
 
 // helperThenPersist ruft zuerst den Helfer und speichert nur bei Erfolg. Scheitert

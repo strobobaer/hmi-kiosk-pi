@@ -27,7 +27,7 @@ func TestNetworkPageRemoteSectionOff(t *testing.T) {
 
 func TestRemoteKeyGeneratedShownOnceStoredAsHash(t *testing.T) {
 	e, b := newLoggedIn(t)
-	r := b.post("/admin/network/remote/generate", nil)
+	r := b.get(b.post("/admin/network/remote/generate", nil).Header().Get("Location"))
 	if r.Code != http.StatusOK {
 		t.Fatalf("Status %d", r.Code)
 	}
@@ -60,8 +60,7 @@ func TestRemoteKeyGeneratedShownOnceStoredAsHash(t *testing.T) {
 	}
 
 	// Neu erzeugen macht den alten ungültig.
-	r = b.post("/admin/network/remote/generate", nil)
-	key2 := remoteKeyRe.FindString(r.Body.String())
+	key2 := remoteKeyRe.FindString(b.follow(b.post("/admin/network/remote/generate", nil)))
 	if key2 == "" || key2 == key || e.cfg().Admin.RemoteKeyHash != RemoteKeyHash(key2) {
 		t.Fatalf("neu erzeugt: %q", key2)
 	}
@@ -159,5 +158,34 @@ func TestMaintenanceRemoteKeyAndTLSKey(t *testing.T) {
 				t.Fatalf("TLS-Schlüssel gleich %v, PDH-Schlüssel gleich %v, erwartet %v", sameTLS, sameKey, c.keep)
 			}
 		})
+	}
+}
+
+// Nach dem Erzeugen Weiterleitung (POST-Redirect-GET): Neu laden erzeugt keinen neuen Schlüssel,
+// und der Schlüssel erscheint genau einmal.
+func TestRemoteKeyGenerateRedirectsAndShowsOnce(t *testing.T) {
+	e, b := newLoggedIn(t)
+	r := b.post("/admin/network/remote/generate", nil)
+	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != "/admin/network" {
+		t.Fatalf("Status %d nach %q", r.Code, r.Header().Get("Location"))
+	}
+	hash := e.cfg().Admin.RemoteKeyHash
+	page := b.get("/admin/network").Body.String()
+	key := remoteKeyRe.FindString(page)
+	if key == "" || RemoteKeyHash(key) != hash {
+		t.Fatalf("Schlüssel %q", key)
+	}
+	wantContains(t, page, "nur dieses eine Mal")
+	if remoteKeyRe.MatchString(b.get("/admin/network").Body.String()) {
+		t.Fatal("zweimal angezeigt")
+	}
+	if e.cfg().Admin.RemoteKeyHash != hash {
+		t.Fatal("Neuladen hat einen neuen Schlüssel erzeugt")
+	}
+	// Ein anderer angemeldeter Browser sieht ihn nie.
+	other := e.login()
+	b.post("/admin/network/remote/generate", nil)
+	if remoteKeyRe.MatchString(other.get("/admin/network").Body.String()) {
+		t.Fatal("Schlüssel in fremder Sitzung")
 	}
 }

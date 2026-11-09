@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
@@ -157,7 +158,7 @@ func keyMatches(token, wantHex string) bool {
 // 5 Minuten), aber je Quelladresse: Ein falsch eingerichtetes PDH sperrt weder die
 // Admin-Anmeldung noch andere Absender.
 func (a *remoteAPI) authorized(w http.ResponseWriter, r *http.Request) bool {
-	addr, now := sourceAddr(r), a.d.Clock.Now()
+	addr, now := lockKey(r), a.d.Clock.Now()
 	if left := a.lock.remaining(addr, now); left > 0 {
 		writeJSONError(w, http.StatusTooManyRequests, lockedMessage(left))
 		return false
@@ -241,7 +242,7 @@ func decodeOpen(w http.ResponseWriter, r *http.Request) (remoteOpenBody, error) 
 
 func (in remoteOpenBody) validate() (session.RemoteRequest, error) {
 	req := session.RemoteRequest{Host: in.Host, Port: in.Port, Password: in.Password, Label: in.Label, User: in.User}
-	if err := config.CheckHost("Host", in.Host); err != nil {
+	if err := checkRemoteHost(in.Host); err != nil {
 		return req, err
 	}
 	if in.Port < 1 || in.Port > 65535 {
@@ -250,6 +251,9 @@ func (in remoteOpenBody) validate() (session.RemoteRequest, error) {
 	if len(in.Password) > remotePasswordMax {
 		return req, fmt.Errorf("Passwort länger als %d Byte", remotePasswordMax)
 	}
+	if strings.IndexFunc(in.Password, unicode.IsControl) >= 0 {
+		return req, errors.New("Passwort enthält Steuerzeichen")
+	}
 	switch in.Mode {
 	case "view":
 		req.ViewOnly = true
@@ -257,10 +261,10 @@ func (in remoteOpenBody) validate() (session.RemoteRequest, error) {
 	default:
 		return req, fmt.Errorf("Modus ungültig: %q (erlaubt: view, control)", in.Mode)
 	}
-	if err := config.CheckName("Label", in.Label); err != nil {
+	if err := checkRemoteName("Label", in.Label); err != nil {
 		return req, err
 	}
-	if err := config.CheckName("Benutzer", in.User); err != nil {
+	if err := checkRemoteName("Benutzer", in.User); err != nil {
 		return req, err
 	}
 	return req, nil
@@ -304,6 +308,9 @@ func (a *remoteAPI) handleOpen(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, struct {
 			Status string `json:"status"`
 		}{"opened"})
+	case res.Outcome == session.RemoteInvalid:
+		log.Printf("Fernsteuerung (PDH): %s – abgelehnt: %s", what, res.Message)
+		writeJSONError(w, http.StatusUnprocessableEntity, res.Message)
 	case res.Outcome == session.RemoteBusy:
 		log.Printf("Fernsteuerung (PDH): %s – belegt durch „%s“", what, res.HMI)
 		writeJSON(w, http.StatusConflict, struct {
@@ -388,13 +395,55 @@ func (l *addrLockout) prune(now time.Time) {
 			delete(l.m, k)
 		}
 	}
+	// Bei voller Liste fällt der älteste nicht gesperrte Eintrag; gesperrte nur, wenn es
+	// keine anderen gibt (sonst hebelten viele Absender die Sperre aus).
 	for len(l.m) >= remoteLockMax {
-		oldest, at := "", time.Time{}
+		oldest, at, locked := "", time.Time{}, true
 		for k, e := range l.m {
-			if oldest == "" || e.last.Before(at) {
-				oldest, at = k, e.last
+			isLocked := !e.until.IsZero()
+			if oldest == "" || locked && !isLocked || locked == isLocked && e.last.Before(at) {
+				oldest, at, locked = k, e.last, isLocked
 			}
 		}
 		delete(l.m, oldest)
 	}
+}
+
+// checkRemoteHost: Regeln der Konfiguration, dazu kein Ziel auf dem Terminal selbst (sonst
+// ließen sich lokale Dienste per RFB-Prüfung abtasten).
+func checkRemoteHost(host string) error {
+	if err := config.CheckHost("Host", host); err != nil {
+		return err
+	}
+	name := strings.ToLower(strings.TrimSuffix(host, "."))
+	if name == "localhost" || strings.HasSuffix(name, ".localhost") {
+		return errors.New("Host ist dieses Terminal selbst")
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return errors.New("Host ist dieses Terminal selbst")
+	}
+	return nil
+}
+
+// checkRemoteName: Regeln der Konfiguration, dazu keine Format- und Trennzeichen (Cf, Zl, Zp),
+// die Leiste und Protokoll verfälschen könnten (Bidi-Umkehr, scheinbare Zeilenumbrüche).
+func checkRemoteName(what, s string) error {
+	if err := config.CheckName(what, s); err != nil {
+		return err
+	}
+	if strings.IndexFunc(s, func(r rune) bool { return unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) }) >= 0 {
+		return fmt.Errorf("%s enthält unsichtbare Format- oder Trennzeichen", what)
+	}
+	return nil
+}
+
+// lockKey ist der Schlüssel der Sperre: die IPv4-Adresse, bei IPv6 das /64-Netz (ein Gerät
+// verfügt meist über ein ganzes /64).
+func lockKey(r *http.Request) string {
+	addr := sourceAddr(r)
+	ip := net.ParseIP(addr)
+	if ip == nil || ip.To4() != nil {
+		return addr
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }

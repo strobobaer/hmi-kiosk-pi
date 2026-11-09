@@ -434,3 +434,71 @@ func TestRemoteInvalidJSONDoesNotEchoPassword(t *testing.T) {
 	w = e.call("POST", "/api/remote/v1/open", strings.Replace(validOpen, `"user"`, `"extra":1,"user"`, 1))
 	wantContains(t, jsonOf(t, w)["error"].(string), `"extra"`)
 }
+
+func TestRemoteOpenInvalidFromSession(t *testing.T) {
+	e := newRemoteEnv(t)
+	e.sess.res = session.RemoteResult{Outcome: session.RemoteInvalid, Message: "VNC-Anmeldung am HMI fehlgeschlagen: abgelehnt"}
+	w := e.call("POST", "/api/remote/v1/open", validOpen)
+	if w.Code != http.StatusUnprocessableEntity || jsonOf(t, w)["error"] != "VNC-Anmeldung am HMI fehlgeschlagen: abgelehnt" {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRemoteOpenRejectsUnsafeInput(t *testing.T) {
+	e := newRemoteEnv(t)
+	repl := func(old, nw string) string { return strings.Replace(validOpen, old, nw, 1) }
+	cases := map[string]string{
+		"Passwort mit Zeilenumbruch": repl(`"geheim"`, `"geh\neim"`),
+		"Passwort mit NUL":           repl(`"geheim"`, `"geh\u0000eim"`),
+		"Loopback v4":                repl(`"10.1.2.3"`, `"127.0.0.1"`),
+		"Loopback anderer":           repl(`"10.1.2.3"`, `"127.8.9.1"`),
+		"Loopback v6":                repl(`"10.1.2.3"`, `"::1"`),
+		"Loopback v6 Klammern":       repl(`"10.1.2.3"`, `"[::1]"`),
+		"unspezifiziert":             repl(`"10.1.2.3"`, `"0.0.0.0"`),
+		"unspezifiziert v6":          repl(`"10.1.2.3"`, `"::"`),
+		"localhost":                  repl(`"10.1.2.3"`, `"LocalHost"`),
+		"localhost Punkt":            repl(`"10.1.2.3"`, `"localhost."`),
+		"Unter-localhost":            repl(`"10.1.2.3"`, `"x.localhost"`),
+		"Label Bidi":                 repl(`Linie 3`, `Linie ‮3`),
+		"Label Zeilentrenner":        repl(`Linie 3`, `Linie 3`),
+		"Benutzer Absatztrenner":     repl(`M. Muster`, `M. Muster`),
+		"Benutzer Nullbreite":        repl(`M. Muster`, `M.​Muster`),
+	}
+	for name, body := range cases {
+		if w := e.call("POST", "/api/remote/v1/open", body); w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	if len(e.sess.got) != 0 {
+		t.Fatalf("ausgeführt: %+v", e.sess.got)
+	}
+	// Umlaute und Sonderzeichen ohne Steuerwirkung bleiben erlaubt.
+	if w := e.call("POST", "/api/remote/v1/open", repl(`"geheim"`, `"Pä$s=;wört"`)); w.Code != http.StatusOK {
+		t.Fatalf("Sonderzeichen: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Gesperrte Einträge bleiben auch bei voller Liste; IPv6 zählt je /64.
+func TestRemoteLockoutKeepsLockedAndGroupsIPv6(t *testing.T) {
+	e := newRemoteEnv(t)
+	for i := 0; i < maxFailures; i++ {
+		e.do("GET", "/api/remote/v1/status", "Bearer hmik_x", "", "192.0.2.50:1")
+	}
+	for i := 0; i < 3*remoteLockMax; i++ {
+		e.clock.advance(time.Millisecond)
+		e.do("GET", "/api/remote/v1/status", "", "", "198.51."+itoa(i/250)+"."+itoa(i%250+1)+":1")
+	}
+	if w := e.do("GET", "/api/remote/v1/status", "Bearer "+e.key, "", "192.0.2.50:2"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("Sperre verdrängt: %d", w.Code)
+	}
+	// Wechselnde Adressen im selben /64 teilen eine Sperre.
+	for i := 0; i < maxFailures; i++ {
+		e.do("GET", "/api/remote/v1/status", "Bearer hmik_x", "", "[2001:db8:1:2::"+itoa(i+1)+"]:1")
+	}
+	if w := e.do("GET", "/api/remote/v1/status", "Bearer "+e.key, "", "[2001:db8:1:2:ffff::9]:1"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("/64 nicht gesperrt: %d", w.Code)
+	}
+	if w := e.do("GET", "/api/remote/v1/status", "Bearer "+e.key, "", "[2001:db8:1:3::1]:1"); w.Code != http.StatusOK {
+		t.Fatalf("anderes /64: %d", w.Code)
+	}
+}
