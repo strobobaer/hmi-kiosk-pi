@@ -257,3 +257,20 @@ func TestForeignRequestsDoNotHoldLocalAdminOpen(t *testing.T) {
 		t.Fatalf("Abruf einer fremden Seite sperrt Sitzungen: %q", msg)
 	}
 }
+
+func TestNoticeClearedWhenPresenceExpiredNaturally(t *testing.T) {
+	f := newFixture(t)
+	f.saveConfig(nil)
+	clk := &stepClock{now: time.Unix(1000, 0)}
+	f.startWith(func(s *service) { s.presence.clock = clk })
+	f.s.presence.touch()
+	_ = f.s.mgr.Open("irgendein-hmi")
+	if got := f.s.mgr.Snapshot().Notice; got != localAdminNotice {
+		t.Fatalf("Hinweis %q", got)
+	}
+	clk.advance(localAdminIdle + time.Second)
+	f.local(http.MethodGet, "/")
+	if got := f.s.mgr.Snapshot().Notice; got == localAdminNotice {
+		t.Fatal("Hinweis bleibt nach abgelaufener Admin-Seite stehen")
+	}
+}

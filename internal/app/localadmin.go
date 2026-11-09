@@ -43,10 +43,14 @@ func (p *adminPresence) touch() {
 	p.until = p.now().Add(localAdminIdle)
 }
 
-func (p *adminPresence) left() {
+// left beendet die Präsenz; wasOpen meldet, ob sie seit dem letzten left bestand
+// (auch wenn sie inzwischen abgelaufen ist).
+func (p *adminPresence) left() (wasOpen bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	wasOpen = !p.until.IsZero()
 	p.until = time.Time{}
+	return wasOpen
 }
 
 func (p *adminPresence) active() bool {
@@ -57,12 +61,8 @@ func (p *adminPresence) active() bool {
 
 // localAdminLeft: Die Kachelseite ist wieder da (Zurück, Inaktivität, Neustart von Chromium).
 func (s *service) localAdminLeft() {
-	if !s.presence.active() {
-		s.presence.left()
-		return
-	}
-	s.presence.left()
-	if s.rootCtx() != nil {
+	// Auch nach natürlichem Ablauf: Der Hinweis einer gesperrten Sitzung soll weg.
+	if s.presence.left() && s.rootCtx() != nil {
 		s.mgr.ClearNotice(localAdminNotice)
 	}
 }
