@@ -75,6 +75,7 @@ sudo ./install.sh
 ## Aktualisieren
 
 - **Programm-Update** (signiertes `.pkg`): Admin-Seite → System → „Update hochladen“. Meldet sich die neue Version nicht innerhalb von 60 Sekunden gesund, schaltet das Gerät von selbst zurück.
+- **Updates per Klick:** Das Terminal prüft täglich die GitHub-Releases und zeigt neue Versionen unter System → „Updates“ an (installiert nie von selbst); „Herunterladen und installieren“ prüft Signatur und Systemstand wie beim Hochladen. Vorabversionen sind ab Werk einbezogen, abschaltbar. Proxy und Release-Ablauf: `docs/betrieb.md`, Abschnitt 2.
 - Ein Programm-Update ersetzt **nur** das Kiosk-Programm. Helfer, Systempakete und Einstellungen unter `/etc` (zum Beispiel die Chromium-Sperrliste) kommen nur mit einem **neuen Abbild** bzw. mit erneutem `install.sh` aus dem neuen Bundle.
 - **Ab 0.1.6 nötig:** Wer von 0.1.5 oder älter kommt, muss das 0.1.6-Abbild neu schreiben (vorher unter System „Konfiguration sichern“, danach wieder einspielen) bzw. `install.sh` aus dem 0.1.6-Bundle ausführen. Sonst meldet das Zahnrad „This page is blocked“, und Bildschirmtastatur sowie Web-Kacheln fehlen.
 
@@ -199,6 +200,7 @@ sudo ./install.sh
 ## Updating
 
 - **Program update** (signed `.pkg`): admin page → System → "Update hochladen". If the new version does not report healthy within 60 seconds, the device rolls back by itself.
+- **One-click updates:** the terminal checks the GitHub releases daily and lists new versions under System → "Updates" (it never installs by itself); "Herunterladen und installieren" verifies signature and system level exactly like an upload. Pre-releases are included by default and can be switched off. Proxy and release process: `docs/betrieb.md`, section 2.
 - A program update replaces **only** the kiosk program. The helper, system packages and settings under `/etc` (for example the Chromium block list) only change with a **new image** or by re-running `install.sh` from the new bundle.
 - **Required for 0.1.6:** coming from 0.1.5 or older, re-flash the 0.1.6 image (back up the configuration under System first and restore it afterwards) or run `install.sh` from the 0.1.6 bundle. Otherwise the gear icon shows "This page is blocked", and the on-screen keyboard and web tiles are missing.
 

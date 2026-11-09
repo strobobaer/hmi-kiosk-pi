@@ -47,7 +47,43 @@ Ein Update ersetzt nur das Programm `hmi-kiosk` (den Dienst). Der Helfer und das
    Aus dem Ordner `dist` wird nur `hmi-kiosk` verwendet. Der Helfer ist nie Teil eines Pakets.
 4. Die Datei `dist/hmi-kiosk-1.0.1.pkg` ist das signierte Paket. Der private Schlüssel `release.key` bleibt auf dem Entwicklungsrechner.
 
+### Paket als Release-Datei bereitstellen
+
+Damit Terminals das Update selbst finden, kommt das Paket als Datei an das GitHub-Release der Version. Der Name muss genau `hmi-kiosk-<version>.pkg` lauten, das Tag `v<version>` (oder `<version>`):
+
+```
+gh release upload v1.0.1 dist/hmi-kiosk-1.0.1.pkg
+```
+
+Fehlt die Paketdatei (zum Beispiel, weil die Version neuere Systemteile braucht und nur als Abbild und Bundle erscheint), zeigen die Terminals die Version mit einem Verweis auf die Release-Seite an, aber ohne Knopf zum Installieren. Ein Release als Vorabversion („Pre-release“) gilt nur für Terminals, bei denen „Vorabversionen einbeziehen“ eingeschaltet ist. Entwürfe (Drafts) sieht kein Terminal.
+
+### Updates per Klick
+
+1. Admin-Seite, Menü „System“, Abschnitt „Updates“. Dort stehen die laufende Version und das Ergebnis der letzten Prüfung.
+2. Das Terminal prüft einmal am Tag von selbst (die erste Prüfung einige Minuten nach dem Start) und zeigt eine neuere Version nur an. Es installiert nie von selbst. „Jetzt nach Updates suchen“ prüft sofort.
+3. Wird eine Version gefunden, steht dort „Version X verfügbar“ mit dem Anfang der Release-Notiz. „Herunterladen und installieren“ drücken und bestätigen. Vorher die Konfiguration sichern und außerhalb der Betriebszeit arbeiten, wie beim Hochladen.
+4. Das Terminal lädt die Paketdatei und installiert sie auf demselben Weg wie ein hochgeladenes Paket: Signatur, Systemstand, Versionsregeln und der Rückfall nach 60 Sekunden gelten unverändert. GitHub ist nur der Transportweg; ein Paket ohne gültige Signatur wird abgelehnt.
+5. Quelle: Standard ist `strobobaer/hmi-kiosk-pi`. Ein leeres Feld schaltet die Prüfung aus. „Vorabversionen einbeziehen“ ist ab Werk eingeschaltet; ausschalten, wenn das Terminal nur stabile Versionen angeboten bekommen soll. Quelle und Schalter gehören zur Konfiguration und reisen mit Export und Import.
+
+**Proxy:** Das Terminal fragt `https://api.github.com` und lädt von `github.com` (Weiterleitung auf `objects.githubusercontent.com`), nur über HTTPS. Braucht das Netz einen Proxy, ihn dem Dienst über ein systemd-Drop-in mitgeben:
+
+```
+sudo systemctl edit hmi-kiosk.service
+```
+
+```
+[Service]
+Environment=HTTPS_PROXY=http://proxy.firma.local:3128
+Environment=NO_PROXY=localhost,127.0.0.1
+```
+
+Danach `sudo systemctl restart hmi-kiosk.service`. Auf dem SD-Abbild ist `/etc` ein Overlay im Arbeitsspeicher; das Drop-in muss dort ins Abbild bzw. bei abgeschaltetem Schreibschutz angelegt werden.
+
+**Ohne Internet** bleibt alles wie bisher: Paket herunterladen und unter „Update hochladen“ einspielen (unten). Die Prüfung meldet dann nur „GitHub nicht erreichbar“.
+
 ### Auf dem Terminal einspielen
+
+Ohne Internet oder für ein Paket, das nicht als Release-Datei bereitsteht:
 
 1. Vor dem Update die Konfiguration sichern (System, „Konfiguration sichern“).
 2. Außerhalb der Betriebszeit arbeiten. Das Update startet den Dienst neu und beendet laufende Sitzungen.
