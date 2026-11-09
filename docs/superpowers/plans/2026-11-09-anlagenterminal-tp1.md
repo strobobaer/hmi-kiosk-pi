@@ -102,7 +102,6 @@
 
 **Files:**
 - Modify: `web/templates/help.gohtml` (neues Kapitel `terminal`, Abschnitt HMI-Felder im Kapitel `kiosk` oder `infrastructure`), `internal/web/help.go` (`helpChapterIDs` um `"terminal"`), `CHANGELOG.md` (`## [0.77.10] – 2026-11-09`, `### Neu`), `VERSION` (`0.77.10`)
-- Modify (hmi-kiosk, `C:\workplace\hmi-kiosk`, Zweig `feat/hmi-kiosk`): `docs/betrieb.md` Abschnitt „Anlagenterminal“: Web-Kachel mit `https://<pdh>/terminal`, als Terminal-Benutzer anmelden, Daueranzeige mit ausgeblendeter Leiste.
 
 - [ ] **Step 1:** `GO test ./internal/web/ -run 'Help|Changelog'` → nach Änderungen PASS (`TestHelpCoversAllPages` verlangt das Kapitel, falls `/terminal` `baseData(r, "terminal")` nutzt).
 - [ ] **Step 2:** `GO test ./...`, `GO vet ./...`, `gofmt -l` auf geänderten Dateien leer; Integrationstests `-run Anlagenterminal` → PASS.
