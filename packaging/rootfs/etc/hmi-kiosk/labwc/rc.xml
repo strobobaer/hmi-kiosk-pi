@@ -17,11 +17,25 @@
       <action name="MoveTo" x="0" y="48" />
       <action name="Maximize" />
     </windowRule>
+    <!-- Remmina ohne Leiste (Daueranzeige mit ausgeblendeter Leiste): eigener Titel
+         (client.RemminaFullTitlePrefix), der unter labwc beim ersten Anzeigen schon feststeht
+         (gemessen). Nach der Regel oben schaltet diese auf Vollbild; das deckt auch den Rand ab. -->
+    <windowRule identifier="org.remmina.Remmina" title="hmi-kiosk vollbild*" type="normal">
+      <action name="ToggleFullscreen" />
+    </windowRule>
     <!-- Web-Kachel (eigenes Chromium im App-Fenster der Adresse): wie Remmina ohne Rahmen bei 0,48 maximiert.
          Die app_id ist "chrome-<aus der Adresse>-<Profilordner>"; der Profilordner heißt immer
          hmi-kiosk-web (client.WebAppProfileName), die Klasse zählt unter Wayland nicht (gemessen mit
-         Chromium 156). Die Leiste (chrome-127.0.0.1__bar-Default) trifft die Regel nicht. -->
+         Chromium 156). Die Leiste (chrome-127.0.0.1__bar-Default) trifft die Regel nicht. Ohne Leiste
+         heißt der Profilordner hmi-kiosk-web-voll: keine Regel, Chromiums Vollbild gilt. -->
     <windowRule identifier="chrome-*-hmi-kiosk-web" type="normal" serverDecoration="no">
+      <action name="MoveTo" x="0" y="48" />
+      <action name="Maximize" />
+    </windowRule>
+    <!-- Normales Chromium-Fenster, das eine Web-Kachel mit target=_blank öffnet: Seine app_id ist
+         die Klasse (hmi-kiosk-web bzw. hmi-kiosk-web-voll, gemessen). Ebenfalls unter die Leiste;
+         es bleibt an die Richtlinie gebunden und lässt sich über sein Tab-Kreuz schließen. -->
+    <windowRule identifier="hmi-kiosk-web*" type="normal" serverDecoration="no">
       <action name="MoveTo" x="0" y="48" />
       <action name="Maximize" />
     </windowRule>

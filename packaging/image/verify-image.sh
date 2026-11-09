@@ -318,8 +318,10 @@ else
 fi
 
 if printf '%s' "$lw" | grep -Eq '<windowRule identifier="chrome-\*-hmi-kiosk-web"[^>]*serverDecoration="no"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
+	printf '%s' "$lw" | grep -Eq '<windowRule identifier="hmi-kiosk-web\*"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
+	printf '%s' "$lw" | grep -Eq '<windowRule identifier="org\.remmina\.Remmina" title="hmi-kiosk vollbild\*"[^>]*> *<action name="ToggleFullscreen" */>' &&
 	printf '%s' "$ob" | grep -Eq '<application class="hmi-kiosk-web"[^>]*> *<decor>no</decor> *<position force="yes"> *<x>0</x> *<y>48</y> *</position> *<maximized>yes</maximized>'; then
-	ok rc-web "Web-Kachel (app_id chrome-*-hmi-kiosk-web, WM_CLASS hmi-kiosk-web) ohne Rahmen bei 0,48, maximiert"
+	ok rc-web "Web-Kachel (app_id chrome-*-hmi-kiosk-web, WM_CLASS hmi-kiosk-web) und ihr Tab-Fenster ohne Rahmen bei 0,48, maximiert; Remmina ohne Leiste im Vollbild"
 else
 	bad rc-web "Fensterregel für Web-Kacheln fehlt (labwc chrome-*-hmi-kiosk-web, openbox class hmi-kiosk-web)"
 fi
@@ -330,9 +332,11 @@ pf=$(flat "$pol" 2>/dev/null || true)
 if printf '%s' "$pf" | grep -Fq '"URLBlocklist": ["*"]' &&
 	printf '%s' "$pf" | grep -Fq '"URLAllowlist": ["http://127.0.0.1:8080", "http://localhost:8080", "http://127.0.0.1:8081", "http://localhost:8081"]' &&
 	printf '%s' "$pf" | grep -Fq '"PasswordManagerEnabled": false,' &&
-	printf '%s' "$pf" | grep -Fq '"DownloadRestrictions": 3' &&
+	printf '%s' "$pf" | grep -Fq '"DownloadRestrictions": 3,' &&
+	printf '%s' "$pf" | grep -Fq '"BrowserSignin": 0,' &&
+	printf '%s' "$pf" | grep -Fq '"DeveloperToolsAvailability": 2' &&
 	[ "$(stat -c %u:%g:%a "$pol")" = 0:0:644 ]; then
-	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), kein Passwortmanager, keine Downloads, root 644 (Web-Kacheln ergänzt der Helfer beim Start)"
+	ok chromium-richtlinie "URLBlocklist * und URLAllowlist nur 127.0.0.1/localhost:8080 (Kacheln) und :8081 (Admin am Terminal), kein Passwortmanager, keine Downloads, keine Chromium-Anmeldung, keine Entwicklerwerkzeuge, root 644 (Web-Kacheln ergänzt der Helfer beim Start)"
 else
 	bad chromium-richtlinie "/etc/chromium/policies/managed/hmi-kiosk.json fehlt oder weicht ab (URLBlocklist [\"*\"], URLAllowlist nur Kachelseite und Admin-Seite am Terminal auf Loopback)"
 fi

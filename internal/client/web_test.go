@@ -122,7 +122,7 @@ func TestWindowRulesMatchWebAppButNotBar(t *testing.T) {
 	parseXML(t, filepath.Join(root, "hmi-kiosk", "labwc", "rc.xml"), &lab)
 	var web, bar string
 	for _, r := range lab.Rules {
-		if strings.Contains(r.Identifier, WebAppProfileName) {
+		if strings.HasPrefix(r.Identifier, "chrome-") && strings.Contains(r.Identifier, WebAppProfileName) {
 			web = r.Identifier
 		}
 		if strings.Contains(r.Identifier, "__bar") {
@@ -201,5 +201,100 @@ func TestWebAppRemovesStaleSingletonFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(keep); err != nil {
 		t.Fatal("Profildaten gelöscht")
+	}
+}
+
+// Ohne Leiste: eigener Profilordner (andere app_id, keine Regel unter dem Rand) als
+// Verweis auf das normale Profil, damit die Anmeldung gilt; Vollbild per --kiosk.
+func TestWebAppFullScreenSharesProfile(t *testing.T) {
+	w, _ := webApp(t)
+	cmd, err := w.Prepare("", Spec{URL: "http://grafana/", W: 1920, H: 1080, FullScreen: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--kiosk", "--profile-directory=" + WebAppFullProfileName, "--class=" + WebAppFullProfileName, "--window-position=0,0", "--window-size=1920,1080"} {
+		if !slices.Contains(cmd.Args, want) {
+			t.Errorf("%q fehlt in %q", want, cmd.Args)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	link := filepath.Join(w.ProfileDir, WebAppFullProfileName)
+	if target, err := os.Readlink(link); err != nil || target != WebAppProfileName {
+		t.Fatalf("Verweis %q %v", target, err)
+	}
+	if fi, err := os.Stat(filepath.Join(w.ProfileDir, WebAppProfileName)); err != nil || !fi.IsDir() {
+		t.Fatalf("Profil fehlt: %v", err)
+	}
+	// Ein echter Ordner an der Stelle (alter Stand, fremde Hand) wird zum Verweis.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(link, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Prepare("", Spec{URL: "http://grafana/", FullScreen: true}); err != nil {
+		t.Fatal(err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != WebAppProfileName {
+		t.Fatalf("Verweis %q %v", target, err)
+	}
+	// Mit Leiste weder --kiosk noch der Vollbild-Profilordner.
+	cmd, _ = w.Prepare("", Spec{URL: "http://grafana/", W: 800, H: 600})
+	if slices.Contains(cmd.Args, "--kiosk") || !slices.Contains(cmd.Args, "--profile-directory="+WebAppProfileName) {
+		t.Fatalf("%q", cmd.Args)
+	}
+}
+
+func TestWindowRulesFullScreenAndTabWindow(t *testing.T) {
+	type action struct {
+		Name string `xml:"name,attr"`
+	}
+	type rule struct {
+		Identifier string   `xml:"identifier,attr"`
+		Title      string   `xml:"title,attr"`
+		Actions    []action `xml:"action"`
+	}
+	var lab struct {
+		Rules []rule `xml:"windowRules>windowRule"`
+	}
+	parseXML(t, filepath.Join("..", "..", "packaging", "rootfs", "etc", "hmi-kiosk", "labwc", "rc.xml"), &lab)
+	// matching liefert die Aktionen aller Regeln, die ein Fenster treffen (labwc wendet alle an).
+	matching := func(id, title string) []string {
+		var out []string
+		for _, r := range lab.Rules {
+			okID, _ := path.Match(r.Identifier, id)
+			okTitle := r.Title == ""
+			if !okTitle {
+				okTitle, _ = path.Match(r.Title, title)
+			}
+			if okID && okTitle {
+				for _, a := range r.Actions {
+					out = append(out, a.Name)
+				}
+			}
+		}
+		return out
+	}
+	// Web-Kachel ohne Leiste (gemessen: app_id endet auf den Vollbild-Profilordner): keine Regel.
+	if a := matching("chrome-grafana__d_x-"+WebAppFullProfileName, "grafana_/"); len(a) != 0 {
+		t.Errorf("Vollbild-Web-Kachel von Regeln getroffen: %v", a)
+	}
+	// Normales Tab-Fenster aus target=_blank (gemessen: app_id = --class): wie die Kachel.
+	for _, id := range []string{WebAppClass, WebAppFullProfileName} {
+		if a := matching(id, "grafana:3000/t.html - Chromium"); !slices.Contains(a, "Maximize") {
+			t.Errorf("Tab-Fenster %q: %v", id, a)
+		}
+	}
+	if a := matching("chrome-127.0.0.1__bar-Default", "127.0.0.1_/bar"); slices.Contains(a, "Maximize") {
+		t.Errorf("Leiste maximiert: %v", a)
+	}
+	// Remmina: mit Leiste maximiert unter dem Rand, ohne Leiste zusätzlich Vollbild.
+	if a := matching("org.remmina.Remmina", RemminaTitlePrefix+" 1"); !slices.Contains(a, "Maximize") || slices.Contains(a, "ToggleFullscreen") {
+		t.Errorf("Remmina mit Leiste: %v", a)
+	}
+	if a := matching("org.remmina.Remmina", RemminaFullTitlePrefix+" 1"); !slices.Contains(a, "ToggleFullscreen") {
+		t.Errorf("Remmina ohne Leiste: %v", a)
 	}
 }

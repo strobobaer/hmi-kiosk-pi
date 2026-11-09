@@ -132,6 +132,12 @@ func TestWebPermanentHideBarFlag(t *testing.T) {
 	if !s.HideBar {
 		t.Fatalf("Stand %+v", s)
 	}
+	h.web.mu.Lock()
+	spec := h.web.specs[0]
+	h.web.mu.Unlock()
+	if !spec.FullScreen || spec.Y != 0 || spec.H != 1080 {
+		t.Fatalf("Spec %+v", spec)
+	}
 }
 
 func TestWebInactivityReturnsToTiles(t *testing.T) {

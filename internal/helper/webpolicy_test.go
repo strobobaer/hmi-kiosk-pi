@@ -25,10 +25,12 @@ func webEnv(t *testing.T) *env {
 }
 
 type policyFile struct {
-	URLBlocklist           []string
-	URLAllowlist           []string
-	PasswordManagerEnabled *bool
-	DownloadRestrictions   *int
+	URLBlocklist               []string
+	URLAllowlist               []string
+	PasswordManagerEnabled     *bool
+	DownloadRestrictions       *int
+	BrowserSignin              *int
+	DeveloperToolsAvailability *int
 }
 
 func readPolicy(t *testing.T, p string) policyFile {
@@ -69,6 +71,9 @@ func TestSetWebOriginsWritesPolicyWithFixedEntries(t *testing.T) {
 	}
 	if pf.DownloadRestrictions == nil || *pf.DownloadRestrictions != 3 {
 		t.Fatal("Downloads nicht gesperrt (DownloadRestrictions 3)")
+	}
+	if pf.BrowserSignin == nil || *pf.BrowserSignin != 0 || pf.DeveloperToolsAvailability == nil || *pf.DeveloperToolsAvailability != 2 {
+		t.Fatal("Anmeldung bei Chromium oder Entwicklerwerkzeuge nicht abgeschaltet")
 	}
 	fi, err := os.Stat(e.srv.ChromiumPolicyPath)
 	if err != nil || fi.Mode().Perm() != 0o644 {

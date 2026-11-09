@@ -256,3 +256,20 @@ func TestRemminaDefaultRandomIsFresh(t *testing.T) {
 		t.Fatal("secret repeated")
 	}
 }
+
+// Ohne Leiste trägt das Fenster einen eigenen Titel; die labwc-Regel dafür schaltet auf
+// Vollbild (gemessen: Titel steht unter labwc beim ersten Anzeigen schon fest).
+func TestRemminaFullScreenUsesOwnTitle(t *testing.T) {
+	s := testSpec()
+	s.SessionN = 3
+	dir, _ := prepareRemmina(t, s)
+	if p := readFile(t, filepath.Join(dir, "session.remmina")); !strings.Contains(p, "\nname="+RemminaTitlePrefix+" 3\n") {
+		t.Fatalf("Profil:\n%s", p)
+	}
+	s.FullScreen = true
+	dir, _ = prepareRemmina(t, s)
+	p := readFile(t, filepath.Join(dir, "session.remmina"))
+	if !strings.Contains(p, "\nname="+RemminaFullTitlePrefix+" 3\n") || strings.Contains(p, RemminaTitlePrefix) {
+		t.Fatalf("Profil:\n%s", p)
+	}
+}

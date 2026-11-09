@@ -671,7 +671,7 @@ func TestGeometryKeepsBarForTouchSessionsEvenWithHideBar(t *testing.T) {
 	h.setConfig(func(c *config.Config) { c.Kiosk.HideBar = true })
 	h.open("b")
 	s = h.waitState(StateStarting)
-	if p := h.profile.last(); p.Y != 48 || p.H != 1080-48 || s.HideBar {
+	if p := h.profile.last(); p.Y != 48 || p.H != 1080-48 || p.FullScreen || s.HideBar {
 		t.Fatalf("Touch-Sitzung bei HideBar ohne Leiste: %+v, Snapshot %+v", p, s)
 	}
 }
@@ -682,14 +682,14 @@ func TestGeometryHidesBarOnlyForAutomaticPermanentDisplay(t *testing.T) {
 		h.cfg.Kiosk.HideBar = true
 	})
 	s := h.waitState(StateStarting)
-	if p := h.profile.last(); p.X != 0 || p.Y != 0 || p.W != 1920 || p.H != 1080 || !s.HideBar {
+	if p := h.profile.last(); p.X != 0 || p.Y != 0 || p.W != 1920 || p.H != 1080 || !p.FullScreen || !s.HideBar {
 		t.Fatalf("Daueranzeige ohne Leiste: %+v, Snapshot %+v", p, s)
 	}
 	h.m.Back()
 	h.waitState(StateTiles)
 	h.open("a")
 	s = h.waitState(StateStarting)
-	if p := h.profile.last(); p.Y != 48 || p.H != 1080-48 || s.HideBar {
+	if p := h.profile.last(); p.Y != 48 || p.H != 1080-48 || p.FullScreen || s.HideBar {
 		t.Fatalf("Touch auf die Kachel der Daueranzeige ohne Leiste: %+v, Snapshot %+v", p, s)
 	}
 }

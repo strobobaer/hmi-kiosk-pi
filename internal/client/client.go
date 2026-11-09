@@ -19,6 +19,8 @@ type Spec struct {
 	SessionN   int
 	// URL ist die Adresse einer Web-Kachel (nur WebApp).
 	URL string
+	// FullScreen: Daueranzeige ohne Leiste, das Fenster soll den ganzen Bildschirm belegen.
+	FullScreen bool
 }
 
 // Command.Env enthält nur Ergänzungen; der Runner hängt sie an die Umgebung des Dienstes an.

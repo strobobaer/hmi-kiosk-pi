@@ -89,6 +89,7 @@ check "Chromium-Richtlinie erlaubt nur Kacheln (8080) und Admin am Terminal (808
 check "Chromium-Richtlinie sperrt alles andere" grep -Fq '"URLBlocklist": ["*"]' $pol
 check "Chromium-Richtlinie ohne Passwortmanager" grep -Fq '"PasswordManagerEnabled": false' $pol
 check "Chromium-Richtlinie sperrt Downloads" grep -Fq '"DownloadRestrictions": 3' $pol
+check "Chromium-Richtlinie ohne Chromium-Anmeldung und Entwicklerwerkzeuge" bash -c "grep -Fq '\"BrowserSignin\": 0' $pol && grep -Fq '\"DeveloperToolsAvailability\": 2' $pol"
 check "Fensterregel für Web-Kacheln (labwc und openbox)" bash -c "grep -Fq '<windowRule identifier=\"chrome-*-hmi-kiosk-web\"' /etc/hmi-kiosk/labwc/rc.xml && grep -Fq '<application class=\"hmi-kiosk-web\"' /etc/xdg/openbox/rc.xml"
 for c in rsync mkfs.vfat mkfs.ext4 sfdisk losetup partx resize2fs blkid findmnt; do
 	check "Programm $c vorhanden" bash -c "command -v $c"

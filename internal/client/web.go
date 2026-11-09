@@ -17,6 +17,10 @@ import (
 const (
 	WebAppClass       = "hmi-kiosk-web"
 	WebAppProfileName = "hmi-kiosk-web"
+	// WebAppFullProfileName ist Profilordner und Klasse ohne Leiste (Daueranzeige): Keine Regel
+	// trifft dieses Fenster, also gilt Chromiums Vollbild (--kiosk); die Regel unter dem Rand hob
+	// es auf (gemessen). Der Ordner ist ein Verweis auf das normale Profil, die Anmeldung gilt also.
+	WebAppFullProfileName = "hmi-kiosk-web-voll"
 )
 
 // WebApp ist das „Profil“ einer Web-Kachel: ein eigener Chromium-Prozess im App-Fenster
@@ -57,6 +61,16 @@ func (w WebApp) Prepare(_ string, s Spec) (Command, error) {
 			return Command{}, err
 		}
 	}
+	profile, class := WebAppProfileName, WebAppClass
+	if err := os.MkdirAll(filepath.Join(w.ProfileDir, WebAppProfileName), 0o700); err != nil {
+		return Command{}, err
+	}
+	if s.FullScreen {
+		if err := linkFullProfile(w.ProfileDir); err != nil {
+			return Command{}, err
+		}
+		profile, class = WebAppFullProfileName, WebAppFullProfileName
+	}
 	var a []string
 	switch w.Platform {
 	case "labwc":
@@ -72,13 +86,28 @@ func (w WebApp) Prepare(_ string, s Spec) (Command, error) {
 		"--check-for-update-interval=31536000",
 		"--noerrdialogs", "--disable-infobars", "--touch-events=enabled",
 		"--user-data-dir="+w.ProfileDir,
-		"--profile-directory="+WebAppProfileName,
-		"--class="+WebAppClass,
+		"--profile-directory="+profile,
+		"--class="+class,
 		"--disk-cache-dir="+w.CacheDir,
 		fmt.Sprintf("--window-position=%d,%d", s.X, s.Y),
 		fmt.Sprintf("--window-size=%d,%d", s.W, s.H),
 	)
+	if s.FullScreen {
+		a = append(a, "--kiosk")
+	}
 	// Die Adresse beginnt nach der Prüfung mit http, ist also nie selbst ein Schalter.
 	a = append(a, "--app="+s.URL)
 	return Command{Path: w.Chromium, Args: a}, nil
+}
+
+// linkFullProfile legt den Vollbild-Profilordner als Verweis auf das normale Profil an.
+func linkFullProfile(dir string) error {
+	link := filepath.Join(dir, WebAppFullProfileName)
+	if target, err := os.Readlink(link); err == nil && target == WebAppProfileName {
+		return nil
+	}
+	if err := os.RemoveAll(link); err != nil {
+		return err
+	}
+	return os.Symlink(WebAppProfileName, link)
 }

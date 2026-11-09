@@ -29,6 +29,10 @@ const (
 // Sitzungen "org.remmina.Remmina" und taugt nicht zur Unterscheidung.
 const RemminaTitlePrefix = "hmi-kiosk session"
 
+// RemminaFullTitlePrefix ist der Titel ohne Leiste: Eine eigene labwc-Regel (Titel steht dort beim
+// ersten Anzeigen fest, gemessen) schaltet dieses Fenster auf Vollbild statt unter den Rand von 48.
+const RemminaFullTitlePrefix = "hmi-kiosk vollbild"
+
 type remmina struct {
 	rand io.Reader // nil: crypto/rand
 }
@@ -73,7 +77,7 @@ func (r *remmina) Prepare(dir string, s Spec) (Command, error) {
 	var b strings.Builder
 	b.WriteString("[remmina]\n")
 	for _, kv := range [][2]string{
-		{"name", RemminaTitlePrefix + " " + strconv.Itoa(s.SessionN)},
+		{"name", remminaTitle(s)},
 		{"protocol", "VNC"},
 		{"server", net.JoinHostPort(s.Host, strconv.Itoa(s.Port))},
 		{"password", pw},
@@ -110,4 +114,11 @@ func (r *remmina) Prepare(dir string, s Spec) (Command, error) {
 			"XDG_CACHE_HOME=" + cacheDir,
 		},
 	}, nil
+}
+
+func remminaTitle(s Spec) string {
+	if s.FullScreen {
+		return RemminaFullTitlePrefix + " " + strconv.Itoa(s.SessionN)
+	}
+	return RemminaTitlePrefix + " " + strconv.Itoa(s.SessionN)
 }
