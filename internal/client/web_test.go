@@ -169,3 +169,37 @@ func parseXML(t *testing.T, p string, v any) {
 		t.Fatalf("%s: %v", p, err)
 	}
 }
+
+// Nach einem Absturz oder Stromausfall bleiben die Singleton-Verweise im dauerhaften
+// Profil liegen; Chromium hielte sie für ein laufendes Fenster eines anderen Rechners
+// (der Rechnername ändert sich auf dem Abbild) und startete nicht.
+func TestWebAppRemovesStaleSingletonFiles(t *testing.T) {
+	w, _ := webApp(t)
+	if err := os.MkdirAll(w.ProfileDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{"SingletonLock", "SingletonSocket", "SingletonCookie"}
+	for _, n := range names {
+		p := filepath.Join(w.ProfileDir, n)
+		if err := os.Symlink("anderer-rechner-1234", p); err != nil {
+			if err := os.WriteFile(p, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	keep := filepath.Join(w.ProfileDir, "Local State")
+	if err := os.WriteFile(keep, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Prepare("", Spec{URL: "http://grafana/", W: 800, H: 600}); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range names {
+		if _, err := os.Lstat(filepath.Join(w.ProfileDir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s noch da: %v", n, err)
+		}
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatal("Profildaten gelöscht")
+	}
+}

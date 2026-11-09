@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"hmikiosk/internal/config"
 )
@@ -45,6 +46,14 @@ func (w WebApp) Prepare(_ string, s Spec) (Command, error) {
 			return Command{}, err
 		}
 		if err := os.Chmod(d, 0o700); err != nil {
+			return Command{}, err
+		}
+	}
+	// Es läuft immer nur ein Web-Chromium (der Sitzungsautomat startet erst nach dem Ende des
+	// vorigen). Übrig gebliebene Singleton-Verweise eines abgestürzten Laufs würden den Start
+	// verhindern oder die Adresse an einen toten Prozess weitergeben.
+	for _, n := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		if err := os.Remove(filepath.Join(w.ProfileDir, n)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return Command{}, err
 		}
 	}
