@@ -1,6 +1,8 @@
 package pdhterminal
 
 import (
+	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -147,5 +149,43 @@ func TestStartHostAndMethod(t *testing.T) {
 	}
 	if w := startReq(t, h, "HEAD", "/start", "127.0.0.1:8080"); w.Code != 200 {
 		t.Errorf("HEAD: %d", w.Code)
+	}
+}
+
+// Mit „unverschlüsselt erlauben“ trägt die Startseite die http-Adresse in Formular und CSP.
+func TestStartHTTPAllowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+testSecret {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"device_id":"a1-1","user":"Anna","name":"x"}`))
+	}))
+	t.Cleanup(srv.Close)
+	addr := srv.Listener.Addr().String()
+	_, port, _ := net.SplitHostPort(addr)
+	url := "http://pdh.werk:" + port
+	dir := t.TempDir()
+	if err := SaveDevice(dir, Device{DeviceID: "a1-1", Secret: testSecret, User: "Anna", URL: url}); err != nil {
+		t.Fatal(err)
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	client := Client{HTTP: &http.Client{Transport: tr}}
+	h := StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url, AllowHTTP: true} }, client)
+	w := startReq(t, h, "GET", "/start", "127.0.0.1:8080")
+	body := w.Body.String()
+	if !strings.Contains(body, `<form method="post" action="`+url+`/terminal/geraet">`) {
+		t.Errorf("Formular mit http-Adresse fehlt: %s", body)
+	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.HasSuffix(csp, "form-action "+url) {
+		t.Errorf("CSP = %q", csp)
+	}
+	// Ohne den Haken bleibt die Startseite ohne Formular.
+	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url} }, client)
+	if w := startReq(t, h, "GET", "/start", "127.0.0.1:8080"); strings.Contains(w.Body.String(), "<form") {
+		t.Errorf("http ohne Erlaubnis zeigt Formular")
 	}
 }

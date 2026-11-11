@@ -308,7 +308,7 @@ func TestAdminPages(t *testing.T) {
 			t.Errorf("/admin/pdh ohne %q", s)
 		}
 	}
-	if r := e.get("/admin/card"); r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "Kartenleser folgt mit Teilprojekt 2") {
+	if r := e.get("/admin/card"); r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "Kartenleser folgt in einer späteren Version") {
 		t.Errorf("/admin/card: %d", r.Code)
 	}
 	if r := e.get("/admin/"); r.Header().Get("Location") != "/admin/pdh" {
@@ -539,5 +539,27 @@ func TestAdminCorruptDeviceRemovedOnURLChange(t *testing.T) {
 	e.post("/admin/pdh/settings", url.Values{"url": {"https://anders.firma.de"}})
 	if e.deviceFileExists() {
 		t.Errorf("beschädigte Datei bleibt")
+	}
+}
+
+func TestAdminExtraOriginsNormalized(t *testing.T) {
+	p := newFakePDH(t)
+	e := newAdminEnv(t, p.client())
+	r := e.post("/admin/pdh/settings", url.Values{
+		"url": {p.hostURL()}, "extraOrigins": {"https://cdn.firma.de\nhttp://img.firma.de:8080"},
+	})
+	if r.Code != http.StatusOK {
+		t.Fatalf("Speichern: %d %s", r.Code, r.Body.String())
+	}
+	c, _, _ := e.store.Load()
+	if len(c.PDH.ExtraOrigins) != 2 || c.PDH.ExtraOrigins[0] != "https://cdn.firma.de:443" || c.PDH.ExtraOrigins[1] != "http://img.firma.de:8080" {
+		t.Errorf("Ursprünge: %v", c.PDH.ExtraOrigins)
+	}
+	if body := e.get("/admin/pdh").Body.String(); !strings.Contains(body, "https://cdn.firma.de:443") {
+		t.Errorf("Seite zeigt den Ursprung nicht: %s", body)
+	}
+	r = e.post("/admin/pdh/settings", url.Values{"url": {p.hostURL()}, "extraOrigins": {"kein url"}})
+	if r.Code != http.StatusBadRequest || !strings.Contains(r.Body.String(), "Zusätzliche Adresse ungültig") {
+		t.Errorf("Unsinn: %d %s", r.Code, r.Body.String())
 	}
 }

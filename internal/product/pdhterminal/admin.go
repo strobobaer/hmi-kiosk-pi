@@ -3,6 +3,7 @@ package pdhterminal
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -122,9 +123,17 @@ func (p *adminProduct) settings(f web.AdminFrame, w http.ResponseWriter, r *http
 		DeviceName: strings.TrimSpace(r.PostFormValue("deviceName")),
 	}
 	for _, line := range strings.Split(r.PostFormValue("extraOrigins"), "\n") {
-		if s := strings.TrimSpace(line); s != "" {
-			in.ExtraOrigins = append(in.ExtraOrigins, s)
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
 		}
+		o, err := config.WebOrigin(s)
+		if err != nil {
+			in.ExtraOrigins = append(in.ExtraOrigins, s)
+			p.render(f, w, r, http.StatusBadRequest, fmt.Sprintf("Zusätzliche Adresse ungültig: %q (%v; erwartet z. B. https://cdn.firma.de)", s, err), "", &in)
+			return
+		}
+		in.ExtraOrigins = append(in.ExtraOrigins, o)
 	}
 	oldURL := ""
 	if c, err := f.Load(); err == nil {
