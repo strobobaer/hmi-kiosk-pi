@@ -88,8 +88,9 @@ für beide Produkte gleich; je Produkt verschieden sind Programm, Abbild, Pakete
 
 ## Teil 3: Versionen, Releases, Abbilder
 
-- Eigene Versionsnummern. Release-Tags: `hmi-kiosk-v<x.y.z>` und `pdh-terminal-v<x.y.z>`. Bestehende
-  Tags `v<x.y.z>` gelten weiter als HMI-Kiosk.
+- Eigene Versionsnummern. Release-Tags: HMI-Kiosk weiter `v<x.y.z>` (alle älteren Geräte kennen nur
+  dieses Schema und `<x.y.z>`; `hmi-kiosk-v<x.y.z>` wird erst ab dieser Version erkannt, deshalb nicht
+  verwenden, solange ältere Geräte im Einsatz sind), PDH-Terminal `pdh-terminal-v<x.y.z>`.
 - Ein Signaturschlüssel. Jedes Paket trägt die Produktkennung als PAX-Record `HMIKIOSK.product`
   (wie `HMIKIOSK.system-level`); fehlt sie, gilt `hmi-kiosk`. Das Gerät lehnt fremde Produkte ab.
   Programmdatei im Paket je Produkt (`hmi-kiosk` bzw. `pdh-terminal`).

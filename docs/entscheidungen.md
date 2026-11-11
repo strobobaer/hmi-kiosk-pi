@@ -105,3 +105,7 @@ Diese Liste hält alle Entscheidungen fest, die während der Umsetzung ohne Rüc
 - TigerVNC-Rückfallprofil: Fensterregeln für das Vncviewer-Fenster in labwc und openbox fehlen noch, ebenso eine Regel, die die Leiste oben hält; Spec Abschnitt 6 nennt noch `-FullScreen`. Standard ist Remmina, betroffen ist nur der Rückfall.
 - `packaging/check-release-pub.sh` und `packaging/test-check-release-pub.sh` sind in Git nicht ausführbar; vor dem ersten Linux-Bau `git update-index --chmod=+x` auf beide Dateien.
 - Strengere `config.Validate` lehnt ältere gespeicherte Konfigurationen ab; ohne Geräte im Feld derzeit ohne Folgen.
+
+## Update-Prüfung: Umfang der Release-Liste
+
+- Die Update-Prüfung liest nur die ersten 100 Releases des Repositorys. Beide Produkte teilen sich ein Repository; hat eines sehr viele Releases, können Releases des anderen Produkts oder ältere Versionen aus dem Blick geraten. Bei Bedarf später blättern (Seiten der GitHub-API).

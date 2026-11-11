@@ -27,7 +27,7 @@ Beachten:
 
 ## 2. Programm-Update einspielen
 
-Ein Update ersetzt nur das Programm `hmi-kiosk` (den Dienst). Der Helfer und das System bleiben unverändert. Änderungen am Helfer oder an Systempaketen kommen als neues Abbild.
+Ein Update ersetzt nur das Programm des Produkts (`hmi-kiosk` bzw. `pdh-terminal`). Der Helfer und das System bleiben unverändert. Änderungen am Helfer oder an Systempaketen kommen als neues Abbild.
 
 ### Paket bauen (am Entwicklungsrechner)
 
@@ -51,18 +51,20 @@ Ein Update ersetzt nur das Programm `hmi-kiosk` (den Dienst). Der Helfer und das
 
 ### Paket als Release-Datei bereitstellen
 
-Damit Terminals das Update selbst finden, kommt das Paket als Datei an das GitHub-Release der Version. Der Name muss genau `<produkt>-<version>.pkg` lauten, das Tag `<produkt>-v<version>`:
+Damit Terminals das Update selbst finden, kommt das Paket als Datei an das GitHub-Release der Version. Der Name muss genau `<produkt>-<version>.pkg` lauten, das Tag je Produkt wie in der Tabelle:
 
 ```
-gh release upload hmi-kiosk-v1.0.1 dist/hmi-kiosk-1.0.1.pkg
+gh release upload v1.0.1 dist/hmi-kiosk-1.0.1.pkg
 ```
 
 | Produkt | Tag | Paketdatei |
 |---|---|---|
-| HMI-Kiosk | `hmi-kiosk-v<version>` (das alte Tag `v<version>` gilt weiter) | `hmi-kiosk-<version>.pkg` |
+| HMI-Kiosk | `v<version>` (weiterhin so taggen, solange ältere Geräte im Einsatz sind) | `hmi-kiosk-<version>.pkg` |
 | PDH-Terminal | `pdh-terminal-v<version>` | `pdh-terminal-<version>.pkg` |
 
 Der Tag legt das Produkt fest: Ein Terminal sieht nur Releases seines eigenen Produkts.
+
+**Wichtig für HMI-Kiosk:** Alle Versionen vor dieser erkennen nur Tags der Form `v<version>` (oder `<version>`). Ein Release mit dem Tag `hmi-kiosk-v<version>` bleibt für sie unsichtbar. Das Tag `hmi-kiosk-v<version>` wird erst ab dieser Version erkannt; HMI-Kiosk-Releases deshalb weiter als `v<version>` anlegen. PDH-Terminal gibt es erst ab dieser Version und nutzt `pdh-terminal-v<version>`.
 
 Fehlt die Paketdatei (zum Beispiel, weil die Version neuere Systemteile braucht und nur als Abbild und Bundle erscheint), zeigen die Terminals die Version mit einem Verweis auf die Release-Seite an, aber ohne Knopf zum Installieren. Ein Release als Vorabversion („Pre-release“) gilt nur für Terminals, bei denen „Vorabversionen einbeziehen“ eingeschaltet ist. Entwürfe (Drafts) sieht kein Terminal.
 
@@ -72,7 +74,7 @@ Fehlt die Paketdatei (zum Beispiel, weil die Version neuere Systemteile braucht 
 
 Jedes Paket trägt seine Produktkennung. Ein Gerät lehnt ein Paket eines anderen Produkts ab, ohne etwas zu ändern (Meldung „Paket gehört zu …“).
 
-**Grenze:** Geräte mit HMI-Kiosk 0.1.6 oder 0.1.7 kennen die Produktkennung noch nicht. Sie lehnen ein PDH-Terminal-Paket trotzdem ab, weil dessen Programmdatei anders heißt.
+**Grenze:** Alle Versionen vor dieser kennen die Produktkennung noch nicht. Sie lehnen ein PDH-Terminal-Paket trotzdem ab, weil dessen Programmdatei anders heißt.
 
 ### Updates per Klick
 
@@ -426,22 +428,22 @@ Die Startseite meldet das Gerät mit einem Geheimnis bei PDH an. Es entsteht bei
 | gekoppelt als „<Benutzer>“, **verbunden** | PDH antwortet, das Gerät ist gültig. | Nichts. |
 | **gesperrt** | In PDH gesperrt. Die Startseite zeigt „Gerät in PDH gesperrt …“. | Am Gerät die Admin-Seite öffnen (5 Sekunden oben rechts drücken), in PDH einen neuen Code erzeugen und neu koppeln. |
 | **nicht erreichbar** | PDH antwortet nicht (Netz, Adresse). Die Startseite versucht es alle 30 Sekunden erneut. | Adresse und Netz prüfen. |
-| **Zertifikat nicht vertraut** | PDH zeigt ein Zertifikat, dem das Gerät nicht vertraut. | Siehe Abschnitt „Zertifikat“ unten. |
+| **Zertifikat von PDH wird nicht vertraut** | PDH zeigt ein Zertifikat, dem das Gerät nicht vertraut. | Siehe Abschnitt „Zertifikat“ unten. |
 
 - **Entkoppeln** (Admin-Seite „PDH“) löscht das Geheimnis nur auf dem Gerät. PDH kennt das Gerät dann weiter, bis es dort gesperrt wird: In PDH unter „Gekoppelte Geräte“ des Benutzers **Sperren** drücken. Gesperrt verliert das Gerät seine Sitzung spätestens nach 30 Sekunden.
 
 ### Sicherung und Wiederherstellung
 
-Das Geheimnis ist **nicht** Teil der Sicherung. Bei der Sicherung als Abbild wird es überschrieben und entfernt, bevor die Kopie entsteht; bei der dateiweisen Sicherung ist der Ordner `/data/pdh` ausgeschlossen. Nach dem Zurückspielen fehlt das Geheimnis, auch auf einem anderen Gerät: Das Gerät muss neu gekoppelt werden (neuer Code aus PDH).
+Das Geheimnis ist **nicht** Teil der Sicherung. Bei der Sicherung als Abbild werden die Dateien unter `/data/pdh` überschrieben und entfernt, bevor die Kopie entsteht; bei der dateiweisen Sicherung ist der Ordner `<Datenordner>/pdh` ausgeschlossen (bei `install.sh` standardmäßig `/var/lib/hmi-kiosk/pdh`). Nach dem Zurückspielen fehlt das Geheimnis, auch auf einem anderen Gerät: Das Gerät muss neu gekoppelt werden (neuer Code aus PDH).
 
 ### Zertifikat (bekannte Einschränkung)
 
-Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat nicht vertraut“. Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
+Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat von PDH wird nicht vertraut“. Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
 
 ### Bekannte Einschränkungen
 
-- Die Bildschirmtastatur erscheint nur auf der Admin-Seite des Geräts, nicht auf den PDH-Seiten. Dafür braucht es ein Skript auf der PDH-Seite; das ist für Teilprojekt 3 vorgesehen.
-- Die Admin-Seite „Kartenleser“ ist nur ein Platzhalter bis Teilprojekt 2.
+- Die Bildschirmtastatur erscheint nur auf der Admin-Seite des Geräts, nicht auf den PDH-Seiten. Dafür braucht es ein Skript auf der PDH-Seite; das folgt in einer späteren Version.
+- Die Admin-Seite „Kartenleser“ ist nur ein Platzhalter; der Kartenleser folgt in einer späteren Version.
 
 ## 5. Fehlersuche
 
