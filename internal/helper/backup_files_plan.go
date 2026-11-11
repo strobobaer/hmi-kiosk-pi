@@ -35,6 +35,8 @@ const msgLayout = "Das Layout dieses Datenträgers (SD-Karte, SSD oder USB-Laufw
 var filesExcludes = []string{
 	"/proc", "/sys", "/dev", "/run", "/tmp", "/mnt", "/media", "/lost+found",
 	"/var/cache/hmi-kiosk-backup", "/var/swap", "/swapfile", "/var/tmp/*",
+	// Geräte-Geheimnis des PDH-Terminals (Datenordner von install.sh): Temp-Dateien .device-* inklusive.
+	"/var/lib/hmi-kiosk/pdh",
 }
 
 var filesMountpoints = []struct {

@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -274,6 +275,7 @@ func (s *Server) buildDataImage(ctx context.Context, p *compactPlan, path string
 	if err != nil {
 		return nil, fmt.Errorf("Die Datenpartition für die Sicherung ließ sich nicht anlegen: %v", err)
 	}
+	before := secretEntries(s.Backup.dataDir())
 	// Das Wurzelverzeichnis übernimmt mke2fs nicht aus -d: Besitzer per Option, Rechte danach.
 	opts := fmt.Sprintf("root_owner=%d:%d,resize=%d,lazy_itable_init=1,lazy_journal_init=1", p.owner.uid, p.owner.gid, maxGrowBlocks)
 	if err := s.exec(ctx, "mkfs.ext4", "-q", "-F", "-L", dataLabel, "-b", strconv.Itoa(fsBlockSize), "-I", "256", "-m", "1",
@@ -283,6 +285,9 @@ func (s *Server) buildDataImage(ctx context.Context, p *compactPlan, path string
 			return nil, cerr
 		}
 		return nil, fmt.Errorf("Die Datenpartition für die Sicherung ließ sich nicht erstellen: %v", err)
+	}
+	if err := s.dropSecrets(ctx, path, before); err != nil {
+		return nil, err
 	}
 	mode := fmt.Sprintf("set_inode_field <2> mode 0%o", 0o40000|p.owner.perm)
 	if err := s.exec(ctx, "debugfs", "-w", "-R", mode, path); err != nil {
@@ -350,4 +355,74 @@ func (b BackupConfig) memAvailable() (int64, error) {
 		}
 	}
 	return 0, errors.New("Der freie Arbeitsspeicher ist nicht lesbar.")
+}
+
+// secretDir und secretPrefix nennen, was nie in eine Sicherung gehört: das Geräte-Geheimnis
+// des PDH-Terminals (pdh/device.json) und die Temp-Dateien des Schreibens (pdh/.device-*).
+const (
+	secretDir    = "pdh"
+	secretPrefix = ".device-"
+	secretFile   = "device.json"
+)
+
+// secretEntry ist eine Datei in <data>/pdh, die ein Abbild nicht enthalten darf.
+type secretEntry struct {
+	name   string
+	blocks int // Blöcke ihres Inhalts im Abbild (mindestens 1)
+}
+
+// secretEntries listet die Einträge in <data>/pdh, die ein Abbild nicht enthalten darf.
+func secretEntries(dataDir string) []secretEntry {
+	ents, err := os.ReadDir(filepath.Join(dataDir, secretDir))
+	if err != nil {
+		return nil
+	}
+	var out []secretEntry
+	for _, e := range ents {
+		n := e.Name()
+		if n != secretFile && !strings.HasPrefix(n, secretPrefix) {
+			continue
+		}
+		blocks := 1
+		if fi, err := e.Info(); err == nil {
+			blocks = int(min(max((fi.Size()+fsBlockSize-1)/fsBlockSize, 1), 64))
+		}
+		out = append(out, secretEntry{n, blocks})
+	}
+	return out
+}
+
+// dropSecrets entfernt die Geheimnis-Dateien aus dem fertigen Abbild (mkfs -d kennt keinen
+// Filter). debugfs "rm" gibt die Blöcke nur frei, ohne sie zu löschen: Der Inhalt wird vorher
+// mit Nullen überschrieben. Die Liste gilt vor und nach dem Bau, damit auch eine dazwischen
+// entstandene oder verschwundene Datei erfasst ist; ein fehlender Eintrag ist für debugfs
+// kein Fehler.
+func (s *Server) dropSecrets(ctx context.Context, img string, before []secretEntry) error {
+	names := before
+	for _, e := range secretEntries(s.Backup.dataDir()) {
+		if !slices.ContainsFunc(names, func(b secretEntry) bool { return b.name == e.name }) {
+			names = append(names, e)
+		}
+	}
+	run := func(cmd string) error {
+		if err := s.exec(ctx, "debugfs", "-w", "-R", cmd, img); err != nil {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			return fmt.Errorf("Das Geräte-Geheimnis ließ sich nicht aus der Sicherung entfernen: %v", err)
+		}
+		return nil
+	}
+	for _, e := range names {
+		p := "/" + secretDir + "/" + e.name
+		for b := 0; b < e.blocks; b++ {
+			if err := run(fmt.Sprintf("zap_block -f %s %d", p, b)); err != nil {
+				return err
+			}
+		}
+		if err := run("rm " + p); err != nil {
+			return err
+		}
+	}
+	return nil
 }

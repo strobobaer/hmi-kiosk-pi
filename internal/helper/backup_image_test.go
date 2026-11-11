@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -674,5 +675,34 @@ func TestBackupUSBSourceFailureIsReportedAndCleansUp(t *testing.T) {
 	u.wantNoLeftovers(t)
 	if calls := u.fx.got(); calls[len(calls)-1] != "umount "+u.mnt {
 		t.Fatalf("nicht ausgehängt: %v", calls)
+	}
+}
+
+func TestCompactImageDropsDeviceSecret(t *testing.T) {
+	c := newCompactEnv(t)
+	writeFile(t, filepath.Join(c.data, "pdh", "device.json"), `{"secret":"pdht_geheim"}`)
+	writeFile(t, filepath.Join(c.data, "pdh", ".device-123"), "pdht_geheim")
+	writeFile(t, filepath.Join(c.data, "pdh", "andere.txt"), "bleibt")
+	writeFile(t, filepath.Join(c.data, "config.json"), `{"a":1}`)
+	rc, _, err := c.srv.openCompact(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := readAll(t, rc)
+	rc.Close()
+	if bytes.Contains(out, []byte("pdht_geheim")) {
+		t.Fatal("das Geheimnis steht im Abbild")
+	}
+	if !bytes.Contains(out, []byte("bleibt")) || !bytes.Contains(out, []byte(`{"a":1}`)) {
+		t.Error("übrige Dateien fehlen im Abbild")
+	}
+	var rms int
+	for _, call := range c.fx.got() {
+		if strings.Contains(call, "-R rm /pdh/") {
+			rms++
+		}
+	}
+	if rms != 2 || !slices.ContainsFunc(c.fx.got(), func(s string) bool { return strings.Contains(s, "-R rm /pdh/device.json ") }) {
+		t.Errorf("rm-Aufrufe: %q", c.fx.got())
 	}
 }

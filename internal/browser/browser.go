@@ -220,3 +220,9 @@ func (s *Supervisor) Run(ctx context.Context) {
 		}
 	}
 }
+
+// NewExec wie New, startet Chromium aber als gewöhnlichen Prozess (client.NewExecRunner).
+// Programme, die den Client-Teil nicht kennen sollen (PDH-Terminal), brauchen so keinen Runner.
+func NewExec(chromiumPath, ramDir string, screenW func() int) *Supervisor {
+	return New(client.NewExecRunner(), chromiumPath, ramDir, screenW)
+}

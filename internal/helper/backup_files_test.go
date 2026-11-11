@@ -351,7 +351,7 @@ func TestFilesRootMustBeOnPartition2(t *testing.T) {
 
 func TestFilesExcludes(t *testing.T) {
 	want := []string{"/proc", "/sys", "/dev", "/run", "/tmp", "/mnt", "/media", "/lost+found",
-		"/var/cache/hmi-kiosk-backup", "/var/swap", "/swapfile", "/var/tmp/*"}
+		"/var/cache/hmi-kiosk-backup", "/var/swap", "/swapfile", "/var/tmp/*", "/var/lib/hmi-kiosk/pdh"}
 	got := append([]string(nil), filesExcludes...)
 	sort.Strings(got)
 	sort.Strings(want)
