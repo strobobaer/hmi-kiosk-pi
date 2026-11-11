@@ -20,9 +20,10 @@ const (
 
 func (s *service) newUpdateCheck() *updatecheck.Service {
 	return &updatecheck.Service{
-		Checker:  &updatecheck.Checker{UserAgent: "hmi-kiosk/" + release.Version},
+		Checker:  &updatecheck.Checker{UserAgent: release.HMIKiosk.ID + "/" + release.Version},
 		Settings: func() config.UpdateCfg { return s.config().Update },
 		Current:  release.Version,
+		Product:  release.HMIKiosk,
 	}
 }
 

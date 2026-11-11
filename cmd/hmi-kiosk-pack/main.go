@@ -20,7 +20,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Aufruf: hmi-kiosk-pack keygen -out <Ordner> | pack -key <Datei> -version <x.y.z> -in <Ordner> -out <Datei>")
+		fmt.Fprintln(stderr, "Aufruf: hmi-kiosk-pack keygen -out <Ordner> | pack -key <Datei> -version <x.y.z> -in <Ordner> -out <Datei> [-product hmi-kiosk|pdh-terminal] [-system-level N]")
 		return 2
 	}
 	var err error
@@ -87,11 +87,16 @@ func pack(args []string, stdout io.Writer) error {
 	fs := newFlags("pack")
 	keyFile := fs.String("key", "", "Datei release.key")
 	version := fs.String("version", "", "Version x.y.z")
-	in := fs.String("in", "", "Ordner mit hmi-kiosk")
+	in := fs.String("in", "", "Ordner mit der Programmdatei des Produkts")
+	productID := fs.String("product", release.HMIKiosk.ID, "Produkt (hmi-kiosk oder pdh-terminal)")
 	out := fs.String("out", "", "Ausgabedatei")
 	level := fs.Int("system-level", release.SystemLevel, "Stand der Systemteile, den das Programm braucht")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	prod, ok := release.ProductByID(*productID)
+	if !ok {
+		return fmt.Errorf("Unbekanntes Produkt %q (erlaubt: hmi-kiosk, pdh-terminal)", *productID)
 	}
 	if *keyFile == "" || *version == "" || *in == "" || *out == "" {
 		return fmt.Errorf("-key, -version, -in und -out sind erforderlich")
@@ -104,7 +109,7 @@ func pack(args []string, stdout io.Writer) error {
 	if err != nil || len(priv) != ed25519.PrivateKeySize {
 		return fmt.Errorf("Schlüsseldatei ungültig")
 	}
-	blob, err := update.Pack(*in, *version, *level, ed25519.PrivateKey(priv))
+	blob, err := update.Pack(*in, *version, prod, *level, ed25519.PrivateKey(priv))
 	if err != nil {
 		return err
 	}

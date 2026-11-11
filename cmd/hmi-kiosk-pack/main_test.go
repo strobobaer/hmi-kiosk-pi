@@ -79,3 +79,28 @@ func TestPackRejectsBadInput(t *testing.T) {
 		t.Error("Ausgabe trotz Fehler")
 	}
 }
+
+func TestPackProductFlag(t *testing.T) {
+	keys := filepath.Join(t.TempDir(), "keys")
+	runCLI("keygen", "-out", keys)
+	key := filepath.Join(keys, "release.key")
+	pubHex, _ := os.ReadFile(filepath.Join(keys, "release.pub"))
+	pub, _ := hex.DecodeString(string(bytes.TrimSpace(pubHex)))
+	in := t.TempDir()
+	os.WriteFile(filepath.Join(in, "pdh-terminal"), []byte("BIN"), 0o755)
+	out := filepath.Join(t.TempDir(), "p.pkg")
+	if code, o := runCLI("pack", "-key", key, "-version", "0.2.0", "-in", in, "-out", out, "-product", "pdh-terminal"); code != 0 {
+		t.Fatalf("pack: %d %s", code, o)
+	}
+	blob, _ := os.ReadFile(out)
+	if p, err := update.Verify(blob, pub); err != nil || p.Product != "pdh-terminal" {
+		t.Fatalf("%v %v", p, err)
+	}
+	// Ordner ohne <Binary> des Produkts und unbekanntes Produkt scheitern.
+	if code, _ := runCLI("pack", "-key", key, "-version", "0.2.0", "-in", in, "-out", out+"2"); code == 0 {
+		t.Fatal("hmi-kiosk-Paket ohne hmi-kiosk im Ordner")
+	}
+	if code, _ := runCLI("pack", "-key", key, "-version", "0.2.0", "-in", in, "-out", out+"3", "-product", "evil"); code == 0 {
+		t.Fatal("unbekanntes Produkt")
+	}
+}

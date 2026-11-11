@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/release"
 	"hmikiosk/internal/update"
 )
 
@@ -29,7 +30,9 @@ type Service struct {
 	Checker  *Checker
 	Settings func() config.UpdateCfg
 	Current  string
-	Now      func() time.Time
+	// Product ist das Produkt dieses Geräts; leer gilt als HMI-Kiosk.
+	Product release.Product
+	Now     func() time.Time
 	// Logf meldet Ergebnisse der Hintergrundprüfung (nil: Protokoll).
 	Logf func(format string, args ...any)
 
@@ -37,6 +40,13 @@ type Service struct {
 	mu       sync.Mutex
 	last     Result
 	has      bool
+}
+
+func (s *Service) product() release.Product {
+	if s.Product.ID == "" {
+		return release.HMIKiosk
+	}
+	return s.Product
 }
 
 func (s *Service) now() time.Time {
@@ -68,7 +78,7 @@ func (s *Service) Check(ctx context.Context) Result {
 	default:
 		rels, err := s.Checker.Releases(ctx, cfg.Repo)
 		if err == nil {
-			res.Offer, err = Select(rels, s.Current, cfg.Prerelease)
+			res.Offer, err = Select(rels, s.product(), s.Current, cfg.Prerelease)
 		}
 		if err != nil {
 			res.Err = err.Error()

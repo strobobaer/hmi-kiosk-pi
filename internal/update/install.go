@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"hmikiosk/internal/release"
 )
 
 // Install entpackt ein geprüftes Paket nach <root>/app/<version>. Es schaltet
@@ -19,6 +21,10 @@ import (
 // am Ende umbenannt; bei einem Fehler bleibt nichts zurück.
 func Install(root string, p *Package) (version string, err error) {
 	if p == nil || !ValidVersion(p.Version) {
+		return "", errors.New("Paket ungültig")
+	}
+	binary, ok := binaryFor(p.Product)
+	if !ok {
 		return "", errors.New("Paket ungültig")
 	}
 	app := appPath(root)
@@ -35,7 +41,7 @@ func Install(root string, p *Package) (version string, err error) {
 			os.RemoveAll(tmp)
 		}
 	}()
-	err = walk(p.targz, func(h *tar.Header, r io.Reader) error {
+	err = walk(p.targz, []string{binary}, func(h *tar.Header, r io.Reader) error {
 		name := h.Name
 		if name == versionName {
 			v, err := readVersion(r)
@@ -146,6 +152,8 @@ type Installer struct {
 	FreeBytes func(path string) (uint64, error)
 	// SystemLevel liefert den Stand der Systemteile des Geräts; nil prüft nicht.
 	SystemLevel func() int
+	// Product ist das Produkt dieses Geräts; leer gilt als HMI-Kiosk.
+	Product release.Product
 
 	mu sync.Mutex
 }
@@ -177,6 +185,9 @@ func (in *Installer) install(ctx context.Context, blob []byte, want string) (str
 	}
 	if want != "" && p.Version != want {
 		return "", fmt.Errorf("Das Paket enthält Version %s statt der angebotenen Version %s; es wurde nicht installiert.", p.Version, want)
+	}
+	if err := in.checkProduct(p); err != nil {
+		return "", err
 	}
 	if err := in.checkSystemLevel(p); err != nil {
 		return "", err
@@ -222,6 +233,30 @@ func (in *Installer) install(ctx context.Context, blob []byte, want string) (str
 		return "", err
 	}
 	return version, nil
+}
+
+func (in *Installer) product() release.Product {
+	if in.Product.ID == "" {
+		return release.HMIKiosk
+	}
+	return in.Product
+}
+
+// checkProduct lehnt ein Paket eines anderen Produkts ab.
+func (in *Installer) checkProduct(p *Package) error {
+	dev := in.product()
+	id := p.Product
+	if id == "" {
+		id = release.HMIKiosk.ID
+	}
+	if id == dev.ID {
+		return nil
+	}
+	name := id
+	if pp, ok := release.ProductByID(id); ok {
+		name = pp.Name
+	}
+	return fmt.Errorf("Paket gehört zu %s, dieses Gerät ist %s.", name, dev.Name)
 }
 
 // checkSystemLevel lehnt ein Paket ab, das neuere Systemteile braucht, als das Gerät hat:
