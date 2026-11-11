@@ -39,10 +39,12 @@ Betrifft dieses Repository und PDH (`pdh-server`, Folgezweig nach `feat/anlagent
   Abmelden oder 2 min Inaktivität kehrt er zur Startseite zurück.
 - Kartendienst mit Ereignisstrom auf `127.0.0.1` folgt in Teilprojekt 2.
 
-**Code-Aufteilung (Richtung):** Kernpakete bleiben unter `internal/` und dürfen kein Produktpaket
-importieren. Produktspezifisches wandert nach `internal/product/hmikiosk` bzw.
-`internal/product/pdhterminal`. Das Admin-Grundgerüst bietet eine Registrierung für Produktseiten
-(Menüeintrag, Routen, Selbstprüfungsschritte). Ein Test prüft die Importrichtung.
+**Code-Aufteilung:** Kernpakete bleiben unter `internal/` und dürfen kein Produktpaket importieren
+(Test). Das neue Produkt lebt in `internal/product/pdhterminal`. Die HMI-Kiosk-Teile bleiben in
+TP0 an ihrem Ort und werden über Produktbeschreibungen abgeschaltet (Menü, Seiten, Routen,
+Selbstprüfungsschritte); ein späterer Umzug nach `internal/product/hmikiosk` ist möglich, aber nicht
+nötig. Plattformnamen (Benutzer `hmikiosk`, Einheiten `hmi-kiosk*.service`, `/etc/hmi-kiosk`) bleiben
+für beide Produkte gleich; je Produkt verschieden sind Programm, Abbild, Pakete und Richtlinie.
 
 ## Teil 2: Kopplung per Code
 
@@ -59,6 +61,9 @@ importieren. Produktspezifisches wandert nach `internal/product/hmikiosk` bzw.
   Geheimnis: 32 Zufallsbytes, Base64url, Präfix `pdht_`, nur einmal ausgegeben.
   Fehler: `422` Code ungültig/abgelaufen/benutzt, `429` Sperre nach Fehlversuchen (5 je Quelladresse in
   5 Minuten, IPv6 je /64). Fehlertexte deutsch im Feld `error`.
+- `GET /api/terminal/v1/device` mit `Authorization: Bearer <secret>` → `200 {"device_id","user","name"}`
+  oder `401` (gesperrt/unbekannt); aktualisiert `last_seen_at`. Daraus zeigt der Pi „gesperrt“ und
+  prüft vor der Anmeldung, ob PDH erreichbar ist.
 - `POST /terminal/geraet` (Formular, Feld `secret`): prüft Geheimnis und Sperre, setzt die Sitzung des
   Terminal-Benutzers (Cookie wie System-Benutzer, lange Laufzeit) mit Claim `device` = Geräte-ID,
   aktualisiert `last_seen_at`, leitet auf `/terminal` um. Falsch/gesperrt: Fehlerseite „Gerät nicht
