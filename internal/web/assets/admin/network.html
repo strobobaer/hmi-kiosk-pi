@@ -62,6 +62,7 @@
   {{end}}
 </section>
 {{end}}
+{{if $.HMI}}
 <section class="panel stack">
   <h2>Fernsteuerung (PDH)</h2>
   <p>PDH kann über HTTPS (Port 8443) ein HMI auf diesem Bildschirm öffnen und wieder schließen. Ist eine Sitzung offen, auch die Daueranzeige, lehnt das Terminal ab.</p>
@@ -88,6 +89,7 @@
     {{end}}
   </div>
 </section>
+{{end}}
 <section class="panel stack">
   <h2>WLAN</h2>
   <p>Eingestellt: {{if .WifiOff}}dauerhaft aus{{else}}an{{end}}</p>

@@ -113,6 +113,8 @@ type AdminDeps struct {
 	LocalLeft   func()
 	// ClearWebLogins löscht das Profil der Web-Kacheln (nil: Knopf fehlt); session.ErrWebOpen bei offener Web-Kachel.
 	ClearWebLogins func() error
+	// Product beschreibt das Produkt (nil: HMI-Kiosk).
+	Product *AdminProduct
 }
 
 const formBodyLimit = 64 << 10
@@ -161,6 +163,7 @@ type admin struct {
 	lastMu     sync.Mutex
 	lastSelf   []SelftestStep
 	lastSelfAt time.Time
+	product    *AdminProduct
 	pages      map[string]*template.Template
 	static     fs.FS
 	h          http.Handler
@@ -181,11 +184,15 @@ func newAdmin(d AdminDeps) *admin {
 	if d.ConfigMu == nil {
 		d.ConfigMu = new(sync.Mutex)
 	}
+	if d.Product == nil {
+		d.Product = HMIKioskAdmin()
+	}
 	a := &admin{
 		d: d, static: sub, sessions: newSessionStore(), authSlot: make(chan struct{}, 1),
-		cfgMu: d.ConfigMu,
+		cfgMu: d.ConfigMu, product: d.Product,
 		pages: parseAdminPages(sub),
 	}
+	parseProductPages(a.pages, sub, d.Product)
 	mux := http.NewServeMux()
 	for _, rt := range a.routes() {
 		pattern := rt.path
@@ -214,7 +221,7 @@ func (a *admin) routes() []route {
 	upload := func(path string, limit int64, h func(http.ResponseWriter, *http.Request, sessionRef, *multipart.Reader)) route {
 		return route{method: http.MethodPost, path: path, kind: routeUpload, limit: limit, upload: h}
 	}
-	return []route{
+	rs := []route{
 		public(http.MethodGet, "/admin/admin.css", routeAsset, a.asset("admin.css", "text/css; charset=utf-8")),
 		public(http.MethodGet, "/admin/admin.js", routeAsset, a.asset("admin.js", "text/javascript; charset=utf-8")),
 		public(http.MethodGet, "/admin/local.js", routeAsset, a.asset("local.js", "text/javascript; charset=utf-8")),
@@ -223,26 +230,8 @@ func (a *admin) routes() []route {
 		public(http.MethodGet, "/admin/login", routeLogin, a.handleLoginForm),
 		public(http.MethodPost, "/admin/login", routeLogin, a.handleLogin),
 
-		get("/admin/{$}", func(w http.ResponseWriter, r *http.Request, _ sessionRef) { redirect(w, r, "/admin/hmis") }),
+		get("/admin/{$}", func(w http.ResponseWriter, r *http.Request, _ sessionRef) { redirect(w, r, a.product.Home) }),
 		post("/admin/logout", a.handleLogout),
-
-		get("/admin/hmis", a.handleHMIList),
-		get("/admin/hmis/new", a.handleHMINewForm),
-		post("/admin/hmis/new", a.handleHMICreate),
-		get("/admin/hmis/{id}", a.handleHMIEditForm),
-		post("/admin/hmis/{id}", a.handleHMISave),
-		post("/admin/hmis/{id}/delete", a.handleHMIDelete),
-		post("/admin/hmis/{id}/probe", a.handleHMIProbe),
-
-		get("/admin/client", a.handleClientForm),
-		post("/admin/client", a.handleClientSave),
-		get("/admin/kiosk", a.handleKioskForm),
-		post("/admin/kiosk", a.handleKioskSave),
-		post("/admin/kiosk/web-logins/delete", a.handleWebLoginsDelete),
-		get("/admin/terminals", a.handleTerminalsForm),
-		post("/admin/terminals", a.handleTerminalsSave),
-		post("/admin/terminals/generate-key", a.handleKeyGenerate),
-		post("/admin/terminals/key", a.handleKeySet),
 
 		get("/admin/network", a.handleNetworkPage),
 		post("/admin/network/ntp", a.handleNTP),
@@ -253,8 +242,6 @@ func (a *admin) routes() []route {
 		post("/admin/network/wifi-on", a.handleWifiOn),
 		post("/admin/network/bt-off", a.handleBtOff),
 		post("/admin/network/bt-on", a.handleBtOn),
-		post("/admin/network/remote/generate", a.handleRemoteKeyGenerate),
-		post("/admin/network/remote/off", a.handleRemoteKeyOff),
 
 		get(pathRepair, a.handleRepairPage),
 		post(pathRepair, a.handleRepairRun),
@@ -273,14 +260,10 @@ func (a *admin) routes() []route {
 		post("/admin/system/reboot", a.handleReboot),
 		post("/admin/system/restart-service", a.handleRestartService),
 		post("/admin/system/selftest", a.handleSelftest),
-		post("/admin/system/soak/start", a.handleSoakStart),
-		post("/admin/system/soak/stop", a.handleSoakStop),
 		get("/admin/system/backup", a.handleBackupPage),
 		post("/admin/system/backup/download", a.handleBackupDownload),
 		post("/admin/system/backup/usb", a.handleBackupUSB),
 		post("/admin/system/backup/cancel", a.handleBackupCancel),
-		get("/admin/system/soak.jsonl", a.handleSoakLog),
-		get("/admin/system/soak.txt", a.handleSoakSummary),
 		post("/admin/system/password", a.handleChangePassword),
 		post("/admin/system/export", a.handleExport),
 		post("/admin/system/update/check", a.handleUpdateCheck),
@@ -288,12 +271,39 @@ func (a *admin) routes() []route {
 		post("/admin/system/update/install", a.handleUpdateInstall),
 		upload("/admin/system/update", updateBodyLimit, a.handleUpdate),
 		upload("/admin/system/import", importBodyLimit, a.handleImport),
-
-		// Auffangroute: auch unbekannte Pfade verraten ohne Anmeldung nichts.
-		{path: "/admin/", kind: routeSession, limit: formBodyLimit, handle: func(w http.ResponseWriter, r *http.Request, _ sessionRef) {
-			notFound(w)
-		}},
 	}
+	if a.product.HMI {
+		rs = append(rs, []route{
+			get("/admin/hmis", a.handleHMIList),
+			get("/admin/hmis/new", a.handleHMINewForm),
+			post("/admin/hmis/new", a.handleHMICreate),
+			get("/admin/hmis/{id}", a.handleHMIEditForm),
+			post("/admin/hmis/{id}", a.handleHMISave),
+			post("/admin/hmis/{id}/delete", a.handleHMIDelete),
+			post("/admin/hmis/{id}/probe", a.handleHMIProbe),
+
+			get("/admin/client", a.handleClientForm),
+			post("/admin/client", a.handleClientSave),
+			get("/admin/kiosk", a.handleKioskForm),
+			post("/admin/kiosk", a.handleKioskSave),
+			post("/admin/kiosk/web-logins/delete", a.handleWebLoginsDelete),
+			get("/admin/terminals", a.handleTerminalsForm),
+			post("/admin/terminals", a.handleTerminalsSave),
+			post("/admin/terminals/generate-key", a.handleKeyGenerate),
+			post("/admin/terminals/key", a.handleKeySet),
+			post("/admin/network/remote/generate", a.handleRemoteKeyGenerate),
+			post("/admin/network/remote/off", a.handleRemoteKeyOff),
+			post("/admin/system/soak/start", a.handleSoakStart),
+			post("/admin/system/soak/stop", a.handleSoakStop),
+			get("/admin/system/soak.jsonl", a.handleSoakLog),
+			get("/admin/system/soak.txt", a.handleSoakSummary),
+		}...)
+	}
+	rs = append(rs, a.productRoutes()...)
+	// Auffangroute: auch unbekannte Pfade verraten ohne Anmeldung nichts.
+	return append(rs, route{path: "/admin/", kind: routeSession, limit: formBodyLimit, handle: func(w http.ResponseWriter, r *http.Request, _ sessionRef) {
+		notFound(w)
+	}})
 }
 
 // wrap setzt die Prüfungen in fester Reihenfolge um. Fehlende Anmeldung geht vor
@@ -504,11 +514,12 @@ var adminPageNames = []string{
 	"kiosk.html", "terminals.html", "network.html", "system.html", "backup.html", "maintenance.html", "repair.html",
 }
 
+var adminFuncs = template.FuncMap{"icon": iconSVG, "color": colorClass, "bytes": formatBytes}
+
 func parseAdminPages(sub fs.FS) map[string]*template.Template {
-	funcs := template.FuncMap{"icon": iconSVG, "color": colorClass, "bytes": formatBytes}
 	pages := make(map[string]*template.Template, len(adminPageNames))
 	for _, name := range adminPageNames {
-		pages[name] = template.Must(template.New("layout.html").Funcs(funcs).ParseFS(sub, "layout.html", name))
+		pages[name] = template.Must(template.New("layout.html").Funcs(adminFuncs).ParseFS(sub, "layout.html", name))
 	}
 	return pages
 }
@@ -530,6 +541,10 @@ type adminView struct {
 	KioskURL    string
 	IdleSeconds int
 	OSK         string
+	// Nav ist das Menü, ProductName die Marke, HMI schaltet HMI-Teile der Kernseiten ein.
+	Nav         []NavItem
+	ProductName string
+	HMI         bool
 	Body        any
 }
 
@@ -540,6 +555,10 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 			v.OSK = "manual"
 		}
 	}
+	if a.product.IdleSeconds > 0 {
+		v.IdleSeconds = a.product.IdleSeconds
+	}
+	v.Nav, v.ProductName, v.HMI = a.product.Nav, a.product.Name, a.product.HMI
 	var buf bytes.Buffer
 	if err := a.pages[page].Execute(&buf, v); err != nil {
 		http.Error(w, "Seite konnte nicht erzeugt werden", http.StatusInternalServerError)
@@ -561,6 +580,7 @@ func (a *admin) pageRefresh(w http.ResponseWriter, s sessionRef, status int, pag
 	name, netTiles := "", false
 	if cfg, _, err := a.d.Store.Load(); err == nil {
 		name, netTiles = cfg.Terminal.Name, cfg.Kiosk.NetworkTiles
+		netTiles = netTiles && a.product.HMI
 	}
 	a.writePage(w, status, page, adminView{
 		Title: title, Section: section, CSRF: s.csrf, LoggedIn: true, TerminalName: name,

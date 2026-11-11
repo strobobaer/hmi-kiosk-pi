@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Title}} – HMI-Kiosk</title>
+<title>{{.Title}} – {{.ProductName}}</title>
 {{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">
 {{end}}<link rel="stylesheet" href="/admin/admin.css">
 <script src="/admin/admin.js" defer></script>
@@ -16,20 +16,15 @@
     <button type="submit" class="btn primary">Zurück zum Kiosk</button>
   </form></div>
 {{end}}<header class="top">
-  <div class="brand">HMI-Kiosk{{if .TerminalName}}<span class="terminal">{{.TerminalName}}</span>{{end}}</div>
+  <div class="brand">{{.ProductName}}{{if .TerminalName}}<span class="terminal">{{.TerminalName}}</span>{{end}}</div>
   {{if .LoggedIn}}
   <form method="post" action="/admin/logout" class="logout">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <button type="submit" class="btn ghost">Abmelden</button>
   </form>
   {{if and (ne .Section "maintenance") (ne .Section "repair")}}<nav class="nav" aria-label="Bereiche">
-    <a href="/admin/hmis"{{if eq .Section "hmis"}} aria-current="page"{{end}}>HMIs</a>
-    <a href="/admin/client"{{if eq .Section "client"}} aria-current="page"{{end}}>Client</a>
-    <a href="/admin/kiosk"{{if eq .Section "kiosk"}} aria-current="page"{{end}}>Kiosk</a>
-    <a href="/admin/terminals"{{if eq .Section "terminals"}} aria-current="page"{{end}}>Terminals</a>
-    <a href="/admin/network"{{if eq .Section "network"}} aria-current="page"{{end}}>Netzwerk</a>
-    <a href="/admin/system"{{if eq .Section "system"}} aria-current="page"{{end}}>System</a>
-  </nav>{{end}}
+    {{range .Nav}}<a href="{{.Path}}"{{if eq .Section $.Section}} aria-current="page"{{end}}>{{.Label}}</a>
+    {{end}}  </nav>{{end}}
   {{end}}
 </header>
 <main class="main{{if not .LoggedIn}} narrow{{end}}">
