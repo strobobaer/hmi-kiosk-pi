@@ -33,6 +33,7 @@ type fakePDH struct {
 	body    atomic.Value // string: Antworttext für /pair bei status
 	gotName atomic.Value
 	gotCode atomic.Value
+	user    atomic.Value // string: Benutzername in der Antwort von /pair
 }
 
 func newFakePDH(t *testing.T) *fakePDH {
@@ -55,14 +56,18 @@ func newFakePDH(t *testing.T) *fakePDH {
 			_, _ = w.Write([]byte(`{"error":"Code ungültig oder abgelaufen"}`))
 			return
 		}
-		_, _ = fmt.Fprintf(w, `{"device_id":"d-1","secret":%q,"user":"Anna"}`, testSecret)
+		user := "Anna"
+		if u, ok := p.user.Load().(string); ok {
+			user = u
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"device_id": "a1-1", "secret": testSecret, "user": user})
 	})
 	mux.HandleFunc("GET /api/terminal/v1/device", func(w http.ResponseWriter, r *http.Request) {
 		if p.revoked.Load() || r.Header.Get("Authorization") != "Bearer "+testSecret {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_, _ = w.Write([]byte(`{"device_id":"d-1","user":"Anna","name":"x"}`))
+		_, _ = w.Write([]byte(`{"device_id":"a1-1","user":"Anna","name":"x"}`))
 	})
 	p.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(p.srv.Close)
@@ -75,7 +80,7 @@ func TestPairSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.DeviceID != "d-1" || d.Secret != testSecret || d.User != "Anna" || d.URL != p.hostURL() || d.PairedAt.IsZero() {
+	if d.DeviceID != "a1-1" || d.Secret != testSecret || d.User != "Anna" || d.URL != p.hostURL() || d.PairedAt.IsZero() {
 		t.Errorf("Gerät: %+v", d)
 	}
 	if p.gotName.Load() != "Kasse 1" || p.gotCode.Load() != "ABCD-1234" {
@@ -126,7 +131,7 @@ func TestPairErrors(t *testing.T) {
 	}
 	p.status.Store(200)
 	p.body.Store(`kein json`)
-	if _, err := c.Pair(context.Background(), p.hostURL(), "x", "x"); err == nil || !strings.Contains(err.Error(), "Unerwartete Antwort") {
+	if _, err := c.Pair(context.Background(), p.hostURL(), "x", "x"); err == nil || !strings.Contains(err.Error(), "Ungültige Antwort") {
 		t.Errorf("JSON: %v", err)
 	}
 	p.body.Store(`{"device_id":"d","user":"u"}`)
@@ -157,7 +162,7 @@ func TestPairUntrustedCert(t *testing.T) {
 
 func TestCheckStates(t *testing.T) {
 	p := newFakePDH(t)
-	d := Device{DeviceID: "d-1", Secret: testSecret, URL: p.hostURL()}
+	d := Device{DeviceID: "a1-1", Secret: testSecret, URL: p.hostURL()}
 	if st, err := p.client().Check(context.Background(), d); st != StateOK || err != nil {
 		t.Errorf("200: %v %v", st, err)
 	}
@@ -172,7 +177,7 @@ func TestCheckStates(t *testing.T) {
 }
 
 func TestDeviceStringHidesSecret(t *testing.T) {
-	d := Device{DeviceID: "d-1", Secret: testSecret, User: "Anna", URL: "https://pdh.test"}
+	d := Device{DeviceID: "a1-1", Secret: testSecret, User: "Anna", URL: "https://pdh.test"}
 	for _, s := range []string{
 		d.String(), fmt.Sprintf("%v", d), fmt.Sprintf("%+v", d), fmt.Sprintf("%#v", d), fmt.Sprint(&d), fmt.Sprintf("%s", d),
 	} {
@@ -430,4 +435,109 @@ func (p *fakePDH) client() Client { return Client{HTTP: &http.Client{Transport: 
 // untrustedClient kennt die Zertifizierungsstelle des Testservers nicht.
 func (p *fakePDH) untrustedClient() Client {
 	return Client{HTTP: &http.Client{Transport: p.transport(false)}}
+}
+
+func TestNoRedirects(t *testing.T) {
+	var hits atomic.Int32
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"device_id":"a1","secret":"pdht_x","user":"U"}`))
+	}))
+	defer second.Close()
+	for _, code := range []int{http.StatusFound, http.StatusTemporaryRedirect} {
+		first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, second.URL+r.URL.Path, code)
+		}))
+		for name, c := range map[string]Client{"Standard": {}, "eigener Client": {HTTP: &http.Client{}}} {
+			if _, err := c.Pair(context.Background(), first.URL, "ABCD", "x"); err == nil {
+				t.Errorf("%s %d: Pair ohne Fehler", name, code)
+			}
+			if st, _ := c.Check(context.Background(), Device{DeviceID: "a1", Secret: testSecret, URL: first.URL}); st == StateOK {
+				t.Errorf("%s %d: Check folgt der Weiterleitung", name, code)
+			}
+		}
+		first.Close()
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("zweiter Server bekam %d Anfragen", n)
+	}
+}
+
+func TestPairRejectsBadIdentity(t *testing.T) {
+	p := newFakePDH(t)
+	p.status.Store(200)
+	for _, body := range []string{
+		`{"device_id":"<b>","secret":"pdht_x","user":"U"}`,
+		`{"device_id":"` + strings.Repeat("a", 65) + `","secret":"pdht_x","user":"U"}`,
+		`{"device_id":"a1","secret":"pdht x","user":"U"}`,
+	} {
+		p.body.Store(body)
+		if _, err := p.client().Pair(context.Background(), p.hostURL(), "x", "x"); err == nil || err.Error() != "Ungültige Antwort von PDH" {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+}
+
+func TestAdminEscapesAndTruncatesPDHText(t *testing.T) {
+	p := newFakePDH(t)
+	e := newAdminEnv(t, p.client())
+	e.setPDH(config.PDHCfg{URL: p.hostURL()})
+	evil := "<script>alert(1)</script>" + strings.Repeat("a", 1000)
+	p.user.Store(evil)
+	r := e.post("/admin/pdh/pair", url.Values{"code": {"ABCD-1234"}})
+	for _, s := range []string{r.Body.String(), e.get("/admin/pdh").Body.String()} {
+		if strings.Contains(s, "<script>alert") || !strings.Contains(s, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+			t.Errorf("Benutzername nicht maskiert")
+		}
+		if strings.Contains(s, strings.Repeat("a", 200)) {
+			t.Errorf("Benutzername nicht gekürzt")
+		}
+	}
+	d, err := LoadDevice(e.dir)
+	if err != nil || len([]rune(d.User)) > 200 {
+		t.Errorf("gespeichert: %v %d", err, len([]rune(d.User)))
+	}
+
+	p.status.Store(422)
+	p.body.Store(`{"error":"<img src=x onerror=alert(1)>` + strings.Repeat("b", 1000) + `"}`)
+	r = e.post("/admin/pdh/pair", url.Values{"code": {"X"}})
+	s := r.Body.String()
+	if strings.Contains(s, "<img src") || !strings.Contains(s, "&lt;img") || strings.Contains(s, strings.Repeat("b", 200)) {
+		t.Errorf("422-Text nicht maskiert oder gekürzt")
+	}
+}
+
+func TestAdminSameURLKeepsPairing(t *testing.T) {
+	p := newFakePDH(t)
+	e := newAdminEnv(t, p.client())
+	e.setPDH(config.PDHCfg{URL: p.hostURL()})
+	e.post("/admin/pdh/pair", url.Values{"code": {"ABCD-1234"}})
+	r := e.post("/admin/pdh/settings", url.Values{"url": {p.hostURL()}})
+	if !e.deviceFileExists() || !strings.Contains(r.Body.String(), "gekoppelt als") {
+		t.Errorf("gleiche URL: Kopplung weg")
+	}
+	// Abweichende Schreibweisen lehnt die Prüfung ab; die Kopplung bleibt.
+	for _, u := range []string{p.hostURL() + "/", strings.Replace(p.hostURL(), "example.com", "EXAMPLE.com", 1)} {
+		r = e.post("/admin/pdh/settings", url.Values{"url": {u}})
+		if r.Code != http.StatusBadRequest || !e.deviceFileExists() {
+			t.Errorf("%s: %d, Datei %v", u, r.Code, e.deviceFileExists())
+		}
+	}
+}
+
+func TestAdminCorruptDeviceRemovedOnURLChange(t *testing.T) {
+	p := newFakePDH(t)
+	e := newAdminEnv(t, p.client())
+	e.setPDH(config.PDHCfg{URL: p.hostURL()})
+	path := filepath.Join(e.dir, "pdh", "device.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{kaputt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.post("/admin/pdh/settings", url.Values{"url": {"https://anders.firma.de"}})
+	if e.deviceFileExists() {
+		t.Errorf("beschädigte Datei bleibt")
+	}
 }

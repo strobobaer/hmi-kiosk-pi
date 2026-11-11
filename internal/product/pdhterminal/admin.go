@@ -126,12 +126,18 @@ func (p *adminProduct) settings(f web.AdminFrame, w http.ResponseWriter, r *http
 			in.ExtraOrigins = append(in.ExtraOrigins, s)
 		}
 	}
+	oldURL := ""
+	if c, err := f.Load(); err == nil {
+		oldURL = c.PDH.URL
+	}
 	if err := f.Update(func(c *config.Config) error { c.PDH = in; return nil }); err != nil {
 		p.render(f, w, r, http.StatusBadRequest, err.Error(), "", &in)
 		return
 	}
 	notice := "Einstellungen gespeichert."
-	if dev, err := LoadDevice(p.dataDir); err == nil && dev != nil && dev.URL != in.URL {
+	dev, lerr := LoadDevice(p.dataDir)
+	// Eine beschädigte Datei hat keine Adresse: Ändert sich die Adresse, geht sie mit weg.
+	if (lerr == nil && dev != nil && dev.URL != in.URL) || (lerr != nil && oldURL != in.URL) {
 		if err := RemoveDevice(p.dataDir); err != nil {
 			p.render(f, w, r, http.StatusInternalServerError, err.Error(), "", nil)
 			return
@@ -164,7 +170,7 @@ func (p *adminProduct) pair(f web.AdminFrame, w http.ResponseWriter, r *http.Req
 	if name == "" {
 		name = defaultName()
 	}
-	dev, err := p.client.Pair(r.Context(), cfg.PDH.URL, code, name)
+	dev, err := p.client.Pair(context.WithoutCancel(r.Context()), cfg.PDH.URL, code, name)
 	if err != nil {
 		f.Logf("PDH-Kopplung fehlgeschlagen")
 		p.render(f, w, r, http.StatusBadRequest, err.Error(), "", nil)

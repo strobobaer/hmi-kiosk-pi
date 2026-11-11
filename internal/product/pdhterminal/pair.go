@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -71,7 +72,23 @@ func readBody(r *http.Response) []byte {
 	return b
 }
 
-// pdhMessage macht aus dem Fehlertext von PDH eine kurze, druckbare Zeile.
+// cleanText macht aus Text von PDH eine kurze, druckbare Zeile (höchstens 200 Zeichen).
+func cleanText(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(s))
+	if r := []rune(s); len(r) > 200 {
+		s = strings.TrimSpace(string(r[:200]))
+	}
+	return s
+}
+
+var deviceIDRe = regexp.MustCompile(`^[0-9a-fA-F-]{1,64}$`)
+
+// pdhMessage liest den Fehlertext aus einer Fehlerantwort von PDH.
 func pdhMessage(b []byte) string {
 	var e struct {
 		Error string `json:"error"`
@@ -79,16 +96,7 @@ func pdhMessage(b []byte) string {
 	if json.Unmarshal(b, &e) != nil {
 		return ""
 	}
-	s := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, strings.TrimSpace(e.Error))
-	if r := []rune(s); len(r) > 200 {
-		s = string(r[:200])
-	}
-	return s
+	return cleanText(e.Error)
 }
 
 // Pair koppelt das Terminal mit dem Code aus PDH. Der Code wird nicht aufgehoben.
@@ -117,10 +125,10 @@ func (c Client) Pair(ctx context.Context, baseURL, code, name string) (Device, e
 			Secret   string `json:"secret"`
 			User     string `json:"user"`
 		}
-		if json.Unmarshal(data, &out) != nil || out.DeviceID == "" || out.Secret == "" {
-			return Device{}, errors.New("Unerwartete Antwort von PDH")
+		if json.Unmarshal(data, &out) != nil || !deviceIDRe.MatchString(out.DeviceID) || out.Secret == "" || len(out.Secret) > 256 || strings.IndexFunc(out.Secret, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+			return Device{}, errors.New("Ungültige Antwort von PDH")
 		}
-		return Device{DeviceID: out.DeviceID, Secret: out.Secret, User: out.User, URL: base, PairedAt: time.Now().UTC()}, nil
+		return Device{DeviceID: out.DeviceID, Secret: out.Secret, User: cleanText(out.User), URL: base, PairedAt: time.Now().UTC()}, nil
 	case http.StatusUnprocessableEntity:
 		if m := pdhMessage(data); m != "" {
 			return Device{}, errors.New(m)

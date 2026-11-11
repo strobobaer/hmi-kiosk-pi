@@ -51,7 +51,7 @@ func LoadDevice(dataDir string) (*Device, error) {
 	if err := json.Unmarshal(b, &f); err != nil || f.DeviceID == "" || f.Secret == "" {
 		return nil, errors.New("Kopplungsdatei ist beschädigt")
 	}
-	return &Device{DeviceID: f.DeviceID, Secret: f.Secret, User: f.User, URL: f.URL, PairedAt: f.PairedAt}, nil
+	return &Device{DeviceID: f.DeviceID, Secret: f.Secret, User: cleanText(f.User), URL: f.URL, PairedAt: f.PairedAt}, nil
 }
 
 // SaveDevice schreibt die Kopplung atomar (Ordner 0700, Datei 0600).
