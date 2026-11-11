@@ -1,0 +1,48 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <h2>PDH-Server</h2>
+  {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
+  <p>Adresse: {{if .URL}}{{.URL}}{{else}}nicht eingestellt{{end}}</p>
+  {{if .Paired}}
+  <p>Zustand: gekoppelt als „{{.User}}“{{if .Since}} seit {{.Since}}{{end}} · <span class="msg {{.StateClass}}">{{.State}}</span></p>
+  <form method="post" action="/admin/pdh/unpair" class="stack" data-confirm="Kopplung auf diesem Terminal entfernen?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="actions"><button type="submit" class="btn danger">Kopplung entfernen</button></div>
+  </form>
+  {{else}}
+  <p>Zustand: nicht gekoppelt</p>
+  {{end}}
+</section>
+
+<section class="panel stack">
+  <h2>Einstellungen</h2>
+  <form method="post" action="/admin/pdh/settings" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>PDH-Adresse
+      <input type="text" name="url" value="{{.URL}}" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://pdh.firma.de">
+    </label>
+    <label class="check"><input type="checkbox" name="allowHttp" value="1"{{if .AllowHTTP}} checked{{end}}> Unverschlüsselt (http://) erlauben</label>
+    <label>Gerätename
+      <input type="text" name="deviceName" value="{{.DeviceName}}" autocapitalize="off" spellcheck="false" placeholder="{{.DefaultName}}">
+    </label>
+    <label>Zusätzliche Adressen (eine pro Zeile)
+      <textarea name="extraOrigins" rows="3" autocapitalize="off" spellcheck="false" placeholder="https://cdn.firma.de">{{.Extra}}</textarea>
+    </label>
+    <p class="hint">Nur die Adresse ohne Pfad. Ändert sich die PDH-Adresse, wird die Kopplung entfernt und muss neu hergestellt werden. Zusätzliche Adressen darf die Webansicht ebenfalls laden.</p>
+    <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="panel stack">
+  <h2>Koppeln</h2>
+  <form method="post" action="/admin/pdh/pair" class="stack" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Kopplungscode aus PDH
+      <input type="text" name="code" value="" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    </label>
+    <div class="actions"><button type="submit" class="btn primary">Koppeln</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}
