@@ -228,3 +228,19 @@ func TestImportIgnoresSealedFieldsInFile(t *testing.T) {
 		t.Errorf("übernommen: %q %q", c.HMIs[0].PasswordEnc, c.SharedKeyEnc)
 	}
 }
+
+func TestImportKeepsLocalPDH(t *testing.T) {
+	src, sb := newLoggedIn(t)
+	src.mutate(func(c *config.Config) {
+		c.PDH = config.PDHCfg{URL: "https://fremd.firma.de", DeviceName: "Quelle"}
+		c.Kiosk.Layout = "4"
+	})
+	blob := exportBlob(t, sb)
+	dst, db := newLoggedIn(t)
+	dst.mutate(func(c *config.Config) { c.PDH = config.PDHCfg{URL: "https://lokal.firma.de", DeviceName: "Ziel"} })
+	wantContains(t, importBlob(t, db, blob, exportPW), "importiert")
+	got := dst.cfg()
+	if got.PDH.URL != "https://lokal.firma.de" || got.PDH.DeviceName != "Ziel" || got.Kiosk.Layout != "4" {
+		t.Errorf("Import: PDH=%+v layout=%q", got.PDH, got.Kiosk.Layout)
+	}
+}

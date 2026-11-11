@@ -126,6 +126,9 @@ type Config struct {
 	Display      DisplayCfg `json:"display"`
 	Admin        AdminCfg   `json:"admin"`
 	Update       UpdateCfg  `json:"update"`
+	// PDH fehlt in der Datei, solange nichts eingetragen ist (omitzero, Go 1.24): alte
+	// Konfigurationen bleiben Byte für Byte gleich.
+	PDH PDHCfg `json:"pdh,omitzero"`
 }
 
 const SchemaVersion = 1
