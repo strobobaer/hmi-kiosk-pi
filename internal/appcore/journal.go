@@ -1,4 +1,7 @@
-package app
+// Package appcore enthält die Laufzeit-Bausteine, die beide Produkte teilen:
+// Protokoll, systemd-Anmeldung, Gesundmarke, Ursprungsabgleich, lokale Admin-Seite,
+// Update-Prüfung.
+package appcore
 
 import (
 	"errors"
@@ -17,7 +20,8 @@ const (
 	// MaxLogBytes begrenzt alle Protokolldateien zusammen.
 	MaxLogBytes int64 = 50 << 20
 
-	logFileName   = "kiosk.log"
+	// LogFileName ist die aktuelle Protokolldatei.
+	LogFileName   = "kiosk.log"
 	logFileCount  = 5 // kiosk.log und kiosk.log.1 bis .4
 	journalBuffer = 1024
 	maxLineBytes  = 64 << 10
@@ -62,8 +66,8 @@ type Journal struct {
 
 // NewJournal öffnet das Protokoll in dir. Auch bei einem Fehler ist das Ergebnis
 // benutzbar: Zeilen gehen dann nach stderr, und das Öffnen wird später wiederholt.
-func NewJournal(dir string, maxBytes int64) (*Journal, error) {
-	return newJournal(dir, maxBytes, os.Stderr)
+func NewJournal(dir string) (*Journal, error) {
+	return newJournal(dir, MaxLogBytes, os.Stderr)
 }
 
 func newJournal(dir string, maxBytes int64, stderr io.Writer) (*Journal, error) {
@@ -172,9 +176,9 @@ func (j *Journal) handle(line []byte) {
 
 func (j *Journal) path(n int) string {
 	if n == 0 {
-		return filepath.Join(j.dir, logFileName)
+		return filepath.Join(j.dir, LogFileName)
 	}
-	return filepath.Join(j.dir, logFileName+"."+strconv.Itoa(n))
+	return filepath.Join(j.dir, LogFileName+"."+strconv.Itoa(n))
 }
 
 // writeFile verwirft die Zeile, wenn sie nicht geschrieben werden kann.

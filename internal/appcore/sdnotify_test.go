@@ -1,4 +1,4 @@
-package app
+package appcore
 
 import (
 	"context"
@@ -126,8 +126,8 @@ func TestWatchdogOnlyWhenProbeAnswers(t *testing.T) {
 }
 
 func TestWatchdogProbeHasTwoSecondLimit(t *testing.T) {
-	if watchdogProbeLimit != 2*time.Second {
-		t.Fatalf("Frist %v", watchdogProbeLimit)
+	if WatchdogProbeLimit != 2*time.Second {
+		t.Fatalf("Frist %v", WatchdogProbeLimit)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -143,7 +143,7 @@ func TestWatchdogProbeHasTwoSecondLimit(t *testing.T) {
 		}
 		return nil
 	})
-	if d := <-got; d <= 0 || d > watchdogProbeLimit {
+	if d := <-got; d <= 0 || d > WatchdogProbeLimit {
 		t.Fatalf("Frist %v", d)
 	}
 }

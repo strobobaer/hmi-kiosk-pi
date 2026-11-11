@@ -143,25 +143,39 @@ func Refuse(d Deps) string {
 	return d.Busy()
 }
 
-type step struct {
-	name string
-	run  func(ctx context.Context, d Deps) StepResult
+// Step ist ein Prüfschritt: Name und Ausführung.
+type Step struct {
+	Name string
+	Run  func(ctx context.Context, d Deps) StepResult
 }
 
-var steps = []step{
-	{StepClient, clientImage},
-	{StepWindow, windowAndBar},
-	{StepTouch, touch},
-	{StepReturn, returnToTiles},
-	{StepProcessEnd, processEnd},
-	{StepTerminals, terminals},
-	{StepProtection, protection},
+// HMISteps sind die sieben Schritte des HMI-Kiosks in fester Reihenfolge.
+func HMISteps() []Step {
+	return []Step{
+		{StepClient, clientImage},
+		{StepWindow, windowAndBar},
+		{StepTouch, touch},
+		{StepReturn, returnToTiles},
+		{StepProcessEnd, processEnd},
+		{StepTerminals, terminals},
+		{StepProtection, protection},
+	}
 }
 
-// Run führt alle sieben Schritte nacheinander aus. Ein gescheiterter Schritt
+// CoreSteps sind die Schritte, die jedes Produkt braucht: nur der Schutz.
+func CoreSteps() []Step {
+	return []Step{{StepProtection, protection}}
+}
+
+// Run führt alle sieben Schritte des HMI-Kiosks nacheinander aus; siehe RunSteps.
+func Run(ctx context.Context, d Deps) []StepResult {
+	return RunSteps(ctx, d, HMISteps())
+}
+
+// RunSteps führt steps nacheinander aus. Ein gescheiterter Schritt
 // bricht die anderen nicht ab. Läuft gerade eine echte Sitzung, startet nichts;
 // das Ergebnis ist dann ein einzelner Eintrag StepPrecondition.
-func Run(ctx context.Context, d Deps) []StepResult {
+func RunSteps(ctx context.Context, d Deps, steps []Step) []StepResult {
 	if msg := Refuse(d); msg != "" {
 		return []StepResult{{Name: StepPrecondition, Detail: msg}}
 	}
@@ -170,23 +184,23 @@ func Run(ctx context.Context, d Deps) []StepResult {
 	out := make([]StepResult, 0, len(steps))
 	for _, s := range steps {
 		r := runStep(ctx, d, s)
-		r.Name = s.name
+		r.Name = s.Name
 		out = append(out, r)
 	}
 	return out
 }
 
-func runStep(ctx context.Context, d Deps, s step) (r StepResult) {
+func runStep(ctx context.Context, d Deps, s Step) (r StepResult) {
 	if ctx.Err() != nil {
 		return StepResult{Detail: "abgebrochen, nicht ausgeführt"}
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			log.Printf("Selbstprüfung %s: Absturz: %v", s.name, p)
+			log.Printf("Selbstprüfung %s: Absturz: %v", s.Name, p)
 			r = StepResult{Detail: fmt.Sprintf("interner Fehler: %v", p)}
 		}
 	}()
-	return s.run(ctx, d)
+	return s.Run(ctx, d)
 }
 
 // Failed meldet, ob ein Schritt gescheitert ist (OK=false). "Prüfen" zählt nicht.

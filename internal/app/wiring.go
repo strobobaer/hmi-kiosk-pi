@@ -12,6 +12,7 @@ import (
 	"slices"
 	"time"
 
+	"hmikiosk/internal/appcore"
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
@@ -39,7 +40,7 @@ func (s *service) Apply(c config.Config) {
 	s.cfgWarn = "" // Der Aufrufer hat gespeichert, config.json ist also wieder gültig.
 	s.mu.Unlock()
 	s.coord.UpdateIdentity(selfOf(c), peersFor(c, key))
-	s.origins.set(config.WebOrigins(c))
+	s.origins.Set(config.WebOrigins(c))
 	s.syncTileListener(c)
 	s.syncMaintenance()
 	s.reach.wake()
@@ -245,7 +246,7 @@ func (s *service) onSessionEnd(e session.Ended) {
 	case e.ViewOnly:
 		mode = "Nur ansehen"
 	}
-	s.journal.Session(SessionRecord{
+	s.journal.Session(appcore.SessionRecord{
 		Terminal: s.config().Terminal.Name,
 		HMI:      e.HMIName,
 		Mode:     mode,

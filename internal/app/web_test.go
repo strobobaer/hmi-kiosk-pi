@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"hmikiosk/internal/appcore"
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/session"
@@ -44,54 +45,11 @@ func (h *helperCalls) all() []string {
 	return slices.Clone(h.args)
 }
 
-func TestOriginSyncSendsOnlyChanges(t *testing.T) {
-	calls := &helperCalls{}
-	o := newOriginSync(calls.call)
-	o.retry = 10 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go o.run(ctx)
-	o.set([]string{})
-	eventually(t, "erster Abgleich", func() bool { return len(calls.all()) == 1 })
-	o.set([]string{})
-	o.set([]string{"http://grafana:3000"})
-	eventually(t, "zweiter Abgleich", func() bool { return len(calls.all()) == 2 })
-	if got := calls.all(); got[0] != "[]" || got[1] != `["http://grafana:3000"]` {
-		t.Fatalf("Aufrufe %q", got)
-	}
-	time.Sleep(50 * time.Millisecond)
-	if n := len(calls.all()); n != 2 {
-		t.Fatalf("%d Aufrufe ohne Änderung", n)
-	}
-}
-
-func TestOriginSyncRetriesAfterFailure(t *testing.T) {
-	calls := &helperCalls{fail: errors.New("Der Helfer ist nicht erreichbar")}
-	o := newOriginSync(calls.call)
-	o.retry = 10 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go o.run(ctx)
-	o.set([]string{"http://grafana:3000"})
-	eventually(t, "Wiederholung", func() bool { return len(calls.all()) >= 3 })
-	calls.mu.Lock()
-	calls.fail = nil
-	calls.mu.Unlock()
-	n := len(calls.all())
-	eventually(t, "Erfolg", func() bool { return len(calls.all()) > n })
-	time.Sleep(50 * time.Millisecond)
-	m := len(calls.all())
-	time.Sleep(50 * time.Millisecond)
-	if len(calls.all()) != m {
-		t.Fatal("wiederholt nach Erfolg")
-	}
-}
-
 func TestServicePushesWebOriginsOnStartAndApply(t *testing.T) {
 	f := newFixture(t)
 	cfg := f.saveConfig(func(c *config.Config) { oneHMI(c); webHMI(c) })
 	calls := &helperCalls{}
-	f.startWith(func(s *service) { s.origins.call = calls.call })
+	f.startWith(func(s *service) { s.helperCall = calls.call })
 	eventually(t, "Ursprünge beim Start", func() bool { return slices.Contains(calls.all(), `["http://grafana:3000"]`) })
 	cfg.HMIs[1].URL = "https://grafana.werk:8443/d/x"
 	f.s.Apply(cfg)
@@ -122,7 +80,7 @@ func startWebServiceWith(t *testing.T, mutate func(*config.Config), call func(co
 		t.Fatal(err)
 	}
 	s.lookPath = func(name string) (string, error) { return "/opt/" + name, nil }
-	s.origins.call = call
+	s.helperCall = call
 	f.s = s
 	ctx, cancel := context.WithCancel(context.Background())
 	f.cancel, f.done = cancel, make(chan error, 1)
@@ -221,7 +179,7 @@ func TestWebSessionJournalMode(t *testing.T) {
 	f.start()
 	f.s.onSessionEnd(session.Ended{HMIName: "Grafana", Web: true, Reason: "x"})
 	eventually(t, "Protokollzeile", func() bool {
-		b, _ := os.ReadFile(filepath.Join(f.data, "log", logFileName))
+		b, _ := os.ReadFile(filepath.Join(f.data, "log", appcore.LogFileName))
 		return strings.Contains(string(b), `modus="Webseite"`)
 	})
 }
@@ -264,25 +222,6 @@ func TestAdminDeletesWebLoginsThroughService(t *testing.T) {
 	}
 	if _, err := os.Stat(profile); !os.IsNotExist(err) {
 		t.Fatalf("Profil noch da: %v", err)
-	}
-}
-
-func TestOriginSyncWaitFor(t *testing.T) {
-	calls := &helperCalls{}
-	o := newOriginSync(calls.call)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go o.run(ctx)
-	o.set([]string{"http://grafana:3000"})
-	wctx, wcancel := context.WithTimeout(ctx, waitLimit)
-	defer wcancel()
-	if err := o.waitFor(wctx, "http://grafana:3000"); err != nil {
-		t.Fatal(err)
-	}
-	short, scancel := context.WithTimeout(ctx, 50*time.Millisecond)
-	defer scancel()
-	if err := o.waitFor(short, "http://andere:3000"); err == nil {
-		t.Fatal("fremder Ursprung gilt als geschrieben")
 	}
 }
 
