@@ -20,6 +20,8 @@ const (
 	TargetTiles
 	TargetBar
 	TargetTouchTest // Touch-Seite der Selbstprüfung
+	TargetStart     // Startseite des Produkts (SetStartURL), etwa PDH-Terminal
+	TargetAdmin     // lokale Admin-Seite (127.0.0.1:8081)
 )
 
 const (
@@ -29,6 +31,7 @@ const (
 	stableAfter = 60 * time.Second
 	barHeight   = 48
 	baseURL     = "http://127.0.0.1:8080/"
+	adminURL    = "http://127.0.0.1:8081/admin/" // gleich web.LocalAdminURL; browser importiert web nicht
 )
 
 // TargetFor: Die Kachelseite endet erst, wenn die Verbindung steht. Ohne Leiste
@@ -68,10 +71,11 @@ type Supervisor struct {
 	clock   session.Clock
 	logf    func(string, ...any)
 
-	mu      sync.Mutex
-	profile string
-	want    Target
-	wake    chan struct{}
+	mu       sync.Mutex
+	profile  string
+	startURL string
+	want     Target
+	wake     chan struct{}
 }
 
 func New(r client.Runner, chromiumPath, ramDir string, screenW func() int) *Supervisor {
@@ -89,6 +93,14 @@ func (s *Supervisor) SetProfile(p string) {
 	s.mu.Unlock()
 }
 
+// SetStartURL legt die Adresse für TargetStart fest. Nur vor Run aufrufen; danach
+// wirkt die Änderung erst beim nächsten Start von Chromium.
+func (s *Supervisor) SetStartURL(u string) {
+	s.mu.Lock()
+	s.startURL = u
+	s.mu.Unlock()
+}
+
 // Show blockiert nie; der letzte Aufruf gewinnt.
 func (s *Supervisor) Show(t Target) {
 	s.mu.Lock()
@@ -103,6 +115,7 @@ func (s *Supervisor) Show(t Target) {
 func (s *Supervisor) args(t Target) []string {
 	s.mu.Lock()
 	profile := s.profile
+	startURL := s.startURL
 	s.mu.Unlock()
 	var a []string
 	switch profile {
@@ -126,6 +139,12 @@ func (s *Supervisor) args(t Target) []string {
 	case TargetTouchTest:
 		a = append(a, "--kiosk", "--touch-events=enabled",
 			"--user-data-dir="+s.ramDir+"/profile-tiles", baseURL+"selftest/touch")
+	case TargetStart:
+		a = append(a, "--kiosk", "--touch-events=enabled",
+			"--user-data-dir="+s.ramDir+"/profile-tiles", startURL)
+	case TargetAdmin:
+		a = append(a, "--kiosk", "--touch-events=enabled",
+			"--user-data-dir="+s.ramDir+"/profile-tiles", adminURL)
 	case TargetBar:
 		a = append(a, "--app="+baseURL+"bar", "--window-position=0,0",
 			fmt.Sprintf("--window-size=%d,%d", s.screenW(), barHeight),
