@@ -18,10 +18,11 @@ const (
 func appPath(root string) string { return filepath.Join(root, "app") }
 
 // Ops führt Aktivierung und Rückfall unter Root aus (erfüllt helper.UpdateOps).
-type Ops struct{ Root string }
+// Binary ist der Name der Programmdatei des Produkts; leer bedeutet BinaryName (hmi-kiosk).
+type Ops struct{ Root, Binary string }
 
-func (o Ops) Activate(version string) error { return Activate(o.Root, version) }
-func (o Ops) Rollback() error               { return Rollback(o.Root) }
+func (o Ops) Activate(version string) error { return ActivateBinary(o.Root, o.Binary, version) }
+func (o Ops) Rollback() error               { return RollbackBinary(o.Root, o.Binary) }
 
 // readLink liefert die Version, auf die der Verweis zeigt, oder "" ohne Verweis.
 func readLink(root, name string) (string, error) {
@@ -96,19 +97,25 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	return syncDir(filepath.Dir(path))
 }
 
-func hasBinary(root, version string) bool {
-	fi, err := os.Stat(filepath.Join(appPath(root), version, BinaryName))
+func hasBinary(root, binary, version string) bool {
+	if binary == "" {
+		binary = BinaryName
+	}
+	fi, err := os.Stat(filepath.Join(appPath(root), version, binary))
 	return err == nil && fi.Mode().IsRegular()
 }
 
 // Activate schaltet current auf version um (previous wird die bisherige Version)
 // und legt pending an. pending kommt zuerst: Ein Stromausfall dazwischen lässt den
 // Wächter beim nächsten Start aufräumen, statt eine ungeprüfte Version zu hinterlassen.
-func Activate(root, version string) error {
+func Activate(root, version string) error { return ActivateBinary(root, "", version) }
+
+// ActivateBinary wie Activate für ein Produkt mit der Programmdatei binary ("" = hmi-kiosk).
+func ActivateBinary(root, binary, version string) error {
 	if !ValidVersion(version) {
 		return errors.New("Versionsangabe ungültig")
 	}
-	if !hasBinary(root, version) {
+	if !hasBinary(root, binary, version) {
 		return fmt.Errorf("Version %s ist nicht installiert", version)
 	}
 	cur, err := readLink(root, currentLink)
@@ -137,7 +144,10 @@ func Activate(root, version string) error {
 // Rollback schaltet current auf previous zurück und entfernt pending. Steht in
 // pending eine Version, auf die current nicht (mehr) zeigt, ist der Rückfall
 // schon geschehen und es wird nur pending entfernt.
-func Rollback(root string) error {
+func Rollback(root string) error { return RollbackBinary(root, "") }
+
+// RollbackBinary wie Rollback für ein Produkt mit der Programmdatei binary ("" = hmi-kiosk).
+func RollbackBinary(root, binary string) error {
 	cur, err := readLink(root, currentLink)
 	if err != nil {
 		return err
@@ -154,7 +164,7 @@ func Rollback(root string) error {
 	if prev == "" {
 		return errors.New("Kein Vorgänger vorhanden, der Rückfall ist nicht möglich")
 	}
-	if !hasBinary(root, prev) {
+	if !hasBinary(root, binary, prev) {
 		return fmt.Errorf("Vorgängerversion %s ist unvollständig, der Rückfall ist nicht möglich", prev)
 	}
 	if cur != prev {

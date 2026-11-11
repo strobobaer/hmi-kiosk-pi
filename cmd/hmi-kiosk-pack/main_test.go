@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"hmikiosk/internal/release"
 	"hmikiosk/internal/update"
 )
 
@@ -102,5 +103,39 @@ func TestPackProductFlag(t *testing.T) {
 	}
 	if code, _ := runCLI("pack", "-key", key, "-version", "0.2.0", "-in", in, "-out", out+"3", "-product", "evil"); code == 0 {
 		t.Fatal("unbekanntes Produkt")
+	}
+}
+
+// Ohne -system-level gilt der Systemstand des gewählten Produkts, nicht der des HMI-Kiosks.
+func TestPackSystemLevelDefaultsToProduct(t *testing.T) {
+	old := release.PDHTerminal.SystemLevel
+	release.PDHTerminal.SystemLevel = 3
+	t.Cleanup(func() { release.PDHTerminal.SystemLevel = old })
+
+	keys := filepath.Join(t.TempDir(), "keys")
+	runCLI("keygen", "-out", keys)
+	key := filepath.Join(keys, "release.key")
+	pubHex, _ := os.ReadFile(filepath.Join(keys, "release.pub"))
+	pub, _ := hex.DecodeString(string(bytes.TrimSpace(pubHex)))
+	in := t.TempDir()
+	os.WriteFile(filepath.Join(in, "pdh-terminal"), []byte("BIN"), 0o755)
+
+	for _, c := range []struct {
+		args []string
+		want int
+	}{
+		{nil, 3},
+		{[]string{"-system-level", "2"}, 2},
+	} {
+		out := filepath.Join(t.TempDir(), "p.pkg")
+		args := append([]string{"pack", "-key", key, "-version", "0.2.0", "-in", in, "-out", out, "-product", "pdh-terminal"}, c.args...)
+		if code, o := runCLI(args...); code != 0 {
+			t.Fatalf("pack: %d %s", code, o)
+		}
+		blob, _ := os.ReadFile(out)
+		p, err := update.Verify(blob, pub)
+		if err != nil || p.SystemLevel != c.want {
+			t.Fatalf("Systemstand %v, erwartet %d (%v)", p, c.want, err)
+		}
 	}
 }

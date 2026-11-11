@@ -480,3 +480,37 @@ func TestInstallExpectRejectsOtherVersion(t *testing.T) {
 		t.Fatalf("%q %v", got, err)
 	}
 }
+
+func TestActivateBinaryPerProduct(t *testing.T) {
+	root := t.TempDir()
+	mk := func(v, bin string) {
+		d := filepath.Join(appDir(root), v)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, bin), []byte("x"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("1.0.0", "pdh-terminal")
+	mk("1.1.0", "hmi-kiosk")
+	if err := ActivateBinary(root, "pdh-terminal", "1.0.0"); err != nil {
+		t.Fatalf("pdh-terminal-Version: %v", err)
+	}
+	if err := (Ops{Root: root, Binary: "pdh-terminal"}).Activate("1.1.0"); err == nil {
+		t.Fatal("Version nur mit hmi-kiosk wurde für pdh-terminal aktiviert")
+	}
+	if err := Activate(root, "1.0.0"); err == nil {
+		t.Fatal("leeres Binary muss hmi-kiosk verlangen")
+	}
+	if err := (Ops{Root: root}).Activate("1.1.0"); err != nil {
+		t.Fatalf("ohne Binary gilt hmi-kiosk: %v", err)
+	}
+	// Rückfall prüft ebenfalls das Programm des Produkts: previous (1.0.0) hat nur pdh-terminal.
+	if err := (Ops{Root: root}).Rollback(); err == nil {
+		t.Fatal("Rückfall auf pdh-terminal-Version ohne hmi-kiosk")
+	}
+	if err := (Ops{Root: root, Binary: "pdh-terminal"}).Rollback(); err != nil {
+		t.Fatalf("Rückfall mit pdh-terminal: %v", err)
+	}
+}

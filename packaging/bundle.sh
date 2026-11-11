@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Baut das Offline-Bundle für install.sh (andere Linux-Systeme als das SD-Abbild).
 #
-#   packaging/bundle.sh --version 1.0.0 [--arch arm64|amd64] [--bin-dir ORDNER] [--out ORDNER]
+#   packaging/bundle.sh --version 1.0.0 [--arch arm64|amd64] [--bin-dir ORDNER] [--out ORDNER] [--product ID]
 #
-# Ergebnis: <out>/hmi-kiosk-bundle-<version>-trixie-<arch>.tar.gz (und .sha256), dazu der entpackte Ordner
+# --product hmi-kiosk (Standard) oder pdh-terminal; siehe packaging/products/<id>/product.env.
+# Ergebnis: <out>/<id>-bundle-<version>-trixie-<arch>.tar.gz (und .sha256), dazu der entpackte Ordner
 # <out>/bundle-trixie-<arch>/. Das Bundle enthält install.sh, ein Manifest, die Programme dieser Architektur,
 # die Dienstdateien und ein lokales Paketverzeichnis (repo/) mit allen .deb-Paketen samt Abhängigkeiten.
 #
@@ -13,7 +14,7 @@
 # (rsync, dosfstools, fdisk mit sfdisk, e2fsprogs, util-linux mit losetup). Die Abhängigkeiten werden gegen ein frisches
 # debian:trixie aufgelöst: Alles, was dort schon installiert ist, setzt install.sh auf dem Zielsystem voraus.
 #
-# Programme: aus --bin-dir (muss hmi-kiosk und hmi-kiosk-helper enthalten) oder, ohne Angabe, frisch gebaut
+# Programme: aus --bin-dir (muss das Programm des Produkts und hmi-kiosk-helper enthalten) oder, ohne Angabe, frisch gebaut
 # mit scripts/dgo; dafür ist der öffentliche Release-Schlüssel nötig (HMI_RELEASE_PUB oder .secrets/release.pub).
 set -euo pipefail
 
@@ -32,6 +33,8 @@ die() {
 	exit 1
 }
 
+. packaging/product-lib.sh
+
 host_path() { echo "$1"; }
 case "$(uname -s)" in
 MINGW* | MSYS* | CYGWIN*)
@@ -44,6 +47,7 @@ version=""
 arch=arm64
 bindir=""
 out=dist
+product=hmi-kiosk
 while [ $# -gt 0 ]; do
 	[ $# -ge 2 ] || die "Option $1 braucht einen Wert."
 	case "$1" in
@@ -51,11 +55,13 @@ while [ $# -gt 0 ]; do
 	--arch) arch="$2" ;;
 	--bin-dir) bindir="$2" ;;
 	--out) out="$2" ;;
+	--product) product="$2" ;;
 	*) die "Unbekannte Option $1" ;;
 	esac
 	shift 2
 done
 
+load_product "$product"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--version x.y.z ist nötig (jetzt: \"$version\")."
 case "$arch" in
 arm64 | amd64) ;;
@@ -64,6 +70,7 @@ esac
 command -v docker >/dev/null || die "docker fehlt."
 
 if [ -z "$bindir" ]; then
+	require_product_cmd
 	pub="${HMI_RELEASE_PUB:-.secrets/release.pub}"
 	[ -s "$pub" ] || die "Öffentlicher Release-Schlüssel fehlt: $pub. Einmalig erzeugen mit: scripts/dgo run ./cmd/hmi-kiosk-pack keygen -out .secrets"
 	key="$(tr -d '\r\n' <"$pub")"
@@ -74,9 +81,9 @@ if [ -z "$bindir" ]; then
 	mkdir -p "$bindir"
 	CGO_ENABLED=0 GOOS=linux GOARCH="$arch" scripts/dgo build -trimpath \
 		-ldflags "-X hmikiosk/internal/release.ReleasePublicKeyHex=$key -X hmikiosk/internal/release.Version=$version" \
-		-o "$bindir/" ./cmd/hmi-kiosk ./cmd/hmi-kiosk-helper
+		-o "$bindir/" "./cmd/$PRODUCT_BINARY" ./cmd/hmi-kiosk-helper
 fi
-[ -s "$bindir/hmi-kiosk" ] && [ -s "$bindir/hmi-kiosk-helper" ] || die "In $bindir fehlen hmi-kiosk und hmi-kiosk-helper."
+[ -s "$bindir/$PRODUCT_BINARY" ] && [ -s "$bindir/hmi-kiosk-helper" ] || die "In $bindir fehlen $PRODUCT_BINARY und hmi-kiosk-helper."
 
 # Paketliste ohne Kommentare und ohne Abbild-Punkte.
 pkgs=""
@@ -125,16 +132,17 @@ resolved="$(cat "$bundle/repo/.packages")"
 mv "$bundle/repo/.pakete.txt" "$bundle/pakete.txt"
 rm -f "$bundle/repo/.packages"
 
-cp "$bindir/hmi-kiosk" "$bindir/hmi-kiosk-helper" "$bundle/bin/"
+cp "$bindir/$PRODUCT_BINARY" "$bindir/hmi-kiosk-helper" "$bundle/bin/"
 cp -r packaging/rootfs "$bundle/rootfs"
+stage_product_rootfs "$bundle/rootfs"
 # Dieselbe Netzwerk-Kennung wie im SD-Abbild (packaging/image/identity.sh).
 install -D -m 755 packaging/image/identity.sh "$bundle/rootfs/usr/local/sbin/hmi-kiosk-identity"
 cp packaging/install.sh "$bundle/install.sh"
 chmod 755 "$bundle/install.sh" "$bundle/bin/"* "$bundle/rootfs/usr/local/bin/hmi-kiosk-session" "$bundle/rootfs/usr/local/sbin/hmi-kiosk-grow-root"
-printf 'version=%s\ncodename=%s\narch=%s\npackages=%s\n' "$version" "$CODENAME" "$arch" "$resolved" >"$bundle/manifest"
+printf 'version=%s\ncodename=%s\narch=%s\nproduct=%s\nbinary=%s\npackages=%s\n' "$version" "$CODENAME" "$arch" "$PRODUCT_ID" "$PRODUCT_BINARY" "$resolved" >"$bundle/manifest"
 (cd "$bundle" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum --text >SHA256SUMS)
 
-tarball="$out/hmi-kiosk-bundle-$version-$CODENAME-$arch.tar.gz"
-tar -C "$bundle" --transform "s|^\./|hmi-kiosk-bundle-$version-$CODENAME-$arch/|" -czf "$tarball" .
+tarball="$out/$PRODUCT_ID-bundle-$version-$CODENAME-$arch.tar.gz"
+tar -C "$bundle" --transform "s|^\./|$PRODUCT_ID-bundle-$version-$CODENAME-$arch/|" -czf "$tarball" .
 (cd "$out" && sha256sum "$(basename "$tarball")" >"$(basename "$tarball").sha256")
 echo "== Fertig: $tarball ($(du -h "$tarball" | cut -f1)), $(wc -l <"$bundle/pakete.txt") Pakete"

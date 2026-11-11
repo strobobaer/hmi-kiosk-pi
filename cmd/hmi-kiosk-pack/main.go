@@ -90,13 +90,18 @@ func pack(args []string, stdout io.Writer) error {
 	in := fs.String("in", "", "Ordner mit der Programmdatei des Produkts")
 	productID := fs.String("product", release.HMIKiosk.ID, "Produkt (hmi-kiosk oder pdh-terminal)")
 	out := fs.String("out", "", "Ausgabedatei")
-	level := fs.Int("system-level", release.SystemLevel, "Stand der Systemteile, den das Programm braucht")
+	level := fs.Int("system-level", release.SystemLevel, "Stand der Systemteile, den das Programm braucht (Standard: der des Produkts)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	prod, ok := release.ProductByID(*productID)
 	if !ok {
 		return fmt.Errorf("Unbekanntes Produkt %q (erlaubt: hmi-kiosk, pdh-terminal)", *productID)
+	}
+	levelGiven := false
+	fs.Visit(func(f *flag.Flag) { levelGiven = levelGiven || f.Name == "system-level" })
+	if !levelGiven {
+		*level = prod.SystemLevel
 	}
 	if *keyFile == "" || *version == "" || *in == "" || *out == "" {
 		return fmt.Errorf("-key, -version, -in und -out sind erforderlich")
