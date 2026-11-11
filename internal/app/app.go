@@ -14,12 +14,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"hmikiosk/internal/appcore"
 	"hmikiosk/internal/browser"
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
 	"hmikiosk/internal/helperapi"
 	"hmikiosk/internal/keyboard"
+	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/rfb"
@@ -38,7 +40,7 @@ const (
 	sysRoot  = "/sys"
 	devInput = "/dev/input"
 
-	healthyFile   = "healthy"
+	healthyFile   = appcore.HealthyFile
 	sessionsDir   = "sessions"
 	chromiumDir   = "chromium"
 	secretsFile   = "secrets.key"
@@ -79,26 +81,26 @@ type Bound struct {
 }
 
 type service struct {
-	opts     Options
-	store    *config.Store
-	journal  *Journal
-	notify   notifier
-	box      *secrets.Box // nie nil; ohne Schlüssel (Reparaturmodus) nicht verfügbar
-	runner   client.Runner
-	coord    *coord.Coordinator
-	mgr      *session.Manager
-	hosts    *hostCache
-	reach    *reachability
-	cfgMu    sync.Mutex // wie die Admin-Seite: Laden, Ändern, Speichern der Konfiguration als Einheit
-	helper   *helperapi.Client
-	lookPath func(string) (string, error)
-	browser  chan struct{} // Änderungen, die die Browser-Goroutine betreffen
-	origins  *originSync   // Ursprünge der Web-Kacheln in der Chromium-Richtlinie
+	opts       Options
+	store      *config.Store
+	journal    *appcore.Journal
+	box        *secrets.Box // nie nil; ohne Schlüssel (Reparaturmodus) nicht verfügbar
+	runner     client.Runner
+	coord      *coord.Coordinator
+	mgr        *session.Manager
+	hosts      *hostCache
+	reach      *reachability
+	cfgMu      sync.Mutex // wie die Admin-Seite: Laden, Ändern, Speichern der Konfiguration als Einheit
+	helper     *helperapi.Client
+	helperCall func(ctx context.Context, cmd, arg string) error // Helferaufruf; im Test ersetzbar
+	lookPath   func(string) (string, error)
+	browser    chan struct{}       // Änderungen, die die Browser-Goroutine betreffen
+	origins    *appcore.OriginSync // Ursprünge der Web-Kacheln in der Chromium-Richtlinie
 
 	// kbd steuert die Bildschirmtastatur (Seiten, Leiste); kbdSup ist wvkbd selbst, nil ohne Chromium.
 	kbd          web.KeyboardAPI
 	kbdSup       *keyboard.Supervisor
-	presence     adminPresence                  // Admin-Seite am Terminal offen
+	presence     appcore.AdminPresence          // Admin-Seite am Terminal offen
 	localAdminUp atomic.Bool                    // Admin-Seite am Terminal läuft (sonst kein Zahnrad)
 	certSrc      atomic.Pointer[web.CertSource] // Zertifikat des HTTPS-Listeners, ab startServers
 
@@ -161,12 +163,11 @@ func newService(opts Options) (*service, error) {
 	s := &service{
 		opts:    opts,
 		store:   config.Open(opts.DataDir),
-		notify:  notifierFromEnv(),
 		helper:  helperapi.New(opts.HelperSocket),
 		browser: make(chan struct{}, 1),
 		touch:   selftest.NewTouchBoard(),
 	}
-	journal, err := NewJournal(filepath.Join(opts.DataDir, logDirName), MaxLogBytes)
+	journal, err := appcore.NewJournal(filepath.Join(opts.DataDir, logDirName))
 	s.journal = journal
 	log.SetOutput(journal)
 	if err != nil {
@@ -175,9 +176,10 @@ func newService(opts Options) (*service, error) {
 	if err := os.MkdirAll(opts.RunDir, 0o755); err != nil {
 		s.warn(fmt.Sprintf("Laufzeitordner nicht verfügbar: %v", err))
 	}
-	s.origins = newOriginSync(s.helper.Call)
+	s.helperCall = s.helper.Call
+	s.origins = appcore.NewOriginSync(func(ctx context.Context, cmd, arg string) error { return s.helperCall(ctx, cmd, arg) })
 	s.soak = newSoakJob(s)
-	s.updates = s.newUpdateCheck()
+	s.updates = appcore.NewUpdateCheck(release.HMIKiosk, func() config.UpdateCfg { return s.config().Update }, nil)
 	s.cleanupStartup()
 	s.loadConfig()
 	s.hwID = s.detectHardwareID()
@@ -190,11 +192,11 @@ func newService(opts Options) (*service, error) {
 	s.mu.Unlock()
 	// Beim Start gilt die Richtlinie, die der Helfer vor dem Dienst aus seiner gespeicherten Liste
 	// geschrieben hat (ExecStartPre web-policy); abgeglichen wird trotzdem.
-	s.origins.assumeWritten(config.WebOrigins(cfg))
-	s.origins.set(config.WebOrigins(cfg))
+	s.origins.AssumeWritten(config.WebOrigins(cfg))
+	s.origins.Set(config.WebOrigins(cfg))
 	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
 	if opts.ChromiumEnabled {
-		s.kbdSup = keyboard.New(s.runner, func() (string, error) { return keyboard.Find(s.lookPath) }, func() int {
+		s.kbdSup = clientrun.New(s.runner, func() (string, error) { return keyboard.Find(s.lookPath) }, func() int {
 			_, h := s.screen()
 			return h
 		})
@@ -335,8 +337,8 @@ func (s *service) serve(parent context.Context) error {
 	s.syncMaintenance()
 	background(func() { s.coord.Run(ctx) })
 	background(func() { s.reach.run(ctx) })
-	background(func() { s.origins.run(ctx) })
-	background(func() { s.runUpdateCheck(ctx) })
+	background(func() { s.origins.Run(ctx) })
+	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 	background(func() {
 		if err := platform.WatchTouch(ctx, devInput, s.mgr.TouchActivity); err != nil && ctx.Err() == nil {
 			log.Printf("Touch-Überwachung beendet: %v", err)
@@ -358,7 +360,7 @@ func (s *service) serve(parent context.Context) error {
 	}
 	cancel()
 	s.soak.wait()
-	if serr := s.notify.send("STOPPING=1"); serr != nil {
+	if serr := appcore.Notify("STOPPING=1"); serr != nil {
 		log.Printf("Abmeldung bei systemd: %v", serr)
 	}
 	<-mgrDone
@@ -378,7 +380,7 @@ func (s *service) close() {
 // announce schließt den Start ab: Alles läuft, also gilt der Stand als gut, die
 // Marke für den Update-Wächter steht, und systemd erfährt es.
 func (s *service) announce(ctx context.Context, bound Bound, background func(func())) error {
-	pctx, cancel := context.WithTimeout(ctx, watchdogProbeLimit)
+	pctx, cancel := context.WithTimeout(ctx, appcore.WatchdogProbeLimit)
 	defer cancel()
 	if err := s.mgr.Ping(pctx); err != nil {
 		if ctx.Err() != nil {
@@ -393,15 +395,13 @@ func (s *service) announce(ctx context.Context, bound Bound, background func(fun
 			log.Printf("Rückfallstand nicht gespeichert: %v", err)
 		}
 	}
-	if err := writeAtomic(filepath.Join(s.opts.RunDir, healthyFile), []byte(release.Version), 0o644); err != nil {
+	if err := appcore.WriteHealthy(s.opts.RunDir, release.Version); err != nil {
 		s.warn(fmt.Sprintf("Gesundmarke nicht geschrieben, ein Update fiele zurück: %v", err))
 	}
-	if err := s.notify.send("READY=1"); err != nil {
+	if err := appcore.Notify("READY=1"); err != nil {
 		log.Printf("Anmeldung bei systemd: %v", err)
 	}
-	if every := watchdogInterval(os.Getenv, os.Getpid()); every > 0 {
-		background(func() { runWatchdog(ctx, s.notify, every, s.mgr.Ping) })
-	}
+	background(func() { appcore.WatchdogProbe(ctx, s.mgr.Ping) })
 	if _, _, found := platform.DisplaySize(sysRoot); !found {
 		log.Print("Kein Monitor erkannt, die Auflösung kommt aus der Einstellung oder dem Standardwert")
 	}

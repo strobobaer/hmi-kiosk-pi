@@ -1,0 +1,28 @@
+[Unit]
+Description=HMI-Kiosk
+# Ohne eingehängtes /data startet der Dienst nie: sonst begänne er mit leerer Ersteinrichtung.
+RequiresMountsFor=/data
+Wants=hmi-kiosk-helper.service hmi-kiosk-session.service
+After=hmi-kiosk-helper.service hmi-kiosk-session.service network.target hmi-kiosk-firstboot.service
+# Eine zurückgeschaltete Version muss immer wieder starten dürfen.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=hmikiosk
+Group=hmikiosk
+ExecStart=/data/app/current/pdh-terminal -data /data -run /run/hmi-kiosk -helper-socket /run/hmi-kiosk-helper/helper.sock
+WatchdogSec=30s
+Restart=always
+RestartSec=2
+RuntimeDirectory=hmi-kiosk
+RuntimeDirectoryPreserve=yes
+KillMode=control-group
+# Grafiksitzung des Kiosk-Benutzers (UID 1100); hmi-kiosk-session schreibt WAYLAND_DISPLAY
+# oder DISPLAY/XAUTHORITY je nach Grafikprofil in die Umgebungsdatei.
+Environment=XDG_RUNTIME_DIR=/run/user/1100
+EnvironmentFile=-/run/hmi-kiosk-session/env
+
+[Install]
+WantedBy=multi-user.target

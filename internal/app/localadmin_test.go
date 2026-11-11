@@ -14,23 +14,6 @@ import (
 	"hmikiosk/internal/coord"
 )
 
-func TestListenLoopbackOnly(t *testing.T) {
-	for _, addr := range []string{":0", "0.0.0.0:0", "[::]:0", "192.0.2.1:0", "localhost:0", "hmi.example:0", "127.0.0.1"} {
-		if l, err := listenLoopback(addr); err == nil {
-			l.Close()
-			t.Errorf("%q gebunden, erwartet Ablehnung", addr)
-		}
-	}
-	l, err := listenLoopback("127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	if a := l.Addr().(*net.TCPAddr); !a.IP.IsLoopback() {
-		t.Fatalf("gebunden an %v", a)
-	}
-}
-
 type stepClock struct {
 	coord.SystemClock
 	mu  sync.Mutex
@@ -47,28 +30,6 @@ func (c *stepClock) advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
 	c.mu.Unlock()
-}
-
-func TestLocalAdminPresenceExpiresAfterIdle(t *testing.T) {
-	clk := &stepClock{now: time.Unix(1000, 0)}
-	p := &adminPresence{clock: clk}
-	if p.active() {
-		t.Fatal("ohne Aufruf aktiv")
-	}
-	p.touch()
-	clk.advance(localAdminIdle - time.Second)
-	if !p.active() {
-		t.Fatal("vor Ablauf nicht aktiv")
-	}
-	clk.advance(time.Second)
-	if p.active() {
-		t.Fatal("nach 5 Minuten noch aktiv")
-	}
-	p.touch()
-	p.left()
-	if p.active() {
-		t.Fatal("nach Rückkehr noch aktiv")
-	}
 }
 
 // adminLocal spricht die Admin-Seite am Terminal an.
@@ -211,7 +172,7 @@ func TestLocalOnlyAPIsRejectForgedHostFromNetwork(t *testing.T) {
 	kb := &recordingKeyboard{}
 	f.startWith(func(s *service) { s.kbd = kb })
 	f.adminLocal(http.MethodGet, "/admin/setup", "")
-	f.s.presence.touch()
+	f.s.presence.Touch()
 	h := f.s.localHandler()
 	for _, path := range []string{"/api/selftest/run", "/api/selftest/status", "/api/keyboard/show"} {
 		method := http.MethodPost
@@ -233,7 +194,7 @@ func TestLocalOnlyAPIsRejectForgedHostFromNetwork(t *testing.T) {
 	if kb.got() != "" {
 		t.Fatalf("Tastatur aus dem Netz: %q", kb.got())
 	}
-	if !f.s.presence.active() {
+	if !f.s.presence.Active() {
 		t.Fatal("Aufruf aus dem Netz beendet die Admin-Seite am Terminal")
 	}
 }
@@ -262,8 +223,8 @@ func TestNoticeClearedWhenPresenceExpiredNaturally(t *testing.T) {
 	f := newFixture(t)
 	f.saveConfig(nil)
 	clk := &stepClock{now: time.Unix(1000, 0)}
-	f.startWith(func(s *service) { s.presence.clock = clk })
-	f.s.presence.touch()
+	f.startWith(func(s *service) { s.presence.Clock = clk })
+	f.s.presence.Touch()
 	_ = f.s.mgr.Open("irgendein-hmi")
 	if got := f.s.mgr.Snapshot().Notice; got != localAdminNotice {
 		t.Fatalf("Hinweis %q", got)

@@ -4,22 +4,12 @@ package platform
 
 import (
 	"context"
-	"encoding/binary"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 )
-
-const (
-	evKey = 0x01
-	evAbs = 0x03
-)
-
-// struct input_event: timeval (2 Wörter) + type u16 + code u16 + value i32.
-var inputEventSize = 2*(strconv.IntSize/8) + 8
 
 var touchRescanInterval = 5 * time.Second
 
@@ -71,14 +61,9 @@ func WatchTouch(ctx context.Context, devDir string, activity func()) error {
 }
 
 func readEvents(r io.Reader, activity func()) {
-	buf := make([]byte, inputEventSize)
-	for {
-		if _, err := io.ReadFull(r, buf); err != nil {
-			return
-		}
-		switch binary.NativeEndian.Uint16(buf[inputEventSize-8:]) {
-		case evKey, evAbs:
+	readInputEvents(r, func(ev rawEvent) {
+		if ev.Type == evKey || ev.Type == evAbs {
 			activity()
 		}
-	}
+	})
 }

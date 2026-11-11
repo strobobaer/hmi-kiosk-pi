@@ -16,6 +16,9 @@ check() { # check BESCHREIBUNG BEFEHL...
 
 DATA=/var/lib/hmi-kiosk
 V=0.0.1
+# Produkt des Bundles (run.sh übergibt es); Programmname = Produkt-ID.
+PRODUCT=${HMI_TEST_PRODUCT:-hmi-kiosk}
+BIN=${HMI_TEST_BINARY:-hmi-kiosk}
 
 # Keine Netzverbindung: ein Zugriff müsste scheitern.
 if (exec 3<>/dev/tcp/deb.debian.org/80) 2>/dev/null; then bad "Netz ist erreichbar, der Test ist nicht aussagekräftig"; else ok "kein Netz im Container"; fi
@@ -48,7 +51,7 @@ if [ $rc -ne 0 ] && echo "$out" | grep -q 'als root'; then ok "Ohne root: Abbruc
 
 # 4. Beschädigtes Bundle.
 rm -rf /tmp/b3 && cp -r /bundle /tmp/b3
-echo x >>/tmp/b3/bin/hmi-kiosk
+echo x >>/tmp/b3/bin/$BIN
 out=$(/tmp/b3/install.sh --no-start 2>&1)
 rc=$?
 if [ $rc -ne 0 ] && echo "$out" | grep -q 'beschädigt'; then ok "Beschädigtes Bundle: Abbruch"; else bad "Beschädigtes Bundle nicht erkannt"; fi
@@ -60,7 +63,7 @@ sum_before=$(sha256sum $DATA/config.json | cut -d' ' -f1)
 
 state() {
 	(cd / && sha256sum etc/systemd/system/hmi-kiosk*.service etc/systemd/system/hmi-kiosk*.d/10-install.conf \
-		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session usr/local/sbin/hmi-kiosk-grow-root usr/local/sbin/hmi-kiosk-identity etc/hmi-kiosk/labwc/rc.xml etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/hmi-kiosk")
+		usr/local/bin/hmi-kiosk-helper usr/local/bin/hmi-kiosk-session usr/local/sbin/hmi-kiosk-grow-root usr/local/sbin/hmi-kiosk-identity etc/hmi-kiosk/labwc/rc.xml etc/hmi-kiosk/product etc/chromium/policies/managed/hmi-kiosk.json "${DATA#/}/app/$V/$BIN")
 	find $DATA -printf '%p %l %u %m\n' | sort
 }
 
@@ -78,6 +81,16 @@ if [ "$state1" = "$(state)" ]; then ok "zweiter Lauf ändert nichts (Dateien, Ve
 # 6. Ergebnis.
 check "Konfiguration unverändert" test "$(sha256sum $DATA/config.json | cut -d' ' -f1)" = "$sum_before"
 check "Konfiguration gehört hmikiosk" test "$(stat -c %U $DATA/config.json)" = hmikiosk
+
+# 6a. Produkt: Kennung im System, Bundle eines anderen Produkts wird nicht darübergelegt.
+check "Produktkennung in /etc/hmi-kiosk/product" test "$(cat /etc/hmi-kiosk/product)" = "$PRODUCT"
+rm -rf /tmp/b5 && cp -r /bundle /tmp/b5
+sed -i 's/^product=.*/product=anderes-produkt/' /tmp/b5/manifest
+(cd /tmp/b5 && sed -i '/manifest$/d' SHA256SUMS && sha256sum --text ./manifest >>SHA256SUMS)
+out=$(/tmp/b5/install.sh --no-start 2>&1)
+rc=$?
+if [ $rc -ne 0 ] && echo "$out" | grep -q 'Produkt „'"$PRODUCT"'“ installiert'; then ok "Fremdes Produkt: Abbruch mit Meldung"; else bad "Fremdes Produkt nicht abgelehnt (Exit $rc)"; fi
+rm -rf /tmp/b5
 
 for p in labwc xwayland wvkbd remmina remmina-plugin-vnc tigervnc-viewer openbox xserver-xorg-core xinit xauth x11-utils rfkill libpam-systemd rsync dosfstools fdisk e2fsprogs util-linux; do
 	check "Paket $p installiert" bash -c "dpkg-query -W -f='\${db:Status-Abbrev}\n' $p | grep -q '^ii'"
@@ -122,7 +135,7 @@ for t in arping ping; do
 done
 check "keine Erststart-Unit" test ! -e /etc/systemd/system/hmi-kiosk-firstboot.service
 check "Helfer root:root 755" test "$(stat -c '%U:%G %a' /usr/local/bin/hmi-kiosk-helper)" = "root:root 755"
-check "Dienst in app/$V" test -x $DATA/app/$V/hmi-kiosk
+check "Dienst in app/$V" test -x $DATA/app/$V/$BIN
 check "current -> $V" test "$(readlink $DATA/app/current)" = "$V"
 check "VERSION-Datei" test "$(cat $DATA/app/$V/VERSION)" = "$V"
 check "system/ root-eigen 755" test "$(stat -c '%U %a' $DATA/system)" = "root 755"
@@ -136,9 +149,9 @@ check "Benutzer hmikiosk gesperrt (keine Anmeldung)" bash -c "passwd -S hmikiosk
 for g in input video render; do
 	check "hmikiosk in Gruppe $g" bash -c "id -nG hmikiosk | tr ' ' '\n' | grep -qx $g"
 done
-check "Dienst-Drop-in nennt Datenordner und Kennung" bash -c "grep -q 'ExecStart=$DATA/app/current/hmi-kiosk -data $DATA ' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf && grep -q 'XDG_RUNTIME_DIR=/run/user/$uid' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf"
+check "Dienst-Drop-in nennt Datenordner und Kennung" bash -c "grep -q 'ExecStart=$DATA/app/current/$BIN -data $DATA ' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf && grep -q 'XDG_RUNTIME_DIR=/run/user/$uid' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf"
 check "Helfer-Drop-in nennt -uid $uid und -root $DATA" bash -c "grep -q -- '-uid $uid .* -root $DATA ' /etc/systemd/system/hmi-kiosk-helper.service.d/10-install.conf"
-check "Dienstprogramm startet (Flaggen)" bash -c "$DATA/app/current/hmi-kiosk -h 2>&1 | grep -q -- '-data'"
+check "Dienstprogramm startet (Flaggen)" bash -c "$DATA/app/current/$BIN -h 2>&1 | grep -q -- '-data'"
 check "Gruppe hmikiosk genau einmal" bash -c '[ "$(getent group hmikiosk | wc -l)" = 1 ]'
 check "systemd-analyze verify der Dienste samt Drop-ins" systemd-analyze verify hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-grow-root.service hmi-kiosk-identity.service hmi-kiosk-network.service
 
@@ -167,7 +180,7 @@ check "--force-downgrade: current -> 0.0.1, previous -> 0.0.2" bash -c "[ \"\$(r
 out=$(/bundle/install.sh --no-start --data-dir /srv/hk 2>&1)
 rc=$?
 if [ $rc -eq 0 ]; then ok "--data-dir: Exit 0"; else bad "--data-dir: Exit $rc"; echo "$out" | tail -n 5; fi
-check "--data-dir: Dienst unter /srv/hk" test -x /srv/hk/app/current/hmi-kiosk
+check "--data-dir: Dienst unter /srv/hk" test -x /srv/hk/app/current/$BIN
 check "--data-dir: Drop-in nennt /srv/hk" grep -q -- '-data /srv/hk ' /etc/systemd/system/hmi-kiosk.service.d/10-install.conf
 check "--data-dir: identity-Drop-in nennt /srv/hk/system" grep -q 'HMI_IDENTITY_DIR=/srv/hk/system$' /etc/systemd/system/hmi-kiosk-identity.service.d/10-install.conf
 

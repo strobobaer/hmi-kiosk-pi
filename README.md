@@ -6,6 +6,17 @@ Kiosk-System für HMI-Terminals auf dem **Raspberry Pi 5**. Ein Touchbildschirm 
 
 ![Kachelseite](docs/screenshots/tiles.png)
 
+## Produkte
+
+Dieses Repository baut zwei Produkte:
+
+| Produkt | Zweck |
+|---|---|
+| **HMI-Kiosk** | Kachelseite für die Bedienpanels (HMIs). Dieses Dokument beschreibt sie. |
+| **PDH-Terminal** | Anzeige für PDH: Das Gerät koppelt sich mit einem Code aus PDH und zeigt die PDH-Seiten im Vollbild. Einrichtung: Abschnitt „PDH-Terminal einrichten“ unten. |
+
+Beide Produkte haben eigene Versionsnummern und Releases. Sie teilen Plattformnamen (Benutzer `hmikiosk`, Dienste `hmi-kiosk*.service`, `/etc/hmi-kiosk`, `/data`) und einen Signaturschlüssel. Das Gerät kennt sein Produkt aus `/etc/hmi-kiosk/product` und lehnt Pakete des anderen Produkts ab. Die Funktionen unten gelten für HMI-Kiosk.
+
 ## Funktionen
 
 - **Kachelseite** mit Symbolen, Farben und Erreichbarkeitsanzeige (Ping, Port oder aus)
@@ -27,6 +38,8 @@ Die fertigen Dateien liegen unter [**Releases**](../../releases):
 |---|---|
 | `hmi-kiosk-<Version>.img.xz` | SD-Abbild für den Raspberry Pi 5 (empfohlen) |
 | `hmi-kiosk-bundle-<Version>-trixie-arm64.tar.gz` | Offline-Bundle zur Installation auf einem vorhandenen Raspberry Pi OS / Debian Trixie |
+| `pdh-terminal-<Version>.img.xz` | SD-Abbild des PDH-Terminals für den Raspberry Pi 5 |
+| `pdh-terminal-bundle-<Version>-trixie-arm64.tar.gz` | Offline-Bundle des PDH-Terminals für Raspberry Pi OS / Debian Trixie |
 | `*.sha256` | Prüfsummen |
 
 Prüfsumme kontrollieren (Linux/macOS: `sha256sum -c <Datei>.sha256`, Windows PowerShell: `Get-FileHash <Datei>`).
@@ -73,6 +86,19 @@ sudo ./install.sh
 
 **Grafana als Web-Kachel:** `?kiosk` an die Dashboard-Adresse hängen, um die Grafana-Menüs auszublenden. Anonymer Zugang (`auth.anonymous`) oder Anmeldung in der Kachel sind beide möglich. HTTPS nur mit vertrauenswürdigem Zertifikat; Weiterleitungen auf andere Anmeldeserver (SSO) sind gesperrt.
 
+## PDH-Terminal einrichten
+
+Das PDH-Terminal ist ein eigenes Produkt (Abbild `pdh-terminal-<Version>.img.xz`). Es hat keine Kachelseite und kein Zahnrad. Die Einrichtung:
+
+1. Abbild wie bei Installation A auf die Karte schreiben (Raspberry Pi Imager, „Eigenes Image“, bei der OS-Anpassung „Nein“). Pi mit Netzwerkkabel, Bildschirm und Strom verbinden.
+2. **Erster Start:** wie bei Installation A, Schritt 7.
+3. **Admin-Seite öffnen:** vom PC über `https://<IP>:8443` (Zertifikatswarnung bestätigen). Oder am Gerät: den Bildschirm **5 Sekunden lang oben rechts** drücken (Feld 80 × 80 Pixel). Beim ersten Aufruf ein Admin-Passwort festlegen (mindestens 10 Zeichen), danach damit anmelden.
+4. **Seite „PDH“:** die PDH-Adresse eintragen (`https://<Rechner>[:Port]`; `http://` nur mit dem Haken „unverschlüsselt erlauben“), dazu den Gerätenamen und, falls die Playlist-Folien andere Adressen brauchen (z. B. Grafana), die zusätzlich erlaubten Adressen.
+5. **In PDH:** auf der Seite des Terminal-Benutzers den Knopf **„Gerät koppeln“** drücken. Es erscheint ein Code, der 10 Minuten gilt und nur einmal verwendet werden kann.
+6. **Am Gerät:** den Code auf der Seite „PDH“ eingeben und **„Koppeln“** drücken. Die Seite zeigt dann „gekoppelt als …“ und „verbunden“.
+
+Danach meldet die Startseite sich bei PDH selbst an. Ist PDH nicht erreichbar, versucht sie es alle 30 Sekunden erneut. Die Admin-Seite kehrt nach 2 Minuten ohne Eingabe zur Startseite zurück. Zustände, Entkoppeln, Sicherung und Zertifikat: `docs/betrieb.md`, Abschnitt 4.
+
 ## Aktualisieren
 
 - **Programm-Update** (signiertes `.pkg`): Admin-Seite → System → „Update hochladen“. Meldet sich die neue Version nicht innerhalb von 60 Sekunden gesund, schaltet das Gerät von selbst zurück.
@@ -83,7 +109,7 @@ sudo ./install.sh
 ## Dokumentation
 
 - [Inbetriebnahme](docs/inbetriebnahme.md): Abbild bauen, Karte schreiben, erster Start, Einrichtung, Selbst- und Dauerprüfung, mehrere Terminals, install.sh
-- [Betrieb](docs/betrieb.md): Update, Rückfall, Sicherung, Wartung, feste IP, Web-Kacheln, PDH-Fernsteuerung, Fehlersuche
+- [Betrieb](docs/betrieb.md): Update, Rückfall, Sicherung, Wartung, feste IP, Web-Kacheln, PDH-Fernsteuerung, PDH-Terminal (Kopplung, Sperren), Fehlersuche
 - [Entscheidungen](docs/entscheidungen.md): Begründungen der technischen Entscheidungen
 
 ## Für Entwickler
@@ -100,6 +126,9 @@ scripts/dgo run ./cmd/hmi-kiosk-pack keygen -out .secrets   # Release-Schlüssel
 make release VERSION=1.0.0                            # Programme mit Version nach dist/
 VERSION=1.0.0 bash packaging/build-image.sh           # SD-Abbild mit pi-gen (rund 25 Minuten)
 bash packaging/bundle.sh --version 1.0.0 --arch arm64 # Offline-Bundle
+make release PRODUCT=pdh-terminal VERSION=0.1.0       # PDH-Terminal-Programm nach dist/
+VERSION=0.1.0 bash packaging/build-image.sh --product pdh-terminal   # PDH-Terminal-Abbild
+bash packaging/bundle.sh --version 0.1.0 --arch arm64 --product pdh-terminal # PDH-Terminal-Bundle
 ```
 
 **Der private Release-Schlüssel `.secrets/release.key` gehört nie ins Repository.** Wer ihn hat, kann Updates für alle Terminals signieren.
@@ -109,6 +138,9 @@ bash packaging/bundle.sh --version 1.0.0 --arch arm64 # Offline-Bundle
 | `cmd/hmi-kiosk` | Kiosk-Dienst; Unterbefehle `selftest` und `soak` |
 | `cmd/hmi-kiosk-helper` | root-Helfer mit fester Befehlsliste (Zeit, Netz, Sicherung, Update-Aktivierung) und Update-Wächter |
 | `cmd/hmi-kiosk-pack` | Release-Schlüssel erzeugen, Update-Pakete signieren |
+| `cmd/pdh-terminal` | PDH-Terminal-Programm (Admin-Seite PDH, Startseite, Kopplung) |
+| `internal/product/pdhterminal` | Produktteil PDH-Terminal (Admin-Seiten, Startseite, Verdrahtung) |
+| `packaging/products/` | Produktbeschreibungen (`product.env`) und Dateien je Produkt |
 | `internal/app` | Verdrahtung, Selbst- und Dauerprüfung |
 | `internal/config`, `internal/secrets` | Konfiguration und verschlüsselte Geheimnisse |
 | `internal/session`, `internal/client`, `internal/browser`, `internal/keyboard` | Sitzungsablauf, VNC- und Web-Clients, Chromium, Bildschirmtastatur |
@@ -132,6 +164,15 @@ Kiosk system for HMI terminals on the **Raspberry Pi 5**. A touchscreen shows ti
 
 > The user interface and the detailed manuals in `docs/` are in German.
 
+## Products
+
+This repository builds two products:
+
+- **HMI-Kiosk**: tile page for operator panels (HMIs). This document describes it.
+- **PDH-Terminal**: display terminal for PDH. It pairs with a one-time code from PDH and shows the PDH pages full screen. Setup: see "Set up PDH-Terminal" below.
+
+Both products have their own version numbers and releases. They share platform names (user `hmikiosk`, services `hmi-kiosk*.service`, `/etc/hmi-kiosk`, `/data`) and one signing key. A device knows its product from `/etc/hmi-kiosk/product` and rejects packages of the other product. The features below apply to HMI-Kiosk.
+
 ## Features
 
 - **Tile page** with icons, colours and reachability indicator (ping, port or off)
@@ -153,6 +194,8 @@ Ready-made files are under [**Releases**](../../releases):
 |---|---|
 | `hmi-kiosk-<version>.img.xz` | SD image for the Raspberry Pi 5 (recommended) |
 | `hmi-kiosk-bundle-<version>-trixie-arm64.tar.gz` | Offline bundle for installing on an existing Raspberry Pi OS / Debian Trixie |
+| `pdh-terminal-<version>.img.xz` | SD image of the PDH-Terminal for the Raspberry Pi 5 |
+| `pdh-terminal-bundle-<version>-trixie-arm64.tar.gz` | Offline bundle of the PDH-Terminal for Raspberry Pi OS / Debian Trixie |
 | `*.sha256` | Checksums |
 
 Verify the checksum (Linux/macOS: `sha256sum -c <file>.sha256`, Windows PowerShell: `Get-FileHash <file>`).
@@ -199,6 +242,19 @@ sudo ./install.sh
 
 **Grafana as a web tile:** append `?kiosk` to the dashboard URL to hide Grafana's menus. Anonymous access (`auth.anonymous`) or logging in inside the tile both work. HTTPS only with a trusted certificate; redirects to other login servers (SSO) are blocked.
 
+## Set up PDH-Terminal
+
+The PDH-Terminal is a separate product (image `pdh-terminal-<version>.img.xz`). It has no tile page and no gear icon.
+
+1. Write the image to the SD card as in Installation A (Imager "Use custom", answer "No" to OS customisation). Connect the Pi to Ethernet, screen and power.
+2. **First boot:** as in Installation A, step 7.
+3. **Open the admin page:** from a PC at `https://<IP>:8443`, or on the device by pressing the top right corner (80 × 80 px) for 5 seconds. On first use, set an admin password (at least 10 characters).
+4. On the **PDH** page enter the PDH address (`https://host[:port]`; `http://` only with "unverschlüsselt erlauben" ticked), the device name and any extra addresses that playlist slides need.
+5. In PDH press **"Gerät koppeln"** on the terminal user's page. A code appears; it is valid for 10 minutes and can be used once.
+6. Enter the code on the PDH page and press **"Koppeln"**. The page then shows "gekoppelt als …" and "verbunden".
+
+The start page then logs in to PDH by itself. While PDH is unreachable it retries every 30 seconds. The admin page returns to the start page after 2 minutes without input. Details (German): `docs/betrieb.md`, section 4.
+
 ## Updating
 
 - **Program update** (signed `.pkg`): admin page → System → "Update hochladen". If the new version does not report healthy within 60 seconds, the device rolls back by itself.
@@ -209,7 +265,7 @@ sudo ./install.sh
 ## Documentation (German)
 
 - [Inbetriebnahme](docs/inbetriebnahme.md) – building the image, flashing, first boot, setup, self-test and soak test, multiple terminals, install.sh
-- [Betrieb](docs/betrieb.md) – updates, rollback, backup, maintenance, static IP, web tiles, PDH remote control, troubleshooting
+- [Betrieb](docs/betrieb.md) – updates, rollback, backup, maintenance, static IP, web tiles, PDH remote control, PDH-Terminal, troubleshooting
 - [Entscheidungen](docs/entscheidungen.md) – rationale for technical decisions
 
 ## For developers

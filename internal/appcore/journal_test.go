@@ -1,4 +1,4 @@
-package app
+package appcore
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -211,4 +212,21 @@ func TestJournalSessionRecordLine(t *testing.T) {
 	if strings.Count(line, "\n") != 1 {
 		t.Errorf("mehr als eine Zeile: %q", line)
 	}
+}
+
+type safeBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *safeBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *safeBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }

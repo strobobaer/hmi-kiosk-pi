@@ -45,7 +45,19 @@ func validMode(m Mode) bool { return m == ModeTakeover || m == ModeLock }
 
 // Validate checks a configuration for values that would be unsafe or
 // unusable downstream (shell/ini injection, duplicate IDs, dangling refs).
+// Sie ist ValidateCore + ValidateHMI + ValidatePDH; ein Produkt ruft nur seine Teile.
 func Validate(c Config) error {
+	if err := ValidateCore(c); err != nil {
+		return err
+	}
+	if err := ValidateHMI(c); err != nil {
+		return err
+	}
+	return ValidatePDH(c.PDH)
+}
+
+// ValidateCore prüft, was beide Produkte teilen: Schema, Terminal, Netzwerk, Anzeige, Update.
+func ValidateCore(c Config) error {
 	if c.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("Unbekannte Schemaversion %d (erwartet %d)", c.SchemaVersion, SchemaVersion)
 	}
@@ -55,6 +67,17 @@ func Validate(c Config) error {
 	if c.Terminal.Role != RolePrimary && c.Terminal.Role != RoleNormal {
 		return fmt.Errorf("Terminalrolle ungültig: %q", c.Terminal.Role)
 	}
+	if !ValidUpdateRepo(c.Update.Repo) {
+		return fmt.Errorf("Update-Quelle ungültig: %q (erwartet Besitzer/Repository)", c.Update.Repo)
+	}
+	if err := ValidateEthernet(c.Network.Ethernet); err != nil {
+		return fmt.Errorf("Ethernet: %w", err)
+	}
+	return validateDisplay(c)
+}
+
+// ValidateHMI prüft die Teile des HMI-Kiosks: Modus, Kacheln, Peers, Web-Ursprünge, Kiosk, Client, Fernsteuerung.
+func ValidateHMI(c Config) error {
 	if !validMode(c.DefaultMode) {
 		return fmt.Errorf("Standardmodus ungültig: %q", c.DefaultMode)
 	}
@@ -141,19 +164,13 @@ func Validate(c Config) error {
 	if err := checkRemoteKeyHash(c.Admin.RemoteKeyHash); err != nil {
 		return err
 	}
-	if !ValidUpdateRepo(c.Update.Repo) {
-		return fmt.Errorf("Update-Quelle ungültig: %q (erwartet Besitzer/Repository)", c.Update.Repo)
-	}
-	if err := ValidateEthernet(c.Network.Ethernet); err != nil {
-		return fmt.Errorf("Ethernet: %w", err)
-	}
-	return validateClientAndDisplay(c)
+	return validateClient(c)
 }
 
 // ErrHideBarWithoutPermanent ist auch die Meldung des Kiosk-Formulars.
 const ErrHideBarWithoutPermanent = "Die Leiste lässt sich nur bei einer Daueranzeige ausblenden. Bitte zuerst ein Dauer-HMI wählen."
 
-func validateClientAndDisplay(c Config) error {
+func validateClient(c Config) error {
 	if c.Client.Profile != "remmina" && c.Client.Profile != "tigervnc" {
 		return fmt.Errorf("Unbekanntes Client-Profil: %q", c.Client.Profile)
 	}
@@ -163,6 +180,10 @@ func validateClientAndDisplay(c Config) error {
 	if !slices.Contains([]int{8, 16, 32}, c.Client.ColorDepth) {
 		return fmt.Errorf("Unbekannte Farbtiefe: %d", c.Client.ColorDepth)
 	}
+	return nil
+}
+
+func validateDisplay(c Config) error {
 	w, h := c.Display.OverrideW, c.Display.OverrideH
 	if (w != 0 || h != 0) && (w <= 0 || h <= 0) {
 		return fmt.Errorf("Auflösung unvollständig: %d×%d (beide Werte leer oder beide größer 0)", w, h)

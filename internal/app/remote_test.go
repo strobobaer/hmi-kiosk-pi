@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"hmikiosk/internal/appcore"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/session"
@@ -81,7 +82,7 @@ func TestRemoteSessionJournalMode(t *testing.T) {
 	f.s.onSessionEnd(session.Ended{HMIName: "L – von PDH: U", Remote: true, ViewOnly: true, Reason: "x"})
 	f.s.onSessionEnd(session.Ended{HMIName: "L – von PDH: U", Remote: true, Reason: "y"})
 	eventually(t, "Protokollzeilen", func() bool {
-		b, _ := os.ReadFile(filepath.Join(f.data, "log", logFileName))
+		b, _ := os.ReadFile(filepath.Join(f.data, "log", appcore.LogFileName))
 		return strings.Contains(string(b), `modus="PDH, nur ansehen"`) && strings.Contains(string(b), `modus="PDH, bedienen"`)
 	})
 }

@@ -27,6 +27,7 @@ LABEL=HMIDATA
 DATA=/data
 DONE_MARKER=/etc/hmi-kiosk/firstboot-done
 RELEASE_FILE=/etc/hmi-kiosk/image-release
+PRODUCT_FILE=${HMI_PRODUCT_FILE:-/etc/hmi-kiosk/product}
 INITIAL_DIR=/opt/hmi-kiosk/initial
 CMDLINE=/boot/firmware/cmdline.txt
 FSTAB=/etc/fstab
@@ -236,16 +237,27 @@ safe_dir() {
 	fail "$p gehört $o statt $*; Erststart abgebrochen"
 }
 
+# Programmname des Produkts: Inhalt von /etc/hmi-kiosk/product (gleich der Produkt-ID, auch gleich dem
+# Programmnamen); fehlt die Datei (ältere Abbilder), gilt hmi-kiosk.
+product_binary() {
+	bin=$(head -n 1 "$PRODUCT_FILE" 2>/dev/null || true)
+	case "$bin" in
+	"") bin=hmi-kiosk ;;
+	*[!a-z0-9-]* | -*) fail "Ungültiges Produkt in $PRODUCT_FILE: $bin" ;;
+	esac
+}
+
 install_initial_version() {
 	v=$(image_version)
+	product_binary
 	src=$INITIAL_DIR/$v
 	app=$DATA/app
-	[ -x "$src/hmi-kiosk" ] || fail "Erste Programmversion fehlt: $src/hmi-kiosk"
+	[ -x "$src/$bin" ] || fail "Erste Programmversion fehlt: $src/$bin"
 	safe_dir "$app" "$KIOSK_USER"
 	[ -d "$app" ] || install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 0755 "$app"
 	safe_dir "$app" "$KIOSK_USER"
 	safe_dir "$app/$v" "$KIOSK_USER"
-	if [ -x "$app/$v/hmi-kiosk" ] && [ ! -L "$app/$v/hmi-kiosk" ] && cmp -s "$src/hmi-kiosk" "$app/$v/hmi-kiosk"; then
+	if [ -x "$app/$v/$bin" ] && [ ! -L "$app/$v/$bin" ] && cmp -s "$src/$bin" "$app/$v/$bin"; then
 		log "Version $v liegt schon in $app"
 	else
 		tmp=$app/.tmp-firstboot-$v
@@ -255,10 +267,10 @@ install_initial_version() {
 		# Ordner nicht dem Dienst. chown -h ändert nur den Eintrag selbst.
 		install -d -o root -g root -m 0755 "$tmp"
 		safe_dir "$tmp" root
-		install -o root -g root -m 0755 "$src/hmi-kiosk" "$tmp/hmi-kiosk"
+		install -o root -g root -m 0755 "$src/$bin" "$tmp/$bin"
 		printf '%s\n' "$v" >"$tmp/VERSION"
 		chmod 0644 "$tmp/VERSION"
-		chown -h "$KIOSK_USER:$KIOSK_USER" "$tmp/hmi-kiosk" "$tmp/VERSION" "$tmp"
+		chown -h "$KIOSK_USER:$KIOSK_USER" "$tmp/$bin" "$tmp/VERSION" "$tmp"
 		sync
 		rm -rf "${app:?}/$v"
 		mv -T "$tmp" "$app/$v"

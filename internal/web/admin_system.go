@@ -80,7 +80,9 @@ func (a *admin) renderSystem(w http.ResponseWriter, s sessionRef, status int, er
 	a.lastMu.Lock()
 	d.HasSelftestFile = len(a.lastSelf) > 0
 	a.lastMu.Unlock()
-	d.Soak, d.HasSoak = a.soakView()
+	if a.product.HMI {
+		d.Soak, d.HasSoak = a.soakView()
+	}
 	if a.d.Backup != nil {
 		if st, err := a.backupStatus(); err == nil {
 			d.BackupRunning = st.Running
@@ -97,7 +99,7 @@ func intOrEmpty(n int) string {
 }
 
 func (a *admin) handleSystemPage(w http.ResponseWriter, _ *http.Request, s sessionRef) {
-	a.renderSystem(w, s, http.StatusOK, "", systemExtras{Peers: true})
+	a.renderSystem(w, s, http.StatusOK, "", systemExtras{Peers: a.product.HMI})
 }
 
 // formatBytes zeigt GB mit Komma, wie in der Oberfläche üblich.

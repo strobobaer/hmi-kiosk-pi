@@ -22,6 +22,7 @@
   </dl>
   {{if .Keys.Affected}}<p class="msg warn">Gespeicherte Passwörter lassen sich mit dem Geräteschlüssel nicht öffnen. <a class="btn" href="/admin/repair">Reparieren</a></p>{{end}}
   {{if not .Keys.Fingerprint}}<p class="msg warn">Ohne eingebauten Update-Schlüssel sind Updates gesperrt.</p>{{end}}
+{{if $.HMI}}
   <h3>Schlüssel der anderen Terminals</h3>
   {{if .Keys.Peers}}
   <ul class="steps">
@@ -29,6 +30,7 @@
   </ul>
   {{else if .Keys.NoPeers}}<p class="hint">keine Terminals eingetragen</p>
   {{else if not .Keys.PeersChecked}}<p class="hint">Wird beim Aufruf dieser Seite geprüft.</p>{{end}}
+{{end}}
 </section>
 
 <section class="panel stack">
@@ -45,7 +47,7 @@
   </ul>
   {{end}}
   {{if .HasSelftestFile}}<p><a class="btn" href="/admin/system/selftest.txt">Ergebnis herunterladen</a></p>{{end}}
-  <p class="hint">Die Prüfung läuft am Gerät und dauert einige Minuten. Das Terminal muss dafür in der Kachelansicht stehen. Währenddessen am Bildschirm: erst alle fünf Ziele der Touch-Seite antippen, dann eine orange Markierung auf dem Testbild. «Prüfen» bedeutet, dass eine Person etwas bestätigen muss (Bild, Fensterplatz, Funkmodule); «Fehler» ist ein gemessener Fehler oder eine nicht mögliche Messung.</p>
+  <p class="hint">{{if $.HMI}}Die Prüfung läuft am Gerät und dauert einige Minuten. Das Terminal muss dafür in der Kachelansicht stehen. Währenddessen am Bildschirm: erst alle fünf Ziele der Touch-Seite antippen, dann eine orange Markierung auf dem Testbild. «Prüfen» bedeutet, dass eine Person etwas bestätigen muss (Bild, Fensterplatz, Funkmodule); «Fehler» ist ein gemessener Fehler oder eine nicht mögliche Messung.{{else}}Die Prüfung läuft am Gerät und dauert einige Minuten. «Prüfen» bedeutet, dass eine Person etwas bestätigen muss; «Fehler» ist ein gemessener Fehler oder eine nicht mögliche Messung.{{end}}</p>
   <form method="post" action="/admin/system/selftest">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <button type="submit" class="btn">Selbstprüfung starten</button>

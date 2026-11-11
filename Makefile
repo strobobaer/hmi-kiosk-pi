@@ -4,6 +4,10 @@
 # denn der Update-Wächter vergleicht sie mit der Gesundmarke des Dienstes.
 VERSION ?= dev
 
+# Produkt (packaging/products/<id>/product.env): hmi-kiosk oder pdh-terminal.
+PRODUCT ?= hmi-kiosk
+PRODUCT_BINARY = $(shell . packaging/products/$(PRODUCT)/product.env 2>/dev/null && echo $$PRODUCT_BINARY)
+
 test:
 	scripts/dgo test -race ./...
 
@@ -16,11 +20,13 @@ build:
 # Release-Bau: der öffentliche Schlüssel kommt aus .secrets/release.pub (nie im Repository).
 # Der private Schlüssel bleibt in .secrets/release.key und wird nur von hmi-kiosk-pack gelesen.
 release:
+	test -n "$(PRODUCT_BINARY)"
+	test -d cmd/$(PRODUCT_BINARY)
 	packaging/check-release-pub.sh .secrets/release.pub
 	test "$(VERSION)" != dev
 	mkdir -p dist
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 scripts/dgo build -ldflags "-X hmikiosk/internal/release.ReleasePublicKeyHex=$$(tr -d '\r\n' < .secrets/release.pub) -X hmikiosk/internal/release.Version=$(VERSION)" -o dist/ ./cmd/hmi-kiosk ./cmd/hmi-kiosk-helper
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 scripts/dgo build -ldflags "-X hmikiosk/internal/release.ReleasePublicKeyHex=$$(tr -d '\r\n' < .secrets/release.pub) -X hmikiosk/internal/release.Version=$(VERSION)" -o dist/ ./cmd/$(PRODUCT_BINARY) ./cmd/hmi-kiosk-helper
 
 # SD-Abbild mit pi-gen in Docker (packaging/build-image.sh); braucht .secrets/release.pub und VERSION=x.y.z.
 image:
-	VERSION=$(VERSION) packaging/build-image.sh
+	VERSION=$(VERSION) packaging/build-image.sh --product $(PRODUCT)

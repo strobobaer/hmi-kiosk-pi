@@ -1,13 +1,14 @@
 # Betrieb
 
-Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung und Fehlersuche. Die Inbetriebnahme steht in [inbetriebnahme.md](inbetriebnahme.md).
+Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung, das PDH-Terminal und Fehlersuche. Die Inbetriebnahme steht in [inbetriebnahme.md](inbetriebnahme.md).
 
 ## Inhalt
 
 1. Rückfall durch Kartentausch
-2. Programm-Update einspielen
+2. Programm-Update einspielen (je Produkt)
 3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
-4. Fehlersuche
+4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat)
+5. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
 
@@ -26,7 +27,7 @@ Beachten:
 
 ## 2. Programm-Update einspielen
 
-Ein Update ersetzt nur das Programm `hmi-kiosk` (den Dienst). Der Helfer und das System bleiben unverändert. Änderungen am Helfer oder an Systempaketen kommen als neues Abbild.
+Ein Update ersetzt nur das Programm des Produkts (`hmi-kiosk` bzw. `pdh-terminal`). Der Helfer und das System bleiben unverändert. Änderungen am Helfer oder an Systempaketen kommen als neues Abbild.
 
 ### Paket bauen (am Entwicklungsrechner)
 
@@ -38,26 +39,42 @@ Ein Update ersetzt nur das Programm `hmi-kiosk` (den Dienst). Der Helfer und das
    ```
 
    Das braucht `.secrets/release.pub`. Die Version im Befehl **muss** die des Pakets sein. Das gebaute Programm meldet sie dem Update-Wächter. Stimmt sie nicht, schaltet das Gerät nach 60 Sekunden zurück.
+   Für das PDH-Terminal gilt dasselbe mit `make release PRODUCT=pdh-terminal VERSION=x.y.z`.
 3. Paket signieren:
 
    ```
-   scripts/dgo run ./cmd/hmi-kiosk-pack pack -key .secrets/release.key -version 1.0.1 -in dist -out dist/hmi-kiosk-1.0.1.pkg
+   scripts/dgo run ./cmd/hmi-kiosk-pack pack -product hmi-kiosk -key .secrets/release.key -version 1.0.1 -in dist -out dist/hmi-kiosk-1.0.1.pkg
    ```
 
-   Aus dem Ordner `dist` wird nur `hmi-kiosk` verwendet. Der Helfer ist nie Teil eines Pakets.
+   Aus dem Ordner `dist` wird nur die Programmdatei des Produkts verwendet (`hmi-kiosk` bzw. `pdh-terminal`). Der Helfer ist nie Teil eines Pakets. Ohne `-product` gilt `hmi-kiosk`.
 4. Die Datei `dist/hmi-kiosk-1.0.1.pkg` ist das signierte Paket. Der private Schlüssel `release.key` bleibt auf dem Entwicklungsrechner.
 
 ### Paket als Release-Datei bereitstellen
 
-Damit Terminals das Update selbst finden, kommt das Paket als Datei an das GitHub-Release der Version. Der Name muss genau `hmi-kiosk-<version>.pkg` lauten, das Tag `v<version>` (oder `<version>`):
+Damit Terminals das Update selbst finden, kommt das Paket als Datei an das GitHub-Release der Version. Der Name muss genau `<produkt>-<version>.pkg` lauten, das Tag je Produkt wie in der Tabelle:
 
 ```
 gh release upload v1.0.1 dist/hmi-kiosk-1.0.1.pkg
 ```
 
+| Produkt | Tag | Paketdatei |
+|---|---|---|
+| HMI-Kiosk | `v<version>` (weiterhin so taggen, solange ältere Geräte im Einsatz sind) | `hmi-kiosk-<version>.pkg` |
+| PDH-Terminal | `pdh-terminal-v<version>` | `pdh-terminal-<version>.pkg` |
+
+Der Tag legt das Produkt fest: Ein Terminal sieht nur Releases seines eigenen Produkts.
+
+**Wichtig für HMI-Kiosk:** Alle Versionen vor dieser erkennen nur Tags der Form `v<version>` (oder `<version>`). Ein Release mit dem Tag `hmi-kiosk-v<version>` bleibt für sie unsichtbar. Das Tag `hmi-kiosk-v<version>` wird erst ab dieser Version erkannt; HMI-Kiosk-Releases deshalb weiter als `v<version>` anlegen. PDH-Terminal gibt es erst ab dieser Version und nutzt `pdh-terminal-v<version>`.
+
 Fehlt die Paketdatei (zum Beispiel, weil die Version neuere Systemteile braucht und nur als Abbild und Bundle erscheint), zeigen die Terminals die Version mit einem Verweis auf die Release-Seite an, aber ohne Knopf zum Installieren. Ein Release als Vorabversion („Pre-release“) gilt nur für Terminals, bei denen „Vorabversionen einbeziehen“ eingeschaltet ist. Entwürfe (Drafts) sieht kein Terminal.
 
 **Wichtig:** Ein Paket, das einen höheren Systemstand verlangt (`release.SystemLevel` wurde erhöht), **nie** als Release-Datei anhängen. Terminals mit einer Version vor dem Systemstand (0.1.6 und älter) prüfen ihn nicht und würden das Paket installieren; das neue Programm liefe dann auf zu alten Systemteilen. Solche Versionen nur als Abbild und Bundle veröffentlichen.
+
+### Produktkennung
+
+Jedes Paket trägt seine Produktkennung. Ein Gerät lehnt ein Paket eines anderen Produkts ab, ohne etwas zu ändern (Meldung „Paket gehört zu …“).
+
+**Grenze:** Alle Versionen vor dieser kennen die Produktkennung noch nicht. Sie lehnen ein PDH-Terminal-Paket trotzdem ab, weil dessen Programmdatei anders heißt.
 
 ### Updates per Klick
 
@@ -366,7 +383,7 @@ Einrichten: Admin-Seite → **HMIs** → **Webseite anlegen** (oder im Formular 
 
 Technik: Jede geöffnete Web-Kachel ist ein eigener Chromium-Prozess im App-Fenster (`--app=<Adresse>`, Profil `<Daten>/web-profile`, Profilordner und Klasse `hmi-kiosk-web`). Die Fensterregeln (labwc `chrome-*-hmi-kiosk-web`, openbox `class="hmi-kiosk-web"`) legen es ohne Rahmen unter die Leiste. Die Chromium-Richtlinie in `/etc/chromium/policies/managed/hmi-kiosk.json` schreibt der root-Helfer: bei jeder Änderung der Web-Kacheln (Befehl `set-web-origins`) und beim Start vor dem Kiosk-Dienst (`hmi-kiosk-helper web-policy` aus `/data/system/web-origins`), weil `/etc` auf dem Abbild bei jedem Start aus dem Paket kommt. Fest erlaubt bleiben immer die Kachelseite (`127.0.0.1:8080`, `localhost:8080`) und die Admin-Seite am Terminal (`127.0.0.1:8081`, `localhost:8081`). Chromium liest die geänderte Richtlinie im Lauf nach, ein Neustart ist nicht nötig. Schlägt das Schreiben fehl (Helfer nicht erreichbar), steht im Protokoll „Chromium-Richtlinie für Web-Kacheln nicht geschrieben“, und der Dienst versucht es alle 30 s erneut; eine Web-Kachel mit neuer Adresse öffnet bis dahin nicht (Hinweis auf der Kachelseite).
 
-### PDH-Fernsteuerung (HMI aus PDH am Terminal zeigen)
+### PDH-Fernsteuerung (nur HMI-Kiosk: HMI aus PDH am Terminal zeigen)
 
 PDH kann über die Admin-Adresse des Terminals (`https://<IP>:8443`) ein HMI auf dem **Bildschirm dieses Terminals** öffnen („Am Terminal zeigen“ bzw. „Am Terminal bedienen“) und wieder schließen. Die Schnittstelle (Version 1) steht in `docs/superpowers/specs/2026-11-09-pdh-integration.md`.
 
@@ -395,7 +412,40 @@ Damit Bediener am Terminal selbst in PDH arbeiten:
 3. Die Kachel einmal öffnen und als System-Benutzer anmelden. Die Anmeldung bleibt im Web-Profil des Terminals (Cookie mit Ablaufdatum nötig).
 4. Personen melden sich für Aktionen in PDH per Karte oder Override an (vorhandenes PDH-Konzept).
 
-## 4. Fehlersuche
+## 4. PDH-Terminal
+
+Das PDH-Terminal ist ein eigenes Produkt (Abbild `pdh-terminal-<Version>.img.xz`). Die Einrichtung steht in der README unter „PDH-Terminal einrichten“. Dieser Abschnitt beschreibt den Betrieb.
+
+### Kopplung und Zustand
+
+Die Startseite meldet das Gerät mit einem Geheimnis bei PDH an. Es entsteht bei der Kopplung, liegt auf der Datenpartition (`/data/pdh/device.json`, nur für den Dienst lesbar) und wird nie angezeigt oder protokolliert.
+
+- **Kopplungscode:** gilt 10 Minuten und nur einmal. Ein neuer Code macht die offenen Codes desselben Benutzers ungültig. Ein falscher oder abgelaufener Code wird mit einer Meldung abgewiesen; dann wird nichts gespeichert. Nach mehreren Fehlversuchen bremst PDH die Kopplung von dieser Adresse.
+- **Zustand** auf der Admin-Seite „PDH“:
+
+| Zustand | Bedeutung | Was tun |
+|---|---|---|
+| gekoppelt als „<Benutzer>“, **verbunden** | PDH antwortet, das Gerät ist gültig. | Nichts. |
+| **gesperrt** | In PDH gesperrt. Die Startseite zeigt „Gerät in PDH gesperrt …“. | Am Gerät die Admin-Seite öffnen (5 Sekunden oben rechts drücken), in PDH einen neuen Code erzeugen und neu koppeln. |
+| **nicht erreichbar** | PDH antwortet nicht (Netz, Adresse). Die Startseite versucht es alle 30 Sekunden erneut. | Adresse und Netz prüfen. |
+| **Zertifikat von PDH wird nicht vertraut** | PDH zeigt ein Zertifikat, dem das Gerät nicht vertraut. | Siehe Abschnitt „Zertifikat“ unten. |
+
+- **Entkoppeln** (Admin-Seite „PDH“) löscht das Geheimnis nur auf dem Gerät. PDH kennt das Gerät dann weiter, bis es dort gesperrt wird: In PDH unter „Gekoppelte Geräte“ des Benutzers **Sperren** drücken. Gesperrt verliert das Gerät seine Sitzung spätestens nach 30 Sekunden.
+
+### Sicherung und Wiederherstellung
+
+Das Geheimnis ist **nicht** Teil der Sicherung. Bei der Sicherung als Abbild werden die Dateien unter `/data/pdh` überschrieben und entfernt, bevor die Kopie entsteht; bei der dateiweisen Sicherung ist der Ordner `<Datenordner>/pdh` ausgeschlossen (bei `install.sh` standardmäßig `/var/lib/hmi-kiosk/pdh`). Nach dem Zurückspielen fehlt das Geheimnis, auch auf einem anderen Gerät: Das Gerät muss neu gekoppelt werden (neuer Code aus PDH).
+
+### Zertifikat (bekannte Einschränkung)
+
+Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat von PDH wird nicht vertraut“. Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
+
+### Bekannte Einschränkungen
+
+- Die Bildschirmtastatur erscheint nur auf der Admin-Seite des Geräts, nicht auf den PDH-Seiten. Dafür braucht es ein Skript auf der PDH-Seite; das folgt in einer späteren Version.
+- Die Admin-Seite „Kartenleser“ ist nur ein Platzhalter; der Kartenleser folgt in einer späteren Version.
+
+## 5. Fehlersuche
 
 ### Meldungen auf dem Bildschirm
 

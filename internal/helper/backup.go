@@ -63,8 +63,11 @@ type BackupConfig struct {
 	// Source ersetzt die Erkennung: eine Datei oder ein Gerät mit MBR, das statt der Karte gelesen wird.
 	Source string
 	// OpenSource ersetzt die Quelle ganz (Nahtstelle für das Abbildformat); Tests nutzen sie.
-	OpenSource    OpenSource
-	DataDir       string // /data
+	OpenSource OpenSource
+	DataDir    string // /data
+	// FilesDataDir ist der Datenordner eines Systems aus install.sh (-root des Helfers); die dateiweise
+	// Sicherung lässt darin pdh/ aus. Leer: nur der Standardordner /var/lib/hmi-kiosk (filesExcludes).
+	FilesDataDir  string
 	RunDir        string // /run (tmpfs für die Temp-Datei)
 	ImageRelease  string // /etc/hmi-kiosk/image-release
 	MemInfo       string // /proc/meminfo

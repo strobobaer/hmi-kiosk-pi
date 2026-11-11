@@ -2,7 +2,9 @@
 # Prüft ein gebautes SD-Abbild, ohne es zu starten: Partitionen, Pakete, Dienste, Benutzer,
 # Fensterregeln und Dateirechte. Hängt die Partitionen nur lesend per Loop-Gerät ein.
 #
-# Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>
+# Aufruf: verify-image.sh [--product <id>] [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>
+#   --product  hmi-kiosk (Standard) oder pdh-terminal: Programm, Haupteinheit und /etc/hmi-kiosk/product
+#              werden für dieses Produkt geprüft; die Fensterregeln für Web-Kacheln nur beim hmi-kiosk
 #   --version  erwartete Programmversion (sonst die aus /etc/hmi-kiosk/image-release)
 #   --pakete   schreibt die Paketliste (Name, Version, Architektur) in <datei>
 # Umgebung: HMI_ENABLE_SSH=1, wenn das Abbild mit SSH gebaut wurde (sonst muss SSH aus sein).
@@ -19,14 +21,20 @@ FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
 UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service hmi-kiosk-network.service"
 
 usage() {
-	echo "Aufruf: verify-image.sh [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>" >&2
+	echo "Aufruf: verify-image.sh [--product <id>] [--version <x.y.z>] [--pakete <datei>] <abbild.img|abbild.img.xz>" >&2
 	exit 2
 }
 
 want_version=""
 package_list=""
+product=hmi-kiosk
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--product)
+		[ $# -ge 2 ] || usage
+		product=$2
+		shift 2
+		;;
 	--version)
 		[ $# -ge 2 ] || usage
 		want_version=$2
@@ -42,6 +50,14 @@ while [ $# -gt 0 ]; do
 	*) break ;;
 	esac
 done
+# Programmname = Produkt-ID (packaging/products/<id>/product.env).
+case "$product" in
+hmi-kiosk | pdh-terminal) bin=$product ;;
+*)
+	echo "Unbekanntes Produkt: $product (erlaubt: hmi-kiosk, pdh-terminal)" >&2
+	exit 2
+	;;
+esac
 if [ $# -ne 1 ]; then
 	echo "Kein Abbild angegeben." >&2
 	usage
@@ -317,13 +333,15 @@ else
 	bad rc-openbox "Regel für org.remmina.Remmina (0,48, ohne Rahmen, Rand 48) fehlt in /etc/xdg/openbox/rc.xml"
 fi
 
-if printf '%s' "$lw" | grep -Eq '<windowRule identifier="chrome-\*-hmi-kiosk-web"[^>]*serverDecoration="no"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
-	printf '%s' "$lw" | grep -Eq '<windowRule identifier="hmi-kiosk-web\*"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
-	printf '%s' "$lw" | grep -Eq '<windowRule identifier="org\.remmina\.Remmina" title="hmi-kiosk vollbild\*"[^>]*> *<action name="ToggleFullscreen" */>' &&
-	printf '%s' "$ob" | grep -Eq '<application class="hmi-kiosk-web"[^>]*> *<decor>no</decor> *<position force="yes"> *<x>0</x> *<y>48</y> *</position> *<maximized>yes</maximized>'; then
-	ok rc-web "Web-Kachel (app_id chrome-*-hmi-kiosk-web, WM_CLASS hmi-kiosk-web) und ihr Tab-Fenster ohne Rahmen bei 0,48, maximiert; Remmina ohne Leiste im Vollbild"
-else
-	bad rc-web "Fensterregel für Web-Kacheln fehlt (labwc chrome-*-hmi-kiosk-web, openbox class hmi-kiosk-web)"
+if [ "$product" = hmi-kiosk ]; then
+	if printf '%s' "$lw" | grep -Eq '<windowRule identifier="chrome-\*-hmi-kiosk-web"[^>]*serverDecoration="no"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
+		printf '%s' "$lw" | grep -Eq '<windowRule identifier="hmi-kiosk-web\*"[^>]*> *<action name="MoveTo" x="0" y="48" */> *<action name="Maximize" */>' &&
+		printf '%s' "$lw" | grep -Eq '<windowRule identifier="org\.remmina\.Remmina" title="hmi-kiosk vollbild\*"[^>]*> *<action name="ToggleFullscreen" */>' &&
+		printf '%s' "$ob" | grep -Eq '<application class="hmi-kiosk-web"[^>]*> *<decor>no</decor> *<position force="yes"> *<x>0</x> *<y>48</y> *</position> *<maximized>yes</maximized>'; then
+		ok rc-web "Web-Kachel (app_id chrome-*-hmi-kiosk-web, WM_CLASS hmi-kiosk-web) und ihr Tab-Fenster ohne Rahmen bei 0,48, maximiert; Remmina ohne Leiste im Vollbild"
+	else
+		bad rc-web "Fensterregel für Web-Kacheln fehlt (labwc chrome-*-hmi-kiosk-web, openbox class hmi-kiosk-web)"
+	fi
 fi
 
 # Navigationssperre: Chromium-Richtlinie sperrt alles außer der Kachelseite und der Admin-Seite am Terminal (Loopback)
@@ -350,7 +368,7 @@ done
 k=hmi-kiosk.service
 for l in User=hmikiosk Type=notify WatchdogSec=30s Restart=always RestartSec=2 StartLimitIntervalSec=0 \
 	RequiresMountsFor=/data RuntimeDirectory=hmi-kiosk RuntimeDirectoryPreserve=yes KillMode=control-group \
-	"ExecStart=/data/app/current/hmi-kiosk -data /data -run /run/hmi-kiosk -helper-socket /run/hmi-kiosk-helper/helper.sock" \
+	"ExecStart=/data/app/current/$bin -data /data -run /run/hmi-kiosk -helper-socket /run/hmi-kiosk-helper/helper.sock" \
 	"Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID"; do
 	unit_has "$k" "$l" || msg="$msg; $k ohne $l"
 done
@@ -423,12 +441,18 @@ if [ -f "$sl" ] && [ "$(stat -c %u:%g:%a "$sl")" = 0:0:644 ] && grep -Eqx '[1-9]
 else
 	bad system-level "/etc/hmi-kiosk/system-level fehlt oder ungültig (Programm-Updates prüfen damit den Stand der Systemteile)"
 fi
-iv=$R/opt/hmi-kiosk/initial/$version
-if [ -n "$version" ] && [ -x "$iv/hmi-kiosk" ] && is_arm64_elf "$iv/hmi-kiosk" &&
-	[ "$(cat "$iv/VERSION" 2>/dev/null)" = "$version" ]; then
-	ok erste-version "/opt/hmi-kiosk/initial/$version/hmi-kiosk (arm64)"
+pf=$R/etc/hmi-kiosk/product
+if [ -f "$pf" ] && [ "$(stat -c %u:%g:%a "$pf")" = 0:0:644 ] && [ "$(cat "$pf")" = "$product" ]; then
+	ok produkt "/etc/hmi-kiosk/product = $product, root:root 644"
 else
-	bad erste-version "/opt/hmi-kiosk/initial/$version/hmi-kiosk oder VERSION fehlt oder passt nicht"
+	bad produkt "/etc/hmi-kiosk/product fehlt, falsche Rechte oder Inhalt ungleich $product"
+fi
+iv=$R/opt/hmi-kiosk/initial/$version
+if [ -n "$version" ] && [ -x "$iv/$bin" ] && is_arm64_elf "$iv/$bin" &&
+	[ "$(cat "$iv/VERSION" 2>/dev/null)" = "$version" ]; then
+	ok erste-version "/opt/hmi-kiosk/initial/$version/$bin (arm64)"
+else
+	bad erste-version "/opt/hmi-kiosk/initial/$version/$bin oder VERSION fehlt oder passt nicht"
 fi
 
 if [ -n "$package_list" ]; then

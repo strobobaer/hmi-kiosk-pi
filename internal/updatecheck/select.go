@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"hmikiosk/internal/release"
 	"hmikiosk/internal/update"
 )
 
@@ -51,9 +52,6 @@ type Offer struct {
 
 func (o Offer) Installable() bool { return o.NoPackage == "" && o.AssetURL != "" }
 
-// PackageName ist der Name der Paketdatei im Release.
-func PackageName(version string) string { return "hmi-kiosk-" + version + ".pkg" }
-
 // Newer vergleicht zwei gültige Versionen x.y.z Teil für Teil als Zahl.
 func Newer(a, b string) bool {
 	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
@@ -74,8 +72,8 @@ func compareNumber(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// Select wählt die höchste Version über current. nil heißt: nichts Neueres.
-func Select(rels []Release, current string, prerelease bool) (*Offer, error) {
+// Select wählt die höchste Version des Produkts p über current. nil heißt: nichts Neueres.
+func Select(rels []Release, p release.Product, current string, prerelease bool) (*Offer, error) {
 	if !update.ValidVersion(current) {
 		return nil, ErrNoRelease
 	}
@@ -86,8 +84,8 @@ func Select(rels []Release, current string, prerelease bool) (*Offer, error) {
 		if r.Draft || (r.Prerelease && !prerelease) {
 			continue
 		}
-		v := strings.TrimPrefix(r.TagName, "v")
-		if !canonical(v) || !Newer(v, bestVersion) {
+		v, ok := p.TagVersion(r.TagName)
+		if !ok || !canonical(v) || !Newer(v, bestVersion) {
 			continue
 		}
 		best, bestVersion = r, v
@@ -99,9 +97,9 @@ func Select(rels []Release, current string, prerelease bool) (*Offer, error) {
 	if isHTTPS(best.HTMLURL) {
 		o.PageURL = best.HTMLURL
 	}
-	o.NoPackage = fmt.Sprintf("Das Release enthält keine Paketdatei %s. Diese Version kommt nur mit einem neuen SD-Abbild oder dem Bundle.", PackageName(bestVersion))
+	o.NoPackage = fmt.Sprintf("Das Release enthält keine Paketdatei %s. Diese Version kommt nur mit einem neuen SD-Abbild oder dem Bundle.", p.PackageName(bestVersion))
 	for _, a := range best.Assets {
-		if a.Name != PackageName(bestVersion) {
+		if a.Name != p.PackageName(bestVersion) {
 			continue
 		}
 		switch {

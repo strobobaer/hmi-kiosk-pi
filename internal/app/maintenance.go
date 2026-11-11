@@ -73,7 +73,7 @@ func (s *service) sessionBlocked() string {
 	if msg := s.soakBlocked(); msg != "" {
 		return msg
 	}
-	if s.presence.active() {
+	if s.presence.Active() {
 		return localAdminNotice
 	}
 	return ""

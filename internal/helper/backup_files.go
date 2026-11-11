@@ -364,7 +364,7 @@ func (s *Server) copyFiles(ctx context.Context, bootMnt, rootMnt string) error {
 		return fail(err)
 	}
 	args := []string{"-aHAXx", "-S", "--numeric-ids", "-q"}
-	for _, e := range filesExcludes {
+	for _, e := range s.filesExcludeList() {
 		args = append(args, "--exclude="+e)
 	}
 	args = append(args, sourceDir(s.Backup.rootDir()), sourceDir(rootMnt))

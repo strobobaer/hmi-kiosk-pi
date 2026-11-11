@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"hmikiosk/internal/appcore"
 	"hmikiosk/internal/coord"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
@@ -19,13 +20,7 @@ import (
 )
 
 func newLocalServer(ctx context.Context, h http.Handler) *http.Server {
-	return &http.Server{
-		Handler:           h,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      0, // der Ereignisstrom läuft unbegrenzt
-		IdleTimeout:       60 * time.Second,
-	}
+	return appcore.NewLocalServer(ctx, h)
 }
 
 // newAdminServer: Das Zertifikat kommt aus getCert, damit es eine neue Adresse abdecken kann.
@@ -161,6 +156,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		Update: &update.Installer{
 			Root:        s.opts.DataDir,
 			PublicKey:   release.PublicKey(),
+			Product:     release.HMIKiosk,
 			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) },
 			Activate: func(ctx context.Context, version string) error {
 				return s.helper.Call(ctx, "update-activate", version)
@@ -179,7 +175,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		CheckPeer:            s.checkPeer,
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
 		Keyboard:             s.kbd,
-		LocalActive:          s.presence.touch,
+		LocalActive:          s.presence.Touch,
 		LocalLeft:            s.localAdminLeft,
 		ClearWebLogins:       s.clearWebLogins,
 	}

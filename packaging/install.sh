@@ -85,6 +85,11 @@ B_VERSION="$(manifest version)"
 B_CODENAME="$(manifest codename)"
 B_ARCH="$(manifest arch)"
 B_PACKAGES="$(manifest packages)"
+# Bundles aus der Zeit vor der Produktlinie nennen kein Produkt: dann HMI-Kiosk.
+B_PRODUCT="$(manifest product)"
+B_BINARY="$(manifest binary)"
+: "${B_PRODUCT:=hmi-kiosk}" "${B_BINARY:=hmi-kiosk}"
+[[ "$B_PRODUCT" =~ ^[a-z][a-z0-9-]*$ && "$B_BINARY" =~ ^[a-z][a-z0-9-]*$ ]] || die "Das Manifest des Bundles nennt kein gültiges Produkt (product=„$B_PRODUCT“, binary=„$B_BINARY“)."
 [[ "$B_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Das Bundle hat keine gültige Version (manifest: „$B_VERSION“)."
 [ -n "$B_CODENAME" ] && [ -n "$B_ARCH" ] && [ -n "$B_PACKAGES" ] || die "Das Manifest des Bundles ist unvollständig."
 
@@ -101,9 +106,14 @@ if [ "$SYS_ARCH" != "$B_ARCH" ]; then
 	die "Dieses Bundle ist für die Architektur „$B_ARCH“, das System hat „$SYS_ARCH“. Bitte ein passendes Bundle bauen. Es wurde nichts verändert."
 fi
 
-for f in bin/hmi-kiosk bin/hmi-kiosk-helper rootfs/usr/local/bin/hmi-kiosk-session; do
+for f in "bin/$B_BINARY" bin/hmi-kiosk-helper rootfs/usr/local/bin/hmi-kiosk-session; do
 	[ -f "$HERE/$f" ] || die "Im Bundle fehlt $f."
 done
+# Ein anderes Produkt wird nicht über ein vorhandenes installiert (anderes Programm, andere Daten).
+if [ -s /etc/hmi-kiosk/product ]; then
+	INSTALLED_PRODUCT="$(head -n 1 /etc/hmi-kiosk/product)"
+	[ "$INSTALLED_PRODUCT" = "$B_PRODUCT" ] || die "Auf diesem System ist das Produkt „$INSTALLED_PRODUCT“ installiert, das Bundle gehört zu „$B_PRODUCT“. Es wurde nichts verändert."
+fi
 if [ "$ONLINE" = 0 ] && [ ! -f "$HERE/repo/Packages" ]; then
 	die "Im Bundle fehlt das Paketverzeichnis repo/. Ohne --online lassen sich die Pakete nicht installieren."
 fi
@@ -247,6 +257,7 @@ install_system_files() {
 	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/environment" /etc/hmi-kiosk/labwc/environment
 	put 644 "$HERE/rootfs/etc/hmi-kiosk/labwc/autostart" /etc/hmi-kiosk/labwc/autostart
 	put 644 "$HERE/rootfs/etc/hmi-kiosk/system-level" /etc/hmi-kiosk/system-level
+	put 644 "$HERE/rootfs/etc/hmi-kiosk/product" /etc/hmi-kiosk/product
 	restore_desktop_labwc
 	put 644 "$HERE/rootfs/etc/xdg/openbox/rc.xml" /etc/xdg/openbox/rc.xml
 	put 644 "$HERE/rootfs/etc/chromium/policies/managed/hmi-kiosk.json" /etc/chromium/policies/managed/hmi-kiosk.json
@@ -301,7 +312,7 @@ RequiresMountsFor=
 RequiresMountsFor=$DATA_DIR
 [Service]
 ExecStart=
-ExecStart=$DATA_DIR/app/current/hmi-kiosk -data $DATA_DIR -run /run/hmi-kiosk -helper-socket $sock
+ExecStart=$DATA_DIR/app/current/$B_BINARY -data $DATA_DIR -run /run/hmi-kiosk -helper-socket $sock
 Environment=
 Environment=XDG_RUNTIME_DIR=/run/user/$KIOSK_UID"
 
@@ -362,13 +373,13 @@ install_data_and_app() {
 	install -d -o root -g root -m 755 "$DATA_DIR/system"
 	install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 "$app"
 
-	if [ -x "$app/$v/hmi-kiosk" ] && cmp -s "$HERE/bin/hmi-kiosk" "$app/$v/hmi-kiosk"; then
+	if [ -x "$app/$v/$B_BINARY" ] && cmp -s "$HERE/bin/$B_BINARY" "$app/$v/$B_BINARY"; then
 		msg "Version $v liegt schon in $app."
 	else
 		tmp="$app/.tmp-install-$v"
 		rm -rf "$tmp"
 		install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 "$tmp"
-		install -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 "$HERE/bin/hmi-kiosk" "$tmp/hmi-kiosk"
+		install -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 "$HERE/bin/$B_BINARY" "$tmp/$B_BINARY"
 		printf '%s\n' "$v" >"$tmp/VERSION"
 		chown "$KIOSK_USER:$KIOSK_USER" "$tmp/VERSION"
 		chmod 644 "$tmp/VERSION"
@@ -380,7 +391,7 @@ install_data_and_app() {
 	old=""
 	[ -L "$app/current" ] && old="$(readlink "$app/current")"
 	if [ "$old" != "$v" ]; then
-		if [ -n "$old" ] && [ -x "$app/$old/hmi-kiosk" ]; then
+		if [ -n "$old" ] && [ -x "$app/$old/$B_BINARY" ]; then
 			ln -sfn "$old" "$app/.previous-install"
 			chown -h "$KIOSK_USER:$KIOSK_USER" "$app/.previous-install"
 			mv -T "$app/.previous-install" "$app/previous"

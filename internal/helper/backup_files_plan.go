@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"hmikiosk/internal/helperapi"
@@ -35,6 +36,8 @@ const msgLayout = "Das Layout dieses Datenträgers (SD-Karte, SSD oder USB-Laufw
 var filesExcludes = []string{
 	"/proc", "/sys", "/dev", "/run", "/tmp", "/mnt", "/media", "/lost+found",
 	"/var/cache/hmi-kiosk-backup", "/var/swap", "/swapfile", "/var/tmp/*",
+	// Geräte-Geheimnis des PDH-Terminals (Datenordner von install.sh): Temp-Dateien .device-* inklusive.
+	"/var/lib/hmi-kiosk/pdh",
 }
 
 var filesMountpoints = []struct {
@@ -356,5 +359,20 @@ func filesMBR(src []byte, id uint32, p1Start, p1Sectors, p2Start, p2Sectors int6
 	put(0, src[mbrTableAt]&0x80, src[mbrTableAt+4], p1Start, p1Sectors)
 	put(1, src[mbrTableAt+mbrEntrySize]&0x80, typeLinux, p2Start, p2Sectors)
 	out[510], out[511] = 0x55, 0xaa
+	return out
+}
+
+// filesExcludeList sind die Ausschlüsse der Kopie: die festen und der Ordner pdh/ (Geräte-Geheimnis)
+// im konfigurierten Datenordner, falls er unter der Quelle liegt und nicht der Standardordner ist.
+func (s *Server) filesExcludeList() []string {
+	out := slices.Clone(filesExcludes)
+	if d := s.Backup.FilesDataDir; d != "" {
+		if rel, err := filepath.Rel(s.Backup.rootDir(), d); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			e := "/" + filepath.ToSlash(rel) + "/pdh"
+			if !slices.Contains(out, e) {
+				out = append(out, e)
+			}
+		}
+	}
 	return out
 }

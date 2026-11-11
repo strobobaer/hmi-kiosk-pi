@@ -325,6 +325,31 @@ else
 fi
 rm -rf "/data/app/$V.echt"
 
+
+# Produkt pdh-terminal: finish kopiert das Programm, das /etc/hmi-kiosk/product nennt.
+rm -rf /data/app "/opt/hmi-kiosk/initial/$V/hmi-kiosk"
+rm -f /etc/hmi-kiosk/firstboot-done
+printf '#!/bin/sh\necho terminal\n' >"/opt/hmi-kiosk/initial/$V/pdh-terminal"
+chmod 755 "/opt/hmi-kiosk/initial/$V/pdh-terminal"
+printf 'pdh-terminal\n' >/etc/hmi-kiosk/product
+if sh "$FB" finish >/dev/null 2>&1 && cmp -s "/opt/hmi-kiosk/initial/$V/pdh-terminal" "/data/app/$V/pdh-terminal" &&
+	[ "$(readlink /data/app/current)" = "$V" ] && [ ! -e "/data/app/$V/hmi-kiosk" ] &&
+	[ "$(stat -c '%U:%G %a' "/data/app/$V/pdh-terminal")" = "hmikiosk:hmikiosk 755" ]; then
+	ok "Produkt pdh-terminal: Programm pdh-terminal kopiert, current -> $V"
+else
+	bad "Produkt pdh-terminal: $(cat "$work/firstboot.log")"
+fi
+# Ungültige Kennung bricht ab, ohne etwas zu kopieren.
+rm -rf /data/app /etc/hmi-kiosk/firstboot-done
+printf '../evil\n' >/etc/hmi-kiosk/product
+if sh "$FB" finish >/dev/null 2>&1; then
+	bad "ungültiges Produkt: finish endete mit Exit 0"
+elif [ ! -e /data/app/current ] && grep -q 'Ungültiges Produkt' "$work/firstboot.log"; then
+	ok "ungültiges Produkt: Abbruch mit Meldung, nichts kopiert"
+else
+	bad "ungültiges Produkt: $(cat "$work/firstboot.log")"
+fi
+rm -f /etc/hmi-kiosk/product
 if [ "$fails" -gt 0 ]; then
 	echo "$fails Prüfung(en) gescheitert"
 	exit 1

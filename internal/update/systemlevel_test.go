@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hmikiosk/internal/release"
 )
 
 func packLevelWith(t *testing.T, priv []byte, version string, level int) []byte {
@@ -18,7 +20,7 @@ func packLevelWith(t *testing.T, priv []byte, version string, level int) []byte 
 	if err := os.WriteFile(filepath.Join(dir, BinaryName), []byte("BIN "+version), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	blob, err := Pack(dir, version, level, priv)
+	blob, err := Pack(dir, version, release.HMIKiosk, level, priv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +54,7 @@ func TestPackRejectsBadSystemLevel(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, BinaryName), []byte("BIN"), 0o755)
 	for _, l := range []int{0, -1, maxSystemLevel + 1} {
-		if _, err := Pack(dir, "1.0.0", l, priv); err == nil {
+		if _, err := Pack(dir, "1.0.0", release.HMIKiosk, l, priv); err == nil {
 			t.Errorf("Stand %d angenommen", l)
 		}
 	}

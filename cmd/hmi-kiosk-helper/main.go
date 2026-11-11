@@ -53,10 +53,15 @@ func serveMain() {
 	netSaved := flag.String("net-saved", defaultNetSaved, "Datei für die bestätigte Ethernet-Einstellung")
 	webOrigins := flag.String("web-origins", "/data/system/web-origins", "Datei für die Ursprünge der Web-Kacheln (Chromium-Richtlinie)")
 	root := flag.String("root", defaultRoot, "Wurzel der Datenpartition mit app/")
+	sysRoot := flag.String("system-root", "/", "Wurzel des Systems (für /etc/hmi-kiosk/product)")
 	marker := flag.String("marker", defaultMarker, "Gesundmarke des Dienstes")
 	flag.Parse()
 	if *uid < 0 {
 		log.Fatal("-uid fehlt")
+	}
+	binary, err := productBinary(*sysRoot)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	e, err := helper.NewOSExec()
@@ -67,7 +72,7 @@ func serveMain() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	srv := helper.NewServer(*socket, *uid, e, *bootCfg, update.Ops{Root: *root})
+	srv := helper.NewServer(*socket, *uid, e, *bootCfg, update.Ops{Root: *root, Binary: binary})
 	srv.SocketGID = *gid
 	srv.NTPStatePath = *ntpState
 	srv.WebOriginsStatePath = *webOrigins
@@ -75,6 +80,7 @@ func serveMain() {
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
 	srv.Backup.HasTool = helper.OSHasTool
+	srv.Backup.FilesDataDir = *root
 	srv.Net.SavedPath = *netSaved
 	srv.RecoverNetOnStart = true
 
@@ -90,7 +96,12 @@ func guardMain(args []string) {
 	fs := flag.NewFlagSet("update-guard", flag.ExitOnError)
 	root := fs.String("root", defaultRoot, "Wurzel der Datenpartition mit app/")
 	marker := fs.String("marker", defaultMarker, "Gesundmarke des Dienstes")
+	sysRoot := fs.String("system-root", "/", "Wurzel des Systems (für /etc/hmi-kiosk/product)")
 	fs.Parse(args)
+	binary, err := productBinary(*sysRoot)
+	if err != nil {
+		log.Fatalf("Update-Wächter: %v", err)
+	}
 
 	e, err := helper.NewOSExec()
 	if err != nil {
@@ -98,17 +109,17 @@ func guardMain(args []string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := runGuard(ctx, *root, *marker, guardTimeout, e); err != nil {
+	if err := runGuard(ctx, *root, binary, *marker, guardTimeout, e); err != nil {
 		log.Fatalf("Update-Wächter: %v", err)
 	}
 }
 
 // runGuard wartet auf die Gesundmarke der aktivierten Version; bleibt sie aus,
 // wird zurückgeschaltet und der Dienst neu gestartet.
-func runGuard(ctx context.Context, root, marker string, timeout time.Duration, e helper.Exec) error {
+func runGuard(ctx context.Context, root, binary, marker string, timeout time.Duration, e helper.Exec) error {
 	return update.Guard(ctx, root, marker, timeout, func(ctx context.Context) error {
 		log.Print("Update-Wächter: keine Gesundmeldung, schalte auf die vorherige Version zurück")
-		if err := update.Rollback(root); err != nil {
+		if err := update.RollbackBinary(root, binary); err != nil {
 			return err
 		}
 		// Nach mehreren Fehlstarts hätte systemd den Dienst gesperrt; reset-failed hebt das auf.

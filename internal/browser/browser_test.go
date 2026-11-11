@@ -306,3 +306,24 @@ func TestTouchTestTargetOpensSelftestPage(t *testing.T) {
 		t.Fatalf("Argumente: %v", c.Args)
 	}
 }
+
+func TestArgsStartAndAdmin(t *testing.T) {
+	for _, c := range []struct {
+		t   Target
+		url string
+	}{
+		{TargetStart, "https://pdh.example/terminal"},
+		{TargetAdmin, "http://127.0.0.1:8081/admin/"},
+	} {
+		g := newRig(t)
+		g.run(t)
+		g.s.SetStartURL("https://pdh.example/terminal")
+		g.s.Show(c.t)
+		got := g.nextStart(t)
+		for _, w := range []string{"--kiosk", "--touch-events=enabled", "--user-data-dir=/run/ram/profile-tiles", c.url} {
+			if !slices.Contains(got.Args, w) {
+				t.Errorf("Ziel %d: %s fehlt in %v", c.t, w, got.Args)
+			}
+		}
+	}
+}

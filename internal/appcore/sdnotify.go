@@ -1,4 +1,4 @@
-package app
+package appcore
 
 import (
 	"context"
@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-const watchdogProbeLimit = 2 * time.Second
+// WatchdogProbeLimit begrenzt die Antwortzeit der Prüfung vor jeder Watchdog-Meldung.
+const WatchdogProbeLimit = 2 * time.Second
 
 // notifier spricht das sd_notify-Protokoll ohne Bibliothek. Ein Name mit
 // führendem „@“ ist eine abstrakte Adresse; net.UnixAddr setzt sie um.
@@ -31,6 +32,23 @@ func (n notifier) send(state string) error {
 	}
 	_, err = c.Write([]byte(state))
 	return err
+}
+
+// Notify meldet state (zum Beispiel "READY=1") an systemd; ohne NOTIFY_SOCKET tut es nichts.
+func Notify(state string) error { return notifierFromEnv().send(state) }
+
+// Watchdog meldet sich im halben WATCHDOG_USEC-Takt bei systemd, bis ctx endet.
+// Ohne aktiven Watchdog kehrt es sofort zurück.
+func Watchdog(ctx context.Context) { WatchdogProbe(ctx, nil) }
+
+// WatchdogProbe wie Watchdog, meldet sich aber nur, wenn probe (nil: immer) rechtzeitig
+// antwortet: Hängt der Sitzungsautomat, soll systemd den Dienst neu starten.
+func WatchdogProbe(ctx context.Context, probe func(context.Context) error) {
+	every := watchdogInterval(os.Getenv, os.Getpid())
+	if every <= 0 {
+		return
+	}
+	runWatchdog(ctx, notifierFromEnv(), every, probe)
 }
 
 // watchdogInterval liefert den halben WATCHDOG_USEC-Takt oder 0, wenn der
@@ -57,14 +75,16 @@ func runWatchdog(ctx context.Context, n notifier, every time.Duration, probe fun
 			return
 		case <-t.C:
 		}
-		pctx, cancel := context.WithTimeout(ctx, watchdogProbeLimit)
-		err := probe(pctx)
-		cancel()
-		if err != nil {
-			if ctx.Err() == nil {
-				log.Printf("Watchdog: Sitzungsverwaltung antwortet nicht: %v", err)
+		if probe != nil {
+			pctx, cancel := context.WithTimeout(ctx, WatchdogProbeLimit)
+			err := probe(pctx)
+			cancel()
+			if err != nil {
+				if ctx.Err() == nil {
+					log.Printf("Watchdog: Sitzungsverwaltung antwortet nicht: %v", err)
+				}
+				continue
 			}
-			continue
 		}
 		if err := n.send("WATCHDOG=1"); err != nil {
 			log.Printf("Watchdog: Meldung nicht zugestellt: %v", err)

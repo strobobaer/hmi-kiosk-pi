@@ -6,6 +6,8 @@
 . files/build.env
 : "${HMI_VERSION:?HMI_VERSION fehlt in build.env}"
 : "${HMI_ENABLE_SSH:?HMI_ENABLE_SSH fehlt in build.env}"
+: "${HMI_PRODUCT_ID:?HMI_PRODUCT_ID fehlt in build.env}"
+: "${HMI_PRODUCT_BINARY:?HMI_PRODUCT_BINARY fehlt in build.env}"
 
 R="${ROOTFS_DIR}"
 FS=files/rootfs
@@ -55,7 +57,7 @@ install -m 755 -o root -g root files/identity.sh "${R}/usr/local/sbin/hmi-kiosk-
 # Programme: der Helfer fest im System, der Dienst als erste Version für /data/app.
 install -m 755 -o root -g root files/bin/hmi-kiosk-helper "${R}/usr/local/bin/hmi-kiosk-helper"
 install -d -m 755 -o root -g root "${R}/opt/hmi-kiosk/initial/${HMI_VERSION}"
-install -m 755 -o root -g root files/bin/hmi-kiosk "${R}/opt/hmi-kiosk/initial/${HMI_VERSION}/hmi-kiosk"
+install -m 755 -o root -g root "files/bin/${HMI_PRODUCT_BINARY}" "${R}/opt/hmi-kiosk/initial/${HMI_VERSION}/${HMI_PRODUCT_BINARY}"
 printf '%s\n' "${HMI_VERSION}" >"${R}/opt/hmi-kiosk/initial/${HMI_VERSION}/VERSION"
 chmod 644 "${R}/opt/hmi-kiosk/initial/${HMI_VERSION}/VERSION"
 
@@ -66,6 +68,9 @@ chown root:root "${R}/etc/hmi-kiosk/image-release"
 chmod 644 "${R}/etc/hmi-kiosk/image-release"
 # Stand der Systemteile: Programm-Updates, die neuere Systemteile brauchen, lehnt das Gerät ab.
 install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/system-level" "${R}/etc/hmi-kiosk/system-level"
+# Welches Produkt dieses Abbild ist (Inhalt = Produkt-ID); der Helfer, der Erststart und die Prüfung lesen es.
+install -m 644 -o root -g root "${FS}/etc/hmi-kiosk/product" "${R}/etc/hmi-kiosk/product"
+grep -qx "${HMI_PRODUCT_ID}" "${R}/etc/hmi-kiosk/product"
 
 # Einhängepunkt für /data. Partition und fstab-Eintrag (ohne nofail) entstehen beim ersten Start
 # (hmi-kiosk-firstboot prepare-data), damit kein Eintrag auf eine noch fehlende Partition wartet.
