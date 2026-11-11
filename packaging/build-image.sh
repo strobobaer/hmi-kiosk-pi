@@ -106,7 +106,7 @@ stage_product_rootfs "$files/rootfs"
 cp packaging/image/firstboot.sh "$files/firstboot.sh"
 cp packaging/image/identity.sh "$files/identity.sh"
 cp "$work/bin/$PRODUCT_BINARY" "$work/bin/hmi-kiosk-helper" "$files/bin/"
-printf 'HMI_VERSION=%s\nHMI_ENABLE_SSH=%s\n' "$VERSION" "$ssh" >"$files/build.env"
+printf 'HMI_VERSION=%s\nHMI_ENABLE_SSH=%s\nHMI_PRODUCT_ID=%s\nHMI_PRODUCT_BINARY=%s\n' "$VERSION" "$ssh" "$PRODUCT_ID" "$PRODUCT_BINARY" >"$files/build.env"
 # Unter Windows fehlen Ausführungsrechte; docker build übernimmt sie von hier.
 chmod +x "$pg/stage-hmi/prerun.sh" "$pg/stage-hmi/01-hmi/00-run.sh"
 

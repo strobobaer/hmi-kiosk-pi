@@ -46,6 +46,22 @@ for entry in $products; do
 		grep -Fq "ID: \"$id\", Name: \"$name\", Binary: \"$bin\"" internal/release/product.go
 done
 
+# firstboot.sh und verify-image.sh nehmen an, dass die Kennung dem Programmnamen gleicht.
+for f in packaging/products/*/product.env; do
+	if (
+		# shellcheck source=/dev/null
+		. "$f"
+		[ -n "$PRODUCT_ID" ] && [ "$PRODUCT_ID" = "$PRODUCT_BINARY" ]
+	); then ok "$f: PRODUCT_ID == PRODUCT_BINARY"; else bad "$f: PRODUCT_ID und PRODUCT_BINARY weichen ab"; fi
+done
+
+# Jede Variable, die die Abbild-Stufe aus build.env verlangt, muss build-image.sh schreiben.
+need=$(grep -o '\${HMI_[A-Z_]*:?' packaging/image/stage-hmi/01-hmi/00-run.sh | sed 's/^\${//; s/:?$//' | sort -u)
+if [ -z "$need" ]; then bad "00-run.sh verlangt keine HMI_*-Variable aus build.env (Prüfmuster veraltet?)"; fi
+for v in $need; do
+	check "build.env enthält $v (verlangt von 00-run.sh)" grep -Fq "${v}=%s" packaging/build-image.sh
+done
+
 # Overlay PDH-Terminal.
 ov=packaging/products/pdh-terminal/rootfs
 if [ -d "$ov" ]; then
