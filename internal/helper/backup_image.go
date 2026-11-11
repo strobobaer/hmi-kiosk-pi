@@ -357,38 +357,35 @@ func (b BackupConfig) memAvailable() (int64, error) {
 	return 0, errors.New("Der freie Arbeitsspeicher ist nicht lesbar.")
 }
 
-// secretDir und secretPrefix nennen, was nie in eine Sicherung gehört: das Geräte-Geheimnis
-// des PDH-Terminals (pdh/device.json) und die Temp-Dateien des Schreibens (pdh/.device-*).
-const (
-	secretDir    = "pdh"
-	secretPrefix = ".device-"
-	secretFile   = "device.json"
-)
+// secretDir ist der Ordner des Geräte-Geheimnisses (pdh/device.json und Temp-Dateien .device-*) im
+// Datenordner; keine seiner Dateien gehört in eine Sicherung.
+const secretDir = "pdh"
 
-// secretEntry ist eine Datei in <data>/pdh, die ein Abbild nicht enthalten darf.
+// secretEntry ist eine Datei unter <data>/pdh, die ein Abbild nicht enthalten darf.
 type secretEntry struct {
-	name   string
-	blocks int // Blöcke ihres Inhalts im Abbild (mindestens 1)
+	name   string // Pfad relativ zu pdh/
+	blocks int    // Blöcke ihres Inhalts im Abbild (mindestens 1)
 }
 
-// secretEntries listet die Einträge in <data>/pdh, die ein Abbild nicht enthalten darf.
+// secretEntries listet alle regulären Dateien unter <data>/pdh.
 func secretEntries(dataDir string) []secretEntry {
-	ents, err := os.ReadDir(filepath.Join(dataDir, secretDir))
-	if err != nil {
-		return nil
-	}
 	var out []secretEntry
-	for _, e := range ents {
-		n := e.Name()
-		if n != secretFile && !strings.HasPrefix(n, secretPrefix) {
-			continue
+	root := filepath.Join(dataDir, secretDir)
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return nil
 		}
 		blocks := 1
-		if fi, err := e.Info(); err == nil {
+		if fi, err := d.Info(); err == nil {
 			blocks = int(min(max((fi.Size()+fsBlockSize-1)/fsBlockSize, 1), 64))
 		}
-		out = append(out, secretEntry{n, blocks})
-	}
+		out = append(out, secretEntry{filepath.ToSlash(rel), blocks})
+		return nil
+	})
 	return out
 }
 

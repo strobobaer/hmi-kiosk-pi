@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1168,5 +1169,25 @@ func TestFilesRsyncUsesSparse(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("rsync ohne -S: %v", args)
+	}
+}
+
+func TestFilesExcludeListFollowsDataDir(t *testing.T) {
+	root := t.TempDir()
+	mk := func(dataDir string) []string {
+		s := &Server{Backup: BackupConfig{RootDir: root, FilesDataDir: dataDir}}
+		return s.filesExcludeList()
+	}
+	if got := mk(""); !slices.Equal(got, filesExcludes) {
+		t.Errorf("ohne Datenordner: %q", got)
+	}
+	if got := mk(filepath.Join(root, "srv", "hk")); !slices.Contains(got, "/srv/hk/pdh") || !slices.Contains(got, "/var/lib/hmi-kiosk/pdh") {
+		t.Errorf("eigener Datenordner: %q", got)
+	}
+	if got := mk(filepath.Join(root, "var", "lib", "hmi-kiosk")); len(got) != len(filesExcludes) {
+		t.Errorf("Standardordner doppelt: %q", got)
+	}
+	if got := mk(filepath.Join(t.TempDir(), "woanders")); len(got) != len(filesExcludes) {
+		t.Errorf("Ordner außerhalb der Quelle: %q", got)
 	}
 }

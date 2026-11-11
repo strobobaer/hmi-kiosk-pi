@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"hmikiosk/internal/client"
 	"hmikiosk/internal/coord"
 )
 
@@ -41,13 +40,13 @@ func (p *fakeProc) got() []os.Signal {
 }
 
 type fakeRunner struct {
-	started chan client.Command
+	started chan Command
 	mu      sync.Mutex
 	procs   []*fakeProc
 	err     error
 }
 
-func (r *fakeRunner) Start(c client.Command) (client.Process, error) {
+func (r *fakeRunner) Start(c Command) (Process, error) {
 	if r.err != nil {
 		r.started <- c
 		return nil, r.err
@@ -85,7 +84,7 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	r := &fakeRunner{started: make(chan client.Command, 16)}
+	r := &fakeRunner{started: make(chan Command, 16)}
 	clk := &fakeClock{afters: make(chan time.Duration, 16), fire: make(chan time.Time, 1)}
 	k := New(r, func() (string, error) { return "/usr/bin/wvkbd-mobintl", nil }, func() int { return 1080 })
 	k.clock = clk
@@ -101,7 +100,7 @@ func (g *rig) run(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-finished })
 }
 
-func (g *rig) nextStart(t *testing.T) client.Command {
+func (g *rig) nextStart(t *testing.T) Command {
 	t.Helper()
 	select {
 	case c := <-g.r.started:
@@ -109,7 +108,7 @@ func (g *rig) nextStart(t *testing.T) client.Command {
 	case <-time.After(2 * time.Second):
 		t.Fatal("kein Start")
 	}
-	return client.Command{}
+	return Command{}
 }
 
 func (g *rig) noStart(t *testing.T) {
@@ -164,7 +163,7 @@ func TestDisabledStartsNothingAndShowDoesNotFail(t *testing.T) {
 }
 
 func TestWithoutRunNothingPanics(t *testing.T) {
-	k := New(&fakeRunner{started: make(chan client.Command, 1)}, nil, func() int { return 0 })
+	k := New(&fakeRunner{started: make(chan Command, 1)}, nil, func() int { return 0 })
 	k.SetEnabled(true)
 	if err := k.Show(); err == nil {
 		t.Fatal("Show ohne laufendes wvkbd meldet keinen Fehler")

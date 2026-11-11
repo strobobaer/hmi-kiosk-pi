@@ -682,7 +682,9 @@ func TestCompactImageDropsDeviceSecret(t *testing.T) {
 	c := newCompactEnv(t)
 	writeFile(t, filepath.Join(c.data, "pdh", "device.json"), `{"secret":"pdht_geheim"}`)
 	writeFile(t, filepath.Join(c.data, "pdh", ".device-123"), "pdht_geheim")
-	writeFile(t, filepath.Join(c.data, "pdh", "andere.txt"), "bleibt")
+	writeFile(t, filepath.Join(c.data, "pdh", "andere.txt"), "pdht_geheim")
+	writeFile(t, filepath.Join(c.data, "pdh", "sub", "tief.txt"), "pdht_geheim")
+	writeFile(t, filepath.Join(c.data, "ausserhalb.txt"), "bleibt")
 	writeFile(t, filepath.Join(c.data, "config.json"), `{"a":1}`)
 	rc, _, err := c.srv.openCompact(context.Background())
 	if err != nil {
@@ -702,7 +704,7 @@ func TestCompactImageDropsDeviceSecret(t *testing.T) {
 			rms++
 		}
 	}
-	if rms != 2 || !slices.ContainsFunc(c.fx.got(), func(s string) bool { return strings.Contains(s, "-R rm /pdh/device.json ") }) {
+	if rms != 4 || !slices.ContainsFunc(c.fx.got(), func(s string) bool { return strings.Contains(s, "-R rm /pdh/device.json ") }) {
 		t.Errorf("rm-Aufrufe: %q", c.fx.got())
 	}
 }

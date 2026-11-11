@@ -3,6 +3,7 @@ package pdhterminal
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"hmikiosk/internal/config"
 )
 
 func freeAddr(t *testing.T) string {
@@ -96,4 +99,52 @@ func TestRunNeedsDirs(t *testing.T) {
 	if err := Run(context.Background(), Options{}); err == nil {
 		t.Fatal("ohne Ordner kein Start")
 	}
+}
+
+func TestCornerConfig(t *testing.T) {
+	c := cornerConfig(1280, 800)
+	if c.ScreenW != 1280 || c.ScreenH != 800 || c.RegionPx != 80 || c.Hold != 5*time.Second {
+		t.Errorf("%+v", c)
+	}
+}
+
+// TestOriginsSentAtStartAndOnApply: Die PDH-Ursprünge gehen beim Start und nach jedem
+// Speichern als set-web-origins an den Helfer.
+func TestOriginsSentAtStartAndOnApply(t *testing.T) {
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.PDH.URL = "https://pdh.firma.de"
+	if err := config.Open(data).Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	type call struct{ cmd, arg string }
+	calls := make(chan call, 8)
+	s, err := newService(Options{DataDir: data, RunDir: t.TempDir(), HardwareID: func() string { return "" },
+		HelperCall: func(_ context.Context, cmd, arg string) error { calls <- call{cmd, arg}; return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.origins.Run(ctx)
+	want := func(c config.Config) {
+		t.Helper()
+		b, _ := json.Marshal(config.PDHOrigins(c.PDH))
+		select {
+		case got := <-calls:
+			if got.cmd != "set-web-origins" || got.arg != string(b) {
+				t.Errorf("Aufruf %+v, erwartet %s", got, b)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("kein Aufruf, erwartet %s", b)
+		}
+	}
+	want(cfg)
+	cfg.PDH.URL = "https://andere.firma.de"
+	s.apply(cfg)
+	want(cfg)
+	cfg.PDH.URL = ""
+	s.apply(cfg)
+	want(cfg) // leere Liste, solange keine Adresse eingetragen ist
 }

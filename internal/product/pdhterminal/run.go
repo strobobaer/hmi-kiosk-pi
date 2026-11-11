@@ -20,6 +20,8 @@ import (
 	"hmikiosk/internal/browser"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/helperapi"
+	"hmikiosk/internal/keyboard"
+	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/secrets"
@@ -55,6 +57,8 @@ type Options struct {
 	ChromiumEnabled bool
 	// HardwareID liest die Hardware-Kennung; nil heißt: aus dem Gerät lesen.
 	HardwareID func() string
+	// HelperCall ersetzt den Aufruf des root-Helfers für den Ursprungsabgleich (für Tests).
+	HelperCall func(ctx context.Context, cmd, arg string) error
 	// Ready wird gerufen, wenn der Dienst läuft (für Tests).
 	Ready func(Bound)
 }
@@ -65,6 +69,9 @@ type Bound struct{ Local, Admin, LocalAdmin string }
 
 // rootFS ist die Wurzel für Systemteile (Systemstand); Tests setzen einen Ordner.
 var rootFS = "/"
+
+// sessionProfileFile nennt das Grafikprofil der laufenden Sitzung; Tests setzen eine Datei.
+var sessionProfileFile = "/run/hmi-kiosk-session/profile"
 
 const (
 	procRoot = "/proc"
@@ -86,6 +93,7 @@ type service struct {
 	presence appcore.AdminPresence
 	client   Client
 	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
+	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
 	certSrc  atomic.Pointer[web.CertSource]
 
 	cfgMu    sync.Mutex // Laden, Ändern, Speichern der Konfiguration als Einheit (auch für die Admin-Seite)
@@ -126,7 +134,11 @@ func newService(o Options) (*service, error) {
 	if err := os.MkdirAll(o.RunDir, 0o755); err != nil {
 		s.warn(fmt.Sprintf("Laufzeitordner nicht verfügbar: %v", err))
 	}
-	s.origins = appcore.NewOriginSync(s.helper.Call)
+	call := o.HelperCall
+	if call == nil {
+		call = s.helper.Call
+	}
+	s.origins = appcore.NewOriginSync(call)
 	// Das Produkt steht ausdrücklich da: Ein leeres Produkt hieße HMI-Kiosk.
 	s.updates = appcore.NewUpdateCheck(release.PDHTerminal, func() config.UpdateCfg { return s.config().Update }, nil)
 	s.cleanupStartup()
@@ -134,6 +146,11 @@ func newService(o Options) (*service, error) {
 	s.hwID = s.detectHardwareID()
 	s.claimHardware(loadFailed)
 	s.openBox(loadFailed)
+	if o.ChromiumEnabled {
+		s.kbd = clientrun.NewExec(func() (string, error) { return keyboard.Find(nil) }, func() int { _, h := s.screen(); return h })
+		// Die Bildschirmtastatur gibt es nur unter labwc (Wayland); unter X11 bleibt sie aus.
+		s.kbd.SetEnabled(s.sessionProfile() == "labwc")
+	}
 	// Die Richtlinie vom Helfer-Start gilt bis hierhin; abgeglichen wird trotzdem.
 	s.origins.Set(config.PDHOrigins(s.config().PDH))
 	return s, nil
@@ -364,30 +381,36 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 	}
 	path, err := browser.FindChromium(nil)
 	if err != nil {
-		s.warn(fmt.Sprintf("Chromium nicht verfügbar: %v", err))
+		// Ohne Programm liefe ein Überwacher endlos in Neustarts: einmal melden, ohne Browser weiterlaufen.
+		s.warn(fmt.Sprintf("Chromium nicht verfügbar, das Terminal läuft ohne Anzeige: %v", err))
+		close(done)
+		return done
 	}
 	ram := filepath.Join(s.o.RunDir, chromiumDir)
 	if err := os.MkdirAll(ram, 0o700); err != nil {
 		s.warn(fmt.Sprintf("RAM-Ordner für Chromium nicht verfügbar: %v", err))
 	}
 	sup := browser.NewExec(path, ram, func() int { w, _ := s.screen(); return w })
-	sup.SetProfile(s.config().Display.GraphicsProfile)
+	sup.SetProfile(s.sessionProfile())
 	sup.SetStartURL(startURL)
 	sup.Show(browser.TargetStart)
 	s.sup.Store(sup)
 
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		sup.Run(ctx)
 	}()
 	go func() {
 		defer wg.Done()
-		// Die Berührung oben rechts öffnet die Admin-Seite. Die Höhe ist hier unbekannt
-		// (0): Für diese Achse gilt die Regel „6 % der Achse“.
-		w, _ := s.screen()
-		cfg := platform.CornerCfg{ScreenW: w}
+		s.kbd.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		// Die Berührung oben rechts öffnet die Admin-Seite.
+		w, h := s.screen()
+		cfg := cornerConfig(w, h)
 		if err := platform.WatchCorner(ctx, devInput, cfg, func() { sup.Show(browser.TargetAdmin) }); err != nil && ctx.Err() == nil {
 			log.Printf("Touch-Überwachung beendet: %v", err)
 		}
@@ -399,13 +422,32 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 	return done
 }
 
+// cornerConfig ist das Feld für die Admin-Geste: 80 × 80 px oben rechts, 5 s Haltezeit.
+func cornerConfig(w, h int) platform.CornerCfg {
+	return platform.CornerCfg{ScreenW: w, ScreenH: h, RegionPx: 80, Hold: 5 * time.Second}
+}
+
 // localLeft: Die Admin-Seite wurde verlassen („Zurück“ oder Leerlauf). Der Browser kehrt
 // zur Startseite zurück, sonst öffnete ein Neustart von Chromium wieder die Admin-Seite.
 func (s *service) localLeft() {
 	s.presence.Left()
+	if s.kbd != nil {
+		_ = s.kbd.Hide() // sonst stünde die Tastatur noch auf der Startseite
+	}
 	if sup := s.sup.Load(); sup != nil {
 		sup.Show(browser.TargetStart)
 	}
+}
+
+// sessionProfile liefert das Grafikprofil der laufenden Sitzung (hmi-kiosk-session prepare); Chromium
+// muss zu ihr passen. Ohne Datei (Start außerhalb des Abbilds) gilt die Einstellung.
+func (s *service) sessionProfile() string {
+	if b, err := os.ReadFile(sessionProfileFile); err == nil {
+		if p := strings.TrimSpace(string(b)); p == "labwc" || p == "x11" {
+			return p
+		}
+	}
+	return s.config().Display.GraphicsProfile
 }
 
 // screen liefert die Bildschirmgröße aus Einstellung oder Monitor.
@@ -480,7 +522,12 @@ func (s *service) tlsFingerprint() string {
 }
 
 func (s *service) adminDeps() web.AdminDeps {
+	var kbd web.KeyboardAPI // nil-Schnittstelle, solange es keine Tastatur gibt
+	if s.kbd != nil {
+		kbd = s.kbd
+	}
 	return web.AdminDeps{
+		Keyboard:     kbd,
 		Store:        s.store,
 		Box:          s.box,
 		Apply:        s.apply,

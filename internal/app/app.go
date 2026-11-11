@@ -21,6 +21,7 @@ import (
 	"hmikiosk/internal/coord"
 	"hmikiosk/internal/helperapi"
 	"hmikiosk/internal/keyboard"
+	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/rfb"
@@ -195,7 +196,7 @@ func newService(opts Options) (*service, error) {
 	s.origins.Set(config.WebOrigins(cfg))
 	s.runner = trackingRunner{inner: opts.Runner, rec: &pidRecorder{path: filepath.Join(opts.RunDir, pidFileName)}}
 	if opts.ChromiumEnabled {
-		s.kbdSup = keyboard.New(s.runner, func() (string, error) { return keyboard.Find(s.lookPath) }, func() int {
+		s.kbdSup = clientrun.New(s.runner, func() (string, error) { return keyboard.Find(s.lookPath) }, func() int {
 			_, h := s.screen()
 			return h
 		})

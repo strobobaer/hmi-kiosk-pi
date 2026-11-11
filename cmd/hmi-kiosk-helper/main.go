@@ -80,6 +80,7 @@ func serveMain() {
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
 	srv.Backup.HasTool = helper.OSHasTool
+	srv.Backup.FilesDataDir = *root
 	srv.Net.SavedPath = *netSaved
 	srv.RecoverNetOnStart = true
 
