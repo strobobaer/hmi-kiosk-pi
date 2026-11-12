@@ -40,7 +40,7 @@ abgeschaltet ist.
 
 ## Teil 2: Daten in PDH
 
-Neue Migration mit der nächsten freien Nummer (bei Abfassung 161); eingetragen in
+Neue Migration mit der nächsten freien Nummer (162; 161 stellt die Terminal-IDs auf pdh_uuid_v7() um); eingetragen in
 `migrations/checksums.txt` (`TestMigrationsFrozen`). Bestehende Migrationen werden nicht geändert.
 
 - `terminal_settings.manual_login TEXT NOT NULL DEFAULT 'card_pin'`, CHECK auf

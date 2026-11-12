@@ -4,7 +4,7 @@
 
 **Goal:** Am PDH-Terminal ohne (funktionierenden) Kartenleser per Eingabe anmelden – Anmeldeart je Terminal in PDH, Terminal-PIN, Knopf „Mit Benutzer und Passwort“, Leserstatus vom Gerät, Ereigniskanal von PDH zur Terminalseite.
 
-**Architecture:** PDH speichert Anmeldeart und PIN (Migration 161), prüft jede Eingabe-Anmeldung serverseitig über `POST /terminal/login` und legt dieselbe Kartensitzung an wie `/terminal/card`. Ein neuer EventSource-Kanal `GET /terminal/events` meldet Einstellungsänderungen sofort. Das Gerät ergänzt seinen Kartenstrom um das Ereignis `reader`; die Terminalseite entscheidet daraus, was sie anzeigt.
+**Architecture:** PDH speichert Anmeldeart und PIN (Migration 162), prüft jede Eingabe-Anmeldung serverseitig über `POST /terminal/login` und legt dieselbe Kartensitzung an wie `/terminal/card`. Ein neuer EventSource-Kanal `GET /terminal/events` meldet Einstellungsänderungen sofort. Das Gerät ergänzt seinen Kartenstrom um das Ereignis `reader`; die Terminalseite entscheidet daraus, was sie anzeigt.
 
 **Tech Stack:** Go 1.24, chi, pgx/PostgreSQL, bcrypt (`golang.org/x/crypto/bcrypt`), Vanilla-JS (`web/static/terminal.js`), Go-Templates.
 
@@ -12,14 +12,15 @@
 
 ## Arbeitsorte
 
-- **PDH:** neuer Worktree `C:\workplace\pdh-server-k1`, Zweig `feat/anmeldung-ohne-leser` ab `feat/terminal-kopplung` (`27e7f6a`). Tasks 1–5.
+- **PDH:** neuer Worktree `C:\workplace\pdh-server-k1`, Zweig `feat/anmeldung-ohne-leser` ab `feat/terminal-kopplung` (Stand nach Migration 161). Tasks 1–5.
 - **Pi:** Worktree `C:\workplace\hmi-kiosk-pdhterm`, Zweig `feat/leserstatus` ab `feat/pdh-terminal`. Task 6.
 - `C:\workplace\pdh-server` (Arbeitskopie des Nutzers) und die Container `pdh-gt-*` nie anfassen.
 - PDH-Tests: Docker `golang:1.24-bookworm` mit Volumes `pdh-karten-gomod`/`pdh-karten-gobuild`, Netz `pdh-karten-test`, DB `postgres://postgres:pdh@pdh-pg-karten:5432/pdh_test?sslmode=disable` als `PDH_TEST_DSN`; Integration mit `-tags integration`. Pi-Tests: `scripts/dgo test -race ./...`.
 
 ## Global Constraints
 
-- **Migrationen:** bestehende nie ändern; neue Datei `migrations/161_terminal_manual_login.up.sql`, Eintrag in `migrations/checksums.txt` über `PDH_MIGRATIONS_APPEND=1 go test ./pkg/database -run TestMigrationsFrozen`.
+- **IDs:** jede neue Tabelle mit `id UUID PRIMARY KEY DEFAULT pdh_uuid_v7()` (K1 legt keine neuen Tabellen an); `TestUUIDv7Policy` (`pkg/database`, integration) muss grün bleiben.
+- **Migrationen:** bestehende nie ändern; neue Datei `migrations/162_terminal_manual_login.up.sql`, Eintrag in `migrations/checksums.txt` über `PDH_MIGRATIONS_APPEND=1 go test ./pkg/database -run TestMigrationsFrozen`.
 - `manual_login` ∈ `card_pin | password | card_only | none`, Standard `card_pin`; `password_button` Standard `true`.
 - PIN: 4–8 Ziffern; abgelehnt: alle Ziffern gleich, lückenlos auf- oder absteigend (`1234`, `8765`, `0123`). Nur bcrypt-Hash speichern.
 - PIN-Sperre: **5** Fehlversuche → **15 Minuten** gesperrt; richtige PIN setzt den Zähler zurück; in der DB, gilt an allen Terminals.
@@ -44,7 +45,7 @@
 ### Task 1: Migration, Anmeldeeinstellungen und Terminal-PIN (PDH)
 
 **Files:**
-- Create: `migrations/161_terminal_manual_login.up.sql`, Eintrag in `migrations/checksums.txt`
+- Create: `migrations/162_terminal_manual_login.up.sql`, Eintrag in `migrations/checksums.txt`
 - Create: `internal/web/terminal_login_store.go`
 - Test: `internal/web/terminal_login_store_test.go` (Unit), `internal/web/terminal_login_store_integration_test.go` (`//go:build integration`, Helfer `newATEnv` aus `anlagenterminal_authz_integration_test.go`)
 
@@ -77,7 +78,7 @@
 
 - [ ] **Step 5: Store-Funktionen implementieren.** bcrypt mit `bcrypt.DefaultCost`; Vergleich erst nach Prüfung der Sperre; der Fehlversuch-Zähler wird atomar in einem `UPDATE … RETURNING` erhöht und bei ≥ 5 im selben Statement gesperrt und zurückgesetzt. Tests → PASS.
 
-- [ ] **Step 6: Commit** `feat(terminal): Anmeldeart je Terminal und Terminal-PIN (Migration 161)`.
+- [ ] **Step 6: Commit** `feat(terminal): Anmeldeart je Terminal und Terminal-PIN (Migration 162)`.
 
 ### Task 2: `POST /terminal/login` (PDH)
 
