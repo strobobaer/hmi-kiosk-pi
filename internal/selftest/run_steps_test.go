@@ -2,8 +2,10 @@ package selftest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCoreStepsOnlyProtection(t *testing.T) {
@@ -12,7 +14,7 @@ func TestCoreStepsOnlyProtection(t *testing.T) {
 		t.Fatalf("Schritte %+v", steps)
 	}
 	hmi := HMISteps()
-	if len(hmi) != len(StepNames) {
+	if len(hmi) != len(StepNames)-1 {
 		t.Fatalf("%d HMI-Schritte", len(hmi))
 	}
 	for i, s := range hmi {
@@ -41,5 +43,58 @@ func TestRunStepsOrder(t *testing.T) {
 	}
 	if res[2].Name != "drei" || !res[2].OK {
 		t.Fatalf("nächster Schritt: %+v", res[2])
+	}
+}
+
+// Der Kartenleser gehört nicht zum HMI-Kiosk: dessen sieben Schritte bleiben gleich.
+func TestHMIStepsUnchanged(t *testing.T) {
+	want := []string{"client-bild", "fenster-leiste", "touch", "rueckkehr", "prozessende", "terminals", "schutz"}
+	hmi := HMISteps()
+	if len(hmi) != len(want) {
+		t.Fatalf("%d HMI-Schritte, erwartet %d", len(hmi), len(want))
+	}
+	for i, s := range hmi {
+		if s.Name != want[i] {
+			t.Errorf("Schritt %d: %q, erwartet %q", i, s.Name, want[i])
+		}
+	}
+}
+
+func TestCardStep(t *testing.T) {
+	step := CardStep()
+	if step.Name != StepCard || StepCard != "kartenleser" {
+		t.Fatalf("Name %q", step.Name)
+	}
+	cases := []struct {
+		name   string
+		reader func(context.Context) (string, error)
+		ok     bool
+		detail string
+	}{
+		{"nicht eingestellt", nil, true, "kein Kartenleser eingestellt"},
+		{"Fehler", func(context.Context) (string, error) { return "", errors.New("Gerät fehlt") }, false, "Gerät fehlt"},
+		{"gefunden", func(context.Context) (string, error) { return "PN532 v1.6", nil }, true, "PN532 v1.6"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := step.Run(context.Background(), Deps{CardReader: c.reader})
+			if r.OK != c.ok || r.Detail != c.detail {
+				t.Fatalf("%+v", r)
+			}
+		})
+	}
+}
+
+// Ein hängender Leser darf die Selbstprüfung nicht blockieren.
+func TestCardStepTimeout(t *testing.T) {
+	old := cardProbeTimeout
+	cardProbeTimeout = 20 * time.Millisecond
+	defer func() { cardProbeTimeout = old }()
+	r := CardStep().Run(context.Background(), Deps{CardReader: func(ctx context.Context) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}})
+	if r.OK {
+		t.Fatalf("%+v", r)
 	}
 }

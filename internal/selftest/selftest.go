@@ -28,12 +28,14 @@ const (
 	StepProcessEnd = "prozessende"
 	StepTerminals  = "terminals"
 	StepProtection = "schutz"
+	// StepCard gehört zum PDH-Terminal (CardStep), nicht zu HMISteps.
+	StepCard = "kartenleser"
 
 	// StepPrecondition meldet, dass die Prüfung gar nicht erst läuft.
 	StepPrecondition = "voraussetzung"
 )
 
-var StepNames = []string{StepClient, StepWindow, StepTouch, StepReturn, StepProcessEnd, StepTerminals, StepProtection}
+var StepNames = []string{StepClient, StepWindow, StepTouch, StepReturn, StepProcessEnd, StepTerminals, StepProtection, StepCard}
 
 // StepResult: OK=false heißt Fehler oder nicht prüfbar. OK=true mit NeedsHuman
 // heißt: nichts Falsches gemessen, aber ein Mensch muss etwas bestätigen.
@@ -119,6 +121,8 @@ type Deps struct {
 	// GroupRSS summiert den Speicher der Prozessgruppe von pid; ServicePID nennt den Dienst.
 	GroupRSS   func(pid int) (int64, error)
 	ServicePID func() int
+	// CardReader prüft den Kartenleser und liefert seine Kennung; nil heißt: keiner eingestellt.
+	CardReader func(ctx context.Context) (string, error)
 	Timing     Timing
 }
 
@@ -308,3 +312,23 @@ func (b *TouchBoard) missing() []int {
 
 // pider ist der Teil von client.Process, den nur der echte Prozess hat.
 type pider interface{ Pid() int }
+
+// cardProbeTimeout begrenzt die Abfrage des Kartenlesers (Variable für Tests).
+var cardProbeTimeout = 5 * time.Second
+
+// CardStep prüft den Kartenleser des PDH-Terminals. Ohne eingestellten Leser
+// (CardReader == nil) gilt der Schritt als bestanden.
+func CardStep() Step {
+	return Step{StepCard, func(ctx context.Context, d Deps) StepResult {
+		if d.CardReader == nil {
+			return StepResult{OK: true, Detail: "kein Kartenleser eingestellt"}
+		}
+		ctx, cancel := context.WithTimeout(ctx, cardProbeTimeout)
+		defer cancel()
+		info, err := d.CardReader(ctx)
+		if err != nil {
+			return StepResult{Detail: err.Error()}
+		}
+		return StepResult{OK: true, Detail: info}
+	}}
+}

@@ -580,7 +580,7 @@ func remoteIsWifi(r *http.Request) bool {
 }
 
 // adminSelftest ist die Selbstprüfung für die Admin-Seite: nur die Schritte, die jedes
-// Produkt braucht (Schutz von System und Funk).
+// Produkt braucht (Schutz von System und Funk), plus der Kartenleser.
 func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 	d := selftest.Deps{
 		Config:      s.config,
@@ -589,7 +589,10 @@ func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 		BootConfig:  readBootConfig,
 		ImageMarker: func() bool { _, err := os.Stat(selftest.ImageMarkerFile); return err == nil },
 	}
-	res := selftest.RunSteps(ctx, d, selftest.CoreSteps())
+	if t := s.config().Card.Type; t != "" && t != "aus" {
+		d.CardReader = s.cards.Probe
+	}
+	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep()))
 	out := make([]web.SelftestStep, len(res))
 	for i, r := range res {
 		out[i] = web.SelftestStep{Name: r.Name, OK: r.OK, Detail: r.Detail, NeedsHuman: r.NeedsHuman}
