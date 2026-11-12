@@ -9,16 +9,22 @@ import (
 	"time"
 )
 
+// Lesertypen, wie sie die Konfiguration verwendet.
+const (
+	TypePN532I2C = "pn532-i2c"
+	TypeUSB      = "usb"
+)
+
 // Settings beschreibt den gewählten Kartenleser (das Paket kennt config nicht).
 type Settings struct {
-	Type      string // "", "off", "pn532" oder "usb"
+	Type      string // "" oder "aus" (kein Leser), TypePN532I2C oder TypeUSB
 	I2CBus    string // Nummer oder Gerätepfad, z. B. "1"
 	I2CAddr   int    // 0 = 0x24
 	USBDevice string // vvvv:pppp oder Namensteil
 	Format    string // nur PN532, siehe FormatUID
 }
 
-func (s Settings) off() bool { return s.Type == "" || s.Type == "off" }
+func (s Settings) off() bool { return s.Type == "" || s.Type == "aus" }
 
 // Status ist der Zustand des Lesers für die Anzeige.
 type Status struct {
@@ -183,7 +189,7 @@ func readyText(st Settings, r reader) string {
 	if u, ok := r.(*usbReader); ok {
 		return "USB-Leser bereit: " + u.dev.Name
 	}
-	if st.Type == "pn532" {
+	if st.Type == TypePN532I2C {
 		return "PN532 bereit"
 	}
 	return "Leser bereit"
@@ -214,13 +220,13 @@ func (s *Service) Probe(ctx context.Context) (string, error) {
 // i2c_linux.go/usb_linux.go.
 func openReader(st Settings) (reader, error) {
 	switch st.Type {
-	case "pn532":
+	case TypePN532I2C:
 		conn, err := openI2C(st.I2CBus, st.I2CAddr)
 		if err != nil {
 			return nil, err
 		}
 		return newPN532(conn, st.Format), nil
-	case "usb":
+	case TypeUSB:
 		dev, ok := matchDevice(ListInputDevices("/dev/input"), st.USBDevice)
 		if !ok {
 			return nil, fmt.Errorf("USB-Leser %q nicht gefunden", st.USBDevice)

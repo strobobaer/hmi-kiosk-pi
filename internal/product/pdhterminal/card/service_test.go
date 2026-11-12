@@ -162,3 +162,15 @@ func TestServiceProbeRunning(t *testing.T) {
 		t.Errorf("%q %v", got, err)
 	}
 }
+
+func TestOpenReaderKnownTypes(t *testing.T) {
+	// Ohne Hardware schlägt das Öffnen fehl, aber die Typen der Konfiguration sind bekannt.
+	for _, typ := range []string{TypePN532I2C, TypeUSB} {
+		if _, err := openReader(Settings{Type: typ, I2CBus: "/nonexistent"}); err != nil && strings.Contains(err.Error(), "unbekannter") {
+			t.Errorf("%s: %v", typ, err)
+		}
+	}
+	if _, err := openReader(Settings{Type: "pn532"}); err == nil || !strings.Contains(err.Error(), "unbekannter") {
+		t.Errorf("Alias pn532 darf nicht gelten: %v", err)
+	}
+}
