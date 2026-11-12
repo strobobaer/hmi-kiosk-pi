@@ -187,6 +187,8 @@ install_packages() {
 # --- Benutzer ---
 
 ensure_user() {
+	# i2c (Kartenleser am PN532, nur PDH-Terminal) nur, wenn das System die Gruppe kennt.
+	if getent group i2c >/dev/null; then KIOSK_GROUPS="$KIOSK_GROUPS,i2c"; fi
 	if ! getent group "$KIOSK_USER" >/dev/null; then
 		if getent group "$KIOSK_UID_WISH" >/dev/null; then
 			groupadd "$KIOSK_USER"

@@ -85,14 +85,53 @@ pol="$ov/etc/chromium/policies/managed/hmi-kiosk.json"
 check "Richtlinie: nur die Grundliste ohne Web-Kacheln" bash -c "tr -d '\n\t' <'$pol' | tr -s ' ' | grep -Fq '\"URLAllowlist\": [\"http://127.0.0.1:8080\", \"http://localhost:8080\", \"http://127.0.0.1:8081\", \"http://localhost:8081\"]'"
 check "Systemstand-Marker im Overlay ist 1" test "$(cat "$ov/etc/hmi-kiosk/system-level" 2>/dev/null)" = 1
 
+# I²C für den Kartenleser (nur pdh-terminal): Prüffunktion aus verify-i2c.sh gegen Testbäume.
+check "modules-load-Datei für i2c-dev im Overlay" test "$(cat "$ov/etc/modules-load.d/pdh-terminal-i2c.conf" 2>/dev/null)" = i2c-dev
+check "00-run.sh legt die Gruppe i2c an" grep -Fq 'getent group i2c >/dev/null || groupadd -r i2c' packaging/image/stage-hmi/01-hmi/00-run.sh
+check "00-run.sh nimmt hmikiosk in i2c auf" grep -Fq 'input,video,render,i2c' packaging/image/stage-hmi/01-hmi/00-run.sh
+check "00-run.sh setzt i2c_arm nur für pdh-terminal" bash -c "grep -B3 'dtparam=i2c_arm=on' packaging/image/stage-hmi/01-hmi/00-run.sh | grep -Fq 'HMI_PRODUCT_ID'"
+check "install.sh nimmt i2c in die Gruppen auf, wenn sie existiert" grep -Fq 'getent group i2c' packaging/install.sh
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+i2c_case() { # i2c_case PRODUKT CONFIG-TEXT GRUPPE(ja/nein) MODULDATEI(ja/nein): gibt die Meldungen der Prüfung aus
+	local t
+	t=$(mktemp -d "$tmp/i2c.XXXXXX")
+	mkdir -p "$t/R/etc/modules-load.d" "$t/B"
+	printf '%b' "$2" >"$t/B/config.txt"
+	if [ "$3" = ja ]; then echo 'i2c:x:998:hmikiosk' >"$t/R/etc/group"; else echo 'i2c:x:998:' >"$t/R/etc/group"; fi
+	if [ "$4" = ja ]; then echo i2c-dev >"$t/R/etc/modules-load.d/pdh-terminal-i2c.conf"; fi
+	(
+		ok() { echo "OK $1"; }
+		bad() { echo "FEHLER $1"; }
+		# shellcheck source=packaging/image/verify-i2c.sh
+		. packaging/image/verify-i2c.sh
+		check_i2c "$1" "$t/R" "$t/B"
+	)
+}
+expect_i2c() { # expect_i2c ok|fehler BESCHREIBUNG PRODUKT CONFIG GRUPPE MODULDATEI
+	local want="$1" d="$2" out
+	shift 2
+	out=$(i2c_case "$@" 2>&1)
+	if [ "$want" = ok ] && ! echo "$out" | grep -q '^FEHLER'; then ok "$d"
+	elif [ "$want" = fehler ] && echo "$out" | grep -q '^FEHLER'; then ok "$d"
+	else bad "$d ($out)"; fi
+}
+cfg_with='dtparam=audio=on\n[all]\ndtparam=pciex1\ndtparam=i2c_arm=on\n'
+cfg_without='dtparam=audio=on\n[all]\ndtparam=pciex1\n'
+cfg_early='dtparam=i2c_arm=on\n[pi4]\ndtparam=x\n[all]\ndtparam=pciex1\n'
+expect_i2c ok "i2c: pdh-terminal mit i2c_arm, Gruppe und Moduldatei besteht" pdh-terminal "$cfg_with" ja ja
+expect_i2c fehler "i2c: pdh-terminal ohne i2c_arm schlägt fehl" pdh-terminal "$cfg_without" ja ja
+expect_i2c fehler "i2c: pdh-terminal mit i2c_arm nur im Kopf (nicht im letzten [all]) schlägt fehl" pdh-terminal "$cfg_early" ja ja
+expect_i2c fehler "i2c: pdh-terminal ohne Gruppenmitgliedschaft schlägt fehl" pdh-terminal "$cfg_with" nein ja
+expect_i2c fehler "i2c: pdh-terminal ohne Moduldatei schlägt fehl" pdh-terminal "$cfg_with" ja nein
+expect_i2c ok "i2c: hmi-kiosk braucht weder i2c_arm noch Gruppe noch Moduldatei" hmi-kiosk "$cfg_without" nein nein
+
 # Hilfsfunktionen.
 if out=$( (load_product nope) 2>&1) ; then bad "unbekanntes Produkt wurde angenommen"; elif echo "$out" | grep -q 'Unbekanntes Produkt'; then ok "unbekanntes Produkt: klare Meldung"; else bad "unbekanntes Produkt: Meldung fehlt ($out)"; fi
 if out=$( (load_product '../x') 2>&1); then bad "Pfad in Produktkennung wurde angenommen"; else ok "Pfad in Produktkennung abgelehnt"; fi
 if out=$( (load_product hmi-kiosk && require_product_cmd) 2>&1); then ok "hmi-kiosk: cmd/hmi-kiosk vorhanden"; else bad "hmi-kiosk: $out"; fi
 if out=$( (load_product hmi-kiosk && PRODUCT_BINARY=gibt-es-nicht && require_product_cmd) 2>&1); then bad "fehlendes cmd wurde nicht gemeldet"; elif echo "$out" | grep -q './cmd/gibt-es-nicht existiert nicht'; then ok "fehlendes cmd: klare Meldung"; else bad "fehlendes cmd: Meldung fehlt ($out)"; fi
 
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
 cp -r packaging/rootfs "$tmp/h"
 cp -r packaging/rootfs "$tmp/p"
 (load_product hmi-kiosk && stage_product_rootfs "$tmp/h")

@@ -96,8 +96,9 @@ Das PDH-Terminal ist ein eigenes Produkt (Abbild `pdh-terminal-<Version>.img.xz`
 4. **Seite „PDH“:** die PDH-Adresse eintragen (`https://<Rechner>[:Port]`; `http://` nur mit dem Haken „unverschlüsselt erlauben“), dazu den Gerätenamen und, falls die Playlist-Folien andere Adressen brauchen (z. B. Grafana), die zusätzlich erlaubten Adressen.
 5. **In PDH:** auf der Seite des Terminal-Benutzers den Knopf **„Gerät koppeln“** drücken. Es erscheint ein Code, der 10 Minuten gilt und nur einmal verwendet werden kann.
 6. **Am Gerät:** den Code auf der Seite „PDH“ eingeben und **„Koppeln“** drücken. Die Seite zeigt dann „gekoppelt als …“ und „verbunden“.
+7. **Kartenleser einstellen** (nur wenn ein Leser angeschlossen ist): Admin-Seite → **Kartenleser**. Typ wählen (PN532 über I²C oder USB-Leser), beim PN532 den Anschluss wie in `docs/betrieb.md`, Abschnitt 4 (Pin 3/5, 3,3 V, Modus I²C). Eine Karte halten: Die Seite zeigt unter „Zuletzt gelesen“ die Nummer; sie in PDH beim Benutzer eintragen. Das Format (hex, hex-rev, dec) muss zu den Einträgen in PDH passen.
 
-Danach meldet die Startseite sich bei PDH selbst an. Ist PDH nicht erreichbar, versucht sie es alle 30 Sekunden erneut. Die Admin-Seite kehrt nach 2 Minuten ohne Eingabe zur Startseite zurück. Zustände, Entkoppeln, Sicherung und Zertifikat: `docs/betrieb.md`, Abschnitt 4.
+Danach meldet die Startseite sich bei PDH selbst an. Ist PDH nicht erreichbar, versucht sie es alle 30 Sekunden erneut. Die Admin-Seite kehrt nach 2 Minuten ohne Eingabe zur Startseite zurück. Zustände, Entkoppeln, Sicherung, Zertifikat und Kartenleser: `docs/betrieb.md`, Abschnitt 4.
 
 ## Aktualisieren
 
@@ -252,6 +253,7 @@ The PDH-Terminal is a separate product (image `pdh-terminal-<version>.img.xz`). 
 4. On the **PDH** page enter the PDH address (`https://host[:port]`; `http://` only with "unverschlüsselt erlauben" ticked), the device name and any extra addresses that playlist slides need.
 5. In PDH press **"Gerät koppeln"** on the terminal user's page. A code appears; it is valid for 10 minutes and can be used once.
 6. Enter the code on the PDH page and press **"Koppeln"**. The page then shows "gekoppelt als …" and "verbunden".
+7. **Set up the card reader** (only if a reader is connected): admin page → **Kartenleser**. Choose the type (PN532 over I²C or USB reader); wire the PN532 as described in `docs/betrieb.md`, section 4 (pins 3/5, 3.3 V, I²C mode). Hold a card to the reader: the page shows its number under "Zuletzt gelesen"; enter it in PDH on the user. The format (hex, hex-rev, dec) must match the entries in PDH.
 
 The start page then logs in to PDH by itself. While PDH is unreachable it retries every 30 seconds. The admin page returns to the start page after 2 minutes without input. Details (German): `docs/betrieb.md`, section 4.
 

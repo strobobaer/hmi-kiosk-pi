@@ -7,7 +7,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung, da
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen (je Produkt)
 3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
-4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat)
+4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser)
 5. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -440,10 +440,57 @@ Das Geheimnis ist **nicht** Teil der Sicherung. Bei der Sicherung als Abbild wer
 
 Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat von PDH wird nicht vertraut“. Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
 
+### Kartenleser
+
+Das PDH-Terminal kann Mitarbeiterkarten lesen. Die Startseite von PDH bekommt die gelesene Kartennummer vom Gerät und meldet damit den Benutzer an (Kartensitzung in PDH: nach 2 Minuten ohne Eingabe oder mit „Abmelden“ endet sie). Das Gerät schickt die Nummer nur an die Seite, die von der eingestellten PDH-Adresse stammt.
+
+Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser**:
+
+| Typ | Gerät | Hinweis |
+|---|---|---|
+| **aus** (Standard) | – | Keine Karte wird gelesen. |
+| **PN532 über I²C** | NFC-Modul PN532 am I²C-Bus, Bus `/dev/i2c-1`, Adresse `0x24` | Bus und Adresse nur ändern, wenn das Modul anders angeschlossen ist. Die Adresse als Hex-Zahl eintragen (`0x24`). |
+| **USB-Leser** | Leser, der sich wie eine Tastatur meldet | Das Gerät aus der Liste wählen oder den Pfad (`/dev/input/event…`) von Hand eintragen. Das Terminal belegt das Gerät allein; die Nummer landet nie in einem Eingabefeld. Text wird gekürzt und in Großbuchstaben gewandelt, das Format gilt hier nicht. |
+
+**Anschluss des PN532** (Raspberry Pi, 3,3 V):
+
+| PN532 | Pi (Stiftleiste) |
+|---|---|
+| VCC | Pin 1 (3,3 V) |
+| GND | Pin 6 (GND) |
+| SDA | Pin 3 (GPIO 2, SDA) |
+| SCL | Pin 5 (GPIO 3, SCL) |
+
+- **Nur 3,3 V** anschließen, nicht die 5 V des Pi.
+- Am Modul den **Modus I²C** mit den Schaltern einstellen (die Beschriftung steht auf der Platine, meist SEL0 aus, SEL1 an).
+- Das Abbild schaltet den I²C-Bus ein (`dtparam=i2c_arm=on`), lädt `i2c-dev` und nimmt den Dienstbenutzer in die Gruppe `i2c` auf. Bei `install.sh` auf einem vorhandenen System müssen `dtparam=i2c_arm=on` und `i2c-dev` selbst eingerichtet sein.
+
+**Format der Nummer** (nur PN532): PDH vergleicht die Nummer als Text mit dem Eintrag beim Benutzer. Das Format muss zu den Einträgen in PDH passen.
+
+| Format | Beispiel für die Karte mit den Bytes DE AD BE EF |
+|---|---|
+| **hex** (Standard) | `DEADBEEF` |
+| **hex-rev** | `EFBEADDE` (Bytes umgekehrt) |
+| **dec** | `4022250974` (Bytes umgekehrt, als vorzeichenlose Zahl, kleinstes Byte zuerst) |
+
+**Karte anlernen:**
+
+1. Karte an den Leser halten.
+2. Auf der Seite „Kartenleser“ steht unter **Zuletzt gelesen** die Nummer („<UID> (vor N s)“; ohne Karte „Noch keine Karte gelesen“).
+3. Diese Nummer in PDH beim Benutzer als Karte eintragen. Steht in PDH ein anderes Format (zum Beispiel Dezimalzahlen), hier das passende Format einstellen und die Karte erneut halten.
+
+**Zustand und Selbstprüfung:** Die Seite zeigt den Zustand des Lesers (zum Beispiel „bereit“ oder die Fehlermeldung beim Öffnen des Geräts). Die Selbstprüfung des Terminals hat einen Schritt **kartenleser**; bei Typ „aus“ besteht er mit „kein Kartenleser eingestellt“, sonst prüft er, ob der Leser antwortet (Zeitgrenze 5 Sekunden).
+
+| Beobachtung | Mögliche Ursache |
+|---|---|
+| Zustand zeigt einen Fehler beim Öffnen von `/dev/i2c-1` | I²C-Bus aus (kein `dtparam=i2c_arm=on`), `i2c-dev` nicht geladen oder Dienstbenutzer nicht in der Gruppe `i2c`. |
+| PN532 antwortet nicht | Falsche Adresse, Modul nicht auf I²C geschaltet, SDA und SCL vertauscht, 3,3 V fehlen. |
+| USB-Leser fehlt in der Liste | Gerät stecken, Seite neu laden; Pfad notfalls von Hand eintragen. |
+| „Zuletzt gelesen“ zeigt eine Nummer, PDH meldet nicht an | Format passt nicht zum Eintrag in PDH, oder die Karte ist in PDH nicht eingetragen. |
+
 ### Bekannte Einschränkungen
 
 - Die Bildschirmtastatur erscheint nur auf der Admin-Seite des Geräts, nicht auf den PDH-Seiten. Dafür braucht es ein Skript auf der PDH-Seite; das folgt in einer späteren Version.
-- Die Admin-Seite „Kartenleser“ ist nur ein Platzhalter; der Kartenleser folgt in einer späteren Version.
 
 ## 5. Fehlersuche
 

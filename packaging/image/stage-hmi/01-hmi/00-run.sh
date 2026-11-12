@@ -15,11 +15,13 @@ KIOSK_UID=1100
 
 # Dienstbenutzer ohne Passwort und ohne Shell; der erste Benutzer aus pi-gen wird gesperrt.
 on_chroot <<EOF
+# i2c: Zugriff auf /dev/i2c-1 für den Kartenleser (PN532); die Gruppe fehlt im Standardabbild.
+getent group i2c >/dev/null || groupadd -r i2c
 if ! getent group hmikiosk >/dev/null; then groupadd -g ${KIOSK_UID} hmikiosk; fi
 if ! id -u hmikiosk >/dev/null 2>&1; then
-	useradd -u ${KIOSK_UID} -g hmikiosk -G input,video,render -m -d /home/hmikiosk -s /usr/sbin/nologin -c "HMI-Kiosk" hmikiosk
+	useradd -u ${KIOSK_UID} -g hmikiosk -G input,video,render,i2c -m -d /home/hmikiosk -s /usr/sbin/nologin -c "HMI-Kiosk" hmikiosk
 fi
-usermod -a -G input,video,render hmikiosk
+usermod -a -G input,video,render,i2c hmikiosk
 usermod -L hmikiosk
 usermod -L "${FIRST_USER_NAME}"
 EOF
@@ -93,6 +95,13 @@ final_all_block() {
 }
 if ! final_all_block "${CONFIG}" | grep -Eq '^dtparam=pciex1[[:space:]]*$'; then
 	printf '\n[all]\n# NVMe-SSD am PCIe-Anschluss des Pi 5\ndtparam=pciex1\n' >>"${CONFIG}"
+fi
+
+# I²C-Bus des Pi einschalten (nur PDH-Terminal: Kartenleser PN532 an Pin 3/5). Die Zeile kommt in denselben
+# letzten [all]-Block wie pciex1 (nach dem Schritt oben ist das Dateiende garantiert so ein Block); ein
+# weiteres [all] würde pciex1 aus dem letzten Block verdrängen, den verify-image.sh prüft.
+if [ "${HMI_PRODUCT_ID}" = pdh-terminal ] && ! final_all_block "${CONFIG}" | grep -Eq '^dtparam=i2c_arm=on[[:space:]]*$'; then
+	printf '# I2C-Bus fuer den Kartenleser (PN532)\ndtparam=i2c_arm=on\n' >>"${CONFIG}"
 fi
 
 # Unsichtbares Zeigerthema für labwc: ein durchsichtiges Bild 1x1 im Xcursor-Format.
