@@ -171,6 +171,11 @@ löscht PDH nach 30 min. **Tickets** werden am Terminal nur gemeldet.
   nur eigene.
 - Terminal fragt jede Minute nach Änderungen; ohne PDH-Verbindung läuft die zuletzt geladene Playlist
   weiter, Symbol „offline“.
+- Ergänzt 2026-11-12: Je Terminal in PDH einstellbar „Vermerk“ („Server offline seit HH:MM“, Standard),
+  „Zusatzseite“ (eingeschobene Folie „Server offline“) oder beides. Die Playlist samt Bildern/PDFs liegt
+  im Zwischenspeicher **auf dem Gerät** (Datenpartition bzw. Datenordner) und läuft offline vom lokalen
+  Dienst (`127.0.0.1:8080`); Folien `live_status`, `grafana`, `web` werden offline übersprungen. Nach
+  der Wiederverbindung zurück zur PDH-Seite. Gilt für alle Plattformen und Betriebsarten.
 - `web`/`grafana` nur mit Adressen, die die Chromium-Richtlinie des PDH-Terminals erlaubt (in dessen Admin-Seite pflegbar).
 
 ## Fehlerfälle
