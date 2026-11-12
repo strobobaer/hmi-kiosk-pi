@@ -19,7 +19,7 @@
 
 ## Global Constraints
 
-- **IDs:** jede neue Tabelle mit `id UUID PRIMARY KEY DEFAULT pdh_uuid_v7()` (K1 legt keine neuen Tabellen an); `TestUUIDv7Policy` (`pkg/database`, integration) muss grün bleiben.
+- **IDs:** jede eigene Datensatz-ID (Spalte `id`) ist `UUID PRIMARY KEY DEFAULT pdh_uuid_v7()`; erlaubt bleiben natürliche Schlüssel, Schlüssel aus Fremd-IDs und Verbindungstabellen; im Go-Code keine `uuid.New()`/`uuid.NewString()` für IDs (K1 legt keine neuen Tabellen an). `TestUUIDv7Policy` (`pkg/database`, integration) muss grün bleiben.
 - **Migrationen:** bestehende nie ändern; neue Datei `migrations/162_terminal_manual_login.up.sql`, Eintrag in `migrations/checksums.txt` über `PDH_MIGRATIONS_APPEND=1 go test ./pkg/database -run TestMigrationsFrozen`.
 - `manual_login` ∈ `card_pin | password | card_only | none`, Standard `card_pin`; `password_button` Standard `true`.
 - PIN: 4–8 Ziffern; abgelehnt: alle Ziffern gleich, lückenlos auf- oder absteigend (`1234`, `8765`, `0123`). Nur bcrypt-Hash speichern.
