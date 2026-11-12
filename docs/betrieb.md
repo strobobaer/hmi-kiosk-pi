@@ -462,8 +462,8 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 | SCL | Pin 5 (GPIO 3, SCL) |
 
 - **Nur 3,3 V** anschließen, nicht die 5 V des Pi.
-- Am Modul den **Modus I²C** mit den Schaltern einstellen (die Beschriftung steht auf der Platine, meist SEL0 aus, SEL1 an).
-- Das Abbild schaltet den I²C-Bus ein (`dtparam=i2c_arm=on`), lädt `i2c-dev` und nimmt den Dienstbenutzer in die Gruppe `i2c` auf. Bei `install.sh` auf einem vorhandenen System müssen `dtparam=i2c_arm=on` und `i2c-dev` selbst eingerichtet sein.
+- Am Modul den **Modus I²C** mit den Schaltern einstellen: SEL0 an (1), SEL1 aus (0), Beispiel Elechouse V3 und Nachbauten. HSU: beide aus; SPI: SEL0 aus, SEL1 an. Im Zweifel gilt die Beschriftung der Platine bzw. die Tabelle des Herstellers.
+- Das Abbild schaltet den I²C-Bus ein (`dtparam=i2c_arm=on`), lädt `i2c-dev` und nimmt den Dienstbenutzer in die Gruppe `i2c` auf. `install.sh` nimmt den Dienstbenutzer nur dann in die Gruppe `i2c` auf, wenn es sie schon gibt (das Raspberry-Pi-OS-Abbild hat sie); auf anderen Systemen vorher `groupadd -r i2c` ausführen. Bei `install.sh` auf einem vorhandenen System müssen außerdem `dtparam=i2c_arm=on` und `i2c-dev` selbst eingerichtet sein.
 
 **Format der Nummer** (nur PN532): PDH vergleicht die Nummer als Text mit dem Eintrag beim Benutzer. Das Format muss zu den Einträgen in PDH passen.
 
@@ -484,7 +484,7 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 | Beobachtung | Mögliche Ursache |
 |---|---|
 | Zustand zeigt einen Fehler beim Öffnen von `/dev/i2c-1` | I²C-Bus aus (kein `dtparam=i2c_arm=on`), `i2c-dev` nicht geladen oder Dienstbenutzer nicht in der Gruppe `i2c`. |
-| PN532 antwortet nicht | Falsche Adresse, Modul nicht auf I²C geschaltet, SDA und SCL vertauscht, 3,3 V fehlen. |
+| PN532 antwortet nicht | Falsche Adresse, Schalter SEL0/SEL1 nicht auf I²C (SEL0 an, SEL1 aus), SDA und SCL vertauscht, 3,3 V fehlen. |
 | USB-Leser fehlt in der Liste | Gerät stecken, Seite neu laden; Pfad notfalls von Hand eintragen. |
 | „Zuletzt gelesen“ zeigt eine Nummer, PDH meldet nicht an | Format passt nicht zum Eintrag in PDH, oder die Karte ist in PDH nicht eingetragen. |
 
