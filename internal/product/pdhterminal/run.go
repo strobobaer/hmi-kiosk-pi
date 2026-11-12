@@ -23,6 +23,7 @@ import (
 	"hmikiosk/internal/keyboard"
 	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
+	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/selftest"
@@ -92,6 +93,7 @@ type service struct {
 	updates  *updatecheck.Service
 	presence appcore.AdminPresence
 	client   Client
+	cards    *card.Hub                          // Kartenereignisse (SSE auf der Startseite)
 	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
 	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
 	certSrc  atomic.Pointer[web.CertSource]
@@ -123,7 +125,7 @@ func newService(o Options) (*service, error) {
 	o.AdminAddr = orDefault(o.AdminAddr, DefaultAdminAddr)
 	o.LocalAdminAddr = orDefault(o.LocalAdminAddr, DefaultLocalAdminAddr)
 	o.HelperSocket = orDefault(o.HelperSocket, DefaultHelperSocket)
-	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket)}
+	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket), cards: card.NewHub(time.Now)}
 
 	journal, err := appcore.NewJournal(filepath.Join(o.DataDir, logDirName))
 	s.journal = journal
@@ -295,7 +297,8 @@ func (s *service) serve(parent context.Context) error {
 		return fmt.Errorf("Startseite: %w", err)
 	}
 	bound := Bound{Local: l.Addr().String()}
-	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client))
+	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client,
+		card.EventsHandler(s.cards, func() string { return cardOrigin(s.config().PDH) })))
 	localErr := make(chan error, 1)
 	background(func() {
 		if err := local.Serve(l); !errors.Is(err, http.ErrServerClosed) {

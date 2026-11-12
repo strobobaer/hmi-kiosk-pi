@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"html/template"
 	"net/http"
+	"strings"
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/web"
@@ -33,7 +34,9 @@ const (
 // StartHandler ist die Startseite des PDH-Terminals: Sie prüft die Kopplung und
 // meldet das Gerät per Formular (POST mit dem Geheimnis) bei PDH an. Das Geheimnis
 // steht nur im Formularfeld der Antwort, nie in einer Adresse oder einem Header.
-func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client) http.Handler {
+// cards (darf nil sein) bedient /api/card/events; die Route liegt vor der GET/HEAD-Sperre
+// (Preflight braucht OPTIONS) und bleibt hinter der Host-Prüfung.
+func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/start", http.StatusFound)
@@ -41,8 +44,15 @@ func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client) http.
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
 		serveStart(w, r, dataDir, cfg(), client)
 	})
+	if cards != nil {
+		mux.Handle("/api/card/events", cards)
+	}
 	secured := web.SecureLocal(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cards != nil && r.URL.Path == "/api/card/events" {
+			secured.ServeHTTP(w, r)
+			return
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "Methode nicht erlaubt", http.StatusMethodNotAllowed)
@@ -84,4 +94,21 @@ func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config
 	if err := startTmpl.Execute(w, v); err != nil {
 		return
 	}
+}
+
+// cardOrigin ist der einzige Ursprung, der den Kartenstrom lesen darf: die PDH-Adresse
+// selbst (nicht die Zusatzursprünge) in der Schreibweise des Origin-Headers, also ohne
+// Standardport. Leer, wenn keine gültige PDH-Adresse eingetragen ist.
+func cardOrigin(p config.PDHCfg) string {
+	if p.URL == "" {
+		return ""
+	}
+	o, err := config.WebOrigin(p.URL)
+	if err != nil {
+		return ""
+	}
+	if strings.HasPrefix(o, "https://") {
+		return strings.TrimSuffix(o, ":443")
+	}
+	return strings.TrimSuffix(o, ":80")
 }
