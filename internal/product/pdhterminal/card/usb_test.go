@@ -1,6 +1,7 @@
 package card
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -54,5 +55,47 @@ func TestKeyBuffer(t *testing.T) {
 	// Enter ohne Zeichen liefert nichts
 	if _, done := b.Key(28, at.Add(1530*time.Millisecond)); done {
 		t.Error("leeres Enter")
+	}
+}
+
+func TestMatchDevices(t *testing.T) {
+	devs := []InputDevice{
+		{Path: "/dev/input/event2", Name: "Sycreader RFID Keyboard", ID: "ffff:0035"},
+		{Path: "/dev/input/event3", Name: "Sycreader RFID Control", ID: "ffff:0035"},
+		{Path: "/dev/input/event4", Name: "Logitech USB Keyboard", ID: "046d:c31c"},
+	}
+	paths := func(d []InputDevice) []string {
+		var p []string
+		for _, x := range d {
+			p = append(p, x.Path)
+		}
+		return p
+	}
+	cases := []struct {
+		sel  string
+		want []string
+	}{
+		{"FFFF:0035", []string{"/dev/input/event2", "/dev/input/event3"}}, // alle Knoten der Kennung
+		{"sycreader", []string{"/dev/input/event2", "/dev/input/event3"}}, // Namensteil
+		{"keyboard", []string{"/dev/input/event2", "/dev/input/event4"}},
+		{"/dev/input/event4", []string{"/dev/input/event4"}}, // genauer Pfad
+		{"/dev/input/event", nil},                            // kein Teilpfad
+		{"  ", nil},
+		{"gibtesnicht", nil},
+	}
+	for _, c := range cases {
+		got := paths(matchDevices(devs, c.sel))
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%q: %v, erwartet %v", c.sel, got, c.want)
+		}
+	}
+}
+
+func TestEventPathLess(t *testing.T) {
+	in := []string{"/dev/input/event10", "/dev/input/event2", "/dev/input/event1", "/dev/input/event11"}
+	sort.Slice(in, func(i, j int) bool { return eventPathLess(in[i], in[j]) })
+	want := "/dev/input/event1,/dev/input/event2,/dev/input/event10,/dev/input/event11"
+	if got := strings.Join(in, ","); got != want {
+		t.Fatalf("%s", got)
 	}
 }

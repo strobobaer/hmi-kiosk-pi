@@ -56,3 +56,40 @@ func TestAdminCardShowsLast(t *testing.T) {
 		t.Fatalf("UID fehlt:\n%s", r.Body.String())
 	}
 }
+
+func TestAdminCardUSBSelectVsFree(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	save := func(v url.Values) config.CardCfg {
+		t.Helper()
+		v.Set("type", "usb")
+		if r := e.post("/admin/card/settings", v); r.Code != http.StatusOK {
+			t.Fatalf("Speichern: %d\n%s", r.Code, r.Body.String())
+		}
+		c, _, _ := e.store.Load()
+		return c.Card
+	}
+	// Freitext allein
+	if c := save(url.Values{"usbDevice": {"sycreader"}}); c.USBDevice != "sycreader" {
+		t.Fatalf("Freitext: %q", c.USBDevice)
+	}
+	// Das Freitextfeld ist mit dem alten Wert vorbelegt (usbPrev), die Auswahl wurde geändert: Auswahl gewinnt.
+	if c := save(url.Values{"usbDevice": {"sycreader"}, "usbPrev": {"sycreader"}, "usbSelect": {"046d:c31c"}}); c.USBDevice != "046d:c31c" {
+		t.Fatalf("Auswahl ignoriert: %q", c.USBDevice)
+	}
+	// Freitext von Hand geändert: Freitext gewinnt.
+	if c := save(url.Values{"usbDevice": {"neu"}, "usbPrev": {"sycreader"}, "usbSelect": {"046d:c31c"}}); c.USBDevice != "neu" {
+		t.Fatalf("Freitext verloren: %q", c.USBDevice)
+	}
+	// Freitext leer: Auswahl.
+	if c := save(url.Values{"usbSelect": {"1234:abcd"}}); c.USBDevice != "1234:abcd" {
+		t.Fatalf("Auswahl: %q", c.USBDevice)
+	}
+}
+
+func TestAdminCardUSBFreeFieldPrefill(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	e.post("/admin/card/settings", url.Values{"type": {"usb"}, "usbDevice": {"sycreader"}})
+	if body := e.get("/admin/card").Body.String(); !strings.Contains(body, `name="usbDevice" value="sycreader"`) {
+		t.Fatalf("Freitext nicht vorbelegt:\n%s", body)
+	}
+}

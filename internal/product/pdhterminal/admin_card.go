@@ -24,6 +24,7 @@ func cardSettings(c config.CardCfg) card.Settings {
 // cardView ist, was die Seite Kartenleser anzeigt.
 type cardView struct {
 	Type, Bus, Addr, USB, Format string
+	USBFree                      string // Vorbelegung des Freitextfelds: leer, wenn die Auswahl das Gerät schon zeigt
 	Devices                      []card.InputDevice
 	Active                       bool
 	Detail                       string
@@ -48,6 +49,12 @@ func (p *adminProduct) renderCard(f web.AdminFrame, w http.ResponseWriter, statu
 		Devices: card.ListInputDevices(inputDir), Active: st.Active, Detail: st.Detail, Notice: notice,
 		Last: "Noch keine Karte gelesen",
 	}
+	v.USBFree = shown.USBDevice
+	for _, d := range v.Devices {
+		if d.ID == shown.USBDevice {
+			v.USBFree = "" // die Auswahl ist vorbelegt
+		}
+	}
 	if e, ok := p.cards.Hub().Last(); ok {
 		n := int(time.Since(e.At).Seconds())
 		if n < 0 {
@@ -69,8 +76,10 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 		Format:    strings.TrimSpace(r.PostFormValue("format")),
 		USBDevice: strings.TrimSpace(r.PostFormValue("usbDevice")),
 	}
-	if in.USBDevice == "" {
-		in.USBDevice = strings.TrimSpace(r.PostFormValue("usbSelect"))
+	// Freitext gilt nur, wenn er geändert wurde (usbPrev ist der angezeigte Stand); sonst gewinnt die Auswahl.
+	if sel := strings.TrimSpace(r.PostFormValue("usbSelect")); sel != "" &&
+		(in.USBDevice == "" || in.USBDevice == strings.TrimSpace(r.PostFormValue("usbPrev"))) {
+		in.USBDevice = sel
 	}
 	if s := strings.TrimSpace(r.PostFormValue("i2cAddr")); s != "" {
 		n, err := strconv.ParseInt(s, 0, 0)

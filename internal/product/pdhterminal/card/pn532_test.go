@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 )
 
 func TestEncodeFrame(t *testing.T) {
@@ -138,5 +140,47 @@ func TestPN532Probe(t *testing.T) {
 	got, err := newPN532(c, "").Probe(context.Background())
 	if err != nil || got != "PN532 v1.6" {
 		t.Errorf("got %q err %v", got, err)
+	}
+}
+
+func TestPresenceEmitsOnTransitionOnly(t *testing.T) {
+	var p presence
+	seq := []struct {
+		uid  string
+		emit bool
+	}{
+		{"A", true}, {"A", false}, {"A", false}, // liegt auf dem Leser
+		{"", false}, {"A", false}, // eine leere Abfrage zählt nicht als „weg“
+		{"", false}, {"", false}, {"A", true}, // zwei leere Abfragen: Karte war weg
+		{"B", true}, {"A", true}, // andere UID
+	}
+	for i, s := range seq {
+		if got := p.step(s.uid); got != s.emit {
+			t.Fatalf("Schritt %d (%q): emit %v, erwartet %v", i, s.uid, got, s.emit)
+		}
+	}
+}
+
+// pollReads ist die Antwortfolge einer Befehlsrunde (bereit, ACK, bereit, Antwort).
+func pollReads(resp []byte) [][]byte { return [][]byte{ready, ack, ready, resp} }
+
+func TestPN532RunEmitsOncePerPresence(t *testing.T) {
+	none := respFrame(0x4A, []byte{0x00})
+	var reads [][]byte
+	reads = append(reads, pollReads(respFrame(0x14, nil))...)
+	reads = append(reads, pollReads(respFrame(0x32, nil))...)
+	for _, r := range [][]byte{listResp, listResp, listResp, listResp, none, none, listResp} {
+		reads = append(reads, pollReads(r)...)
+	}
+	c := &fakeConn{reads: reads}
+	r := newPN532(c, "hex")
+	r.interval = time.Millisecond
+	var got []string
+	err := r.Run(context.Background(), func(u string) { got = append(got, u) })
+	if err == nil {
+		t.Fatal("Fehler am Skriptende erwartet")
+	}
+	if want := []string{"DEADBEEF", "DEADBEEF"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ausgegeben %q, erwartet %q", got, want)
 	}
 }

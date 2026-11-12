@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/helper"
+	"hmikiosk/internal/release"
 	"hmikiosk/internal/update"
 )
 
@@ -76,6 +77,7 @@ func serveMain() {
 	srv.SocketGID = *gid
 	srv.NTPStatePath = *ntpState
 	srv.WebOriginsStatePath = *webOrigins
+	srv.LocalNetworkAccess = binary == release.PDHTerminal.Binary
 	srv.HealthyMarker = *marker
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
@@ -149,11 +151,17 @@ func webPolicyMain(args []string) {
 	fs := flag.NewFlagSet("web-policy", flag.ContinueOnError)
 	policy := fs.String("policy", "/etc/chromium/policies/managed/hmi-kiosk.json", "Chromium-Richtlinie")
 	state := fs.String("state", "/data/system/web-origins", "Gespeicherte Ursprünge der Web-Kacheln")
+	sysRoot := fs.String("system-root", "/", "Wurzel des Systems (für /etc/hmi-kiosk/product)")
 	if err := fs.Parse(args); err != nil {
 		log.Printf("web-policy: %v", err)
 		return
 	}
-	if err := helper.ApplyWebPolicy(*policy, *state); err != nil {
+	binary, err := productBinary(*sysRoot)
+	if err != nil {
+		log.Printf("web-policy: %v", err)
+		return
+	}
+	if err := helper.ApplyWebPolicy(*policy, *state, binary == release.PDHTerminal.Binary); err != nil {
 		log.Printf("web-policy: %v", err)
 	}
 }

@@ -2,7 +2,10 @@ package card
 
 import (
 	"context"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"hmikiosk/internal/platform"
@@ -67,43 +70,94 @@ type InputDevice struct {
 	ID         string // vvvv:pppp, Hex klein
 }
 
-// matchDevice wählt ein Gerät: sel ist vvvv:pppp (exakt) oder Teil des Namens (ohne Groß/klein).
-func matchDevice(devs []InputDevice, sel string) (InputDevice, bool) {
+// matchDevices wählt alle Geräte der Auswahl sel: ein Pfad (/dev/input/eventN, genau),
+// sonst vvvv:pppp (exakt, alle Knoten mit dieser Kennung), sonst ein Namensteil (ohne
+// Groß/klein, alle passenden Knoten). Ein Leser meldet sich oft mit mehreren Knoten
+// (Tastatur, Steuerung); getippt wird nur über einen, welcher, ist nicht vorhersagbar,
+// darum werden alle übernommen.
+func matchDevices(devs []InputDevice, sel string) []InputDevice {
 	sel = strings.TrimSpace(sel)
 	if sel == "" {
-		return InputDevice{}, false
+		return nil
 	}
-	for _, d := range devs {
-		if d.ID == strings.ToLower(sel) {
-			return d, true
+	var out []InputDevice
+	pick := func(match func(InputDevice) bool) bool {
+		for _, d := range devs {
+			if match(d) {
+				out = append(out, d)
+			}
 		}
+		return len(out) > 0
 	}
-	for _, d := range devs {
-		if strings.Contains(strings.ToLower(d.Name), strings.ToLower(sel)) {
-			return d, true
-		}
+	low := strings.ToLower(sel)
+	if pick(func(d InputDevice) bool { return d.Path == sel }) ||
+		pick(func(d InputDevice) bool { return d.ID == low }) ||
+		pick(func(d InputDevice) bool { return strings.Contains(strings.ToLower(d.Name), low) }) {
+		return out
 	}
-	return InputDevice{}, false
+	return nil
 }
 
-// usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter).
+// eventPathLess ordnet /dev/input/event2 vor event10 (Zahl statt Text).
+func eventPathLess(a, b string) bool {
+	split := func(s string) (string, int) {
+		i := len(s)
+		for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+			i--
+		}
+		n, err := strconv.Atoi(s[i:])
+		if err != nil {
+			return s, -1
+		}
+		return s[:i], n
+	}
+	pa, na := split(a)
+	pb, nb := split(b)
+	if pa != pb {
+		return pa < pb
+	}
+	return na < nb
+}
+
+// usbNames fasst die Namen der Knoten ohne Doppel zusammen.
+func usbNames(devs []InputDevice) string {
+	var names []string
+	for _, d := range devs {
+		if !slices.Contains(names, d.Name) {
+			names = append(names, d.Name)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+// usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter) über alle Knoten der Auswahl.
 type usbReader struct {
-	dev InputDevice
+	devs []InputDevice
 }
 
 func (u *usbReader) Probe(ctx context.Context) (string, error) {
-	return "USB: " + u.dev.Name, nil
+	return "USB: " + usbNames(u.devs), nil
 }
 
-// Run übernimmt das Gerät exklusiv (sonst landet die UID als Tastatureingabe im Browser)
-// und liest erst danach.
+// Run übernimmt alle Knoten exklusiv (sonst landet die UID als Tastatureingabe im Browser)
+// und liest erst danach. Die Ereignisse aller Knoten laufen in einen gemeinsamen Puffer.
 func (u *usbReader) Run(ctx context.Context, emit func(string)) error {
-	var buf keyBuffer
-	return readExclusive(ctx, u.dev.Path, func(ev platform.InputEvent) {
+	paths := make([]string, len(u.devs))
+	for i, d := range u.devs {
+		paths[i] = d.Path
+	}
+	var (
+		mu  sync.Mutex
+		buf keyBuffer
+	)
+	return readExclusive(ctx, paths, func(ev platform.InputEvent) {
 		if ev.Type != evKey || ev.Value != 1 {
 			return
 		}
-		if uid, done := buf.Key(ev.Code, time.Now()); done {
+		mu.Lock()
+		uid, done := buf.Key(ev.Code, time.Now())
+		mu.Unlock()
+		if done {
 			emit(strings.ToUpper(strings.TrimSpace(uid)))
 		}
 	})

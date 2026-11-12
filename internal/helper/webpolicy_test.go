@@ -220,8 +220,8 @@ func TestPackagedPolicyMatchesHelperWithoutOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != string(ChromiumPolicy(nil)) {
-		t.Fatalf("Paket-Richtlinie weicht vom Helfer ab:\n%s\n---\n%s", b, ChromiumPolicy(nil))
+	if string(b) != string(ChromiumPolicy(nil, false)) {
+		t.Fatalf("Paket-Richtlinie weicht vom Helfer ab:\n%s\n---\n%s", b, ChromiumPolicy(nil, false))
 	}
 }
 
@@ -237,5 +237,59 @@ func TestSetWebOriginsRejectsLoopbackAndTooLong(t *testing.T) {
 		if err := e.srv.Dispatch(context.Background(), CmdSetWebOrigins, arg); err == nil {
 			t.Errorf("%.60q angenommen", arg)
 		}
+	}
+}
+
+func TestChromiumPolicyLocalNetworkAccess(t *testing.T) {
+	type lnaFile struct {
+		LocalNetworkAccessAllowedForUrls []string
+	}
+	parse := func(b []byte) (lnaFile, bool) {
+		var f lnaFile
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(b, &raw); err != nil {
+			t.Fatalf("kein JSON: %v\n%s", err, b)
+		}
+		_, has := raw["LocalNetworkAccessAllowedForUrls"]
+		_ = json.Unmarshal(b, &f)
+		return f, has
+	}
+	// PDH-Terminal: Ursprung mit und ohne Standardport.
+	f, has := parse(ChromiumPolicy([]string{"https://pdh.example.com:443", "http://pdh:8080"}, true))
+	want := []string{"http://pdh:8080", "https://pdh.example.com", "https://pdh.example.com:443"}
+	if !has || !reflect.DeepEqual(f.LocalNetworkAccessAllowedForUrls, want) {
+		t.Fatalf("LNA %q (vorhanden %v), erwartet %q", f.LocalNetworkAccessAllowedForUrls, has, want)
+	}
+	// Ohne Schalter (HMI-Kiosk) und ohne Ursprünge kein Eintrag.
+	if _, has := parse(ChromiumPolicy([]string{"http://pdh:8080"}, false)); has {
+		t.Fatal("HMI-Kiosk darf keinen LNA-Eintrag bekommen")
+	}
+	if _, has := parse(ChromiumPolicy(nil, true)); has {
+		t.Fatal("ohne Ursprünge kein LNA-Eintrag")
+	}
+}
+
+func TestApplyWebPolicyLocalNetworkFlag(t *testing.T) {
+	linuxOnly(t)
+	e := webEnv(t)
+	if err := os.MkdirAll(filepath.Dir(e.srv.WebOriginsStatePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.srv.WebOriginsStatePath, []byte(`["http://pdh:8080"]`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.LocalNetworkAccess = true
+	if err := e.srv.ApplyWebPolicy(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(e.read(t, e.srv.ChromiumPolicyPath), `"LocalNetworkAccessAllowedForUrls": ["http://pdh:8080"]`) {
+		t.Fatalf("LNA fehlt:\n%s", e.read(t, e.srv.ChromiumPolicyPath))
+	}
+	e.srv.LocalNetworkAccess = false
+	if err := e.srv.ApplyWebPolicy(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(e.read(t, e.srv.ChromiumPolicyPath), "LocalNetworkAccess") {
+		t.Fatal("HMI-Kiosk darf keinen LNA-Eintrag bekommen")
 	}
 }

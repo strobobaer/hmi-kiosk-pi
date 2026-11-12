@@ -70,12 +70,34 @@ func allowFilter(origin string) string {
 	return scheme + "://." + rest
 }
 
+// localNetworkURLs liefert die Ursprünge als Muster der Inhaltseinstellungen: in der Schreibweise
+// der Web-Kacheln (mit Port) und zusätzlich ohne Standardport, wie Chromium den Ursprung der Seite führt.
+func localNetworkURLs(origins []string) []string {
+	var out []string
+	for _, o := range origins {
+		out = append(out, o)
+		if strings.HasPrefix(o, "http://") {
+			out = append(out, strings.TrimSuffix(o, ":80"))
+		} else {
+			out = append(out, strings.TrimSuffix(o, ":443"))
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // ChromiumPolicy ist der Inhalt der Richtlinie: alles gesperrt außer den festen
 // Einträgen und den Ursprüngen der Web-Kacheln; kein Passwortmanager (die Anmeldung
 // einer Web-Kachel bleibt als Cookie im Profil, Passwörter werden nie gespeichert) und keine
 // Downloads (DownloadRestrictions 3: alle gesperrt), keine Anmeldung bei Chromium und keine
 // Entwicklerwerkzeuge (auch nicht in einem Tab-Fenster, das eine Web-Kachel mit target=_blank öffnet).
-func ChromiumPolicy(origins []string) []byte {
+//
+// Mit localNetwork (nur PDH-Terminal) steht zusätzlich LocalNetworkAccessAllowedForUrls mit den
+// Ursprüngen der Seiten in der Richtlinie: Die PDH-Seite liest den Kartenstrom per EventSource
+// von http://127.0.0.1:8080, und Chromium (Local Network Access, ab etwa 142) fragte sonst nach
+// einer Berechtigung, die ein Kiosk mit gelöschtem Profil nie erteilen kann. Ohne Ursprünge
+// oder ohne localNetwork fehlt der Eintrag, die Richtlinie bleibt wie im Paket.
+func ChromiumPolicy(origins []string, localNetwork bool) []byte {
 	allow := slices.Clone(fixedAllow)
 	for _, o := range origins {
 		allow = append(allow, allowFilter(o))
@@ -85,9 +107,19 @@ func ChromiumPolicy(origins []string) []byte {
 		b, _ := json.Marshal(a)
 		quoted[i] = string(b)
 	}
+	lna := ""
+	if urls := localNetworkURLs(origins); localNetwork && len(urls) > 0 {
+		q := make([]string, len(urls))
+		for i, u := range urls {
+			b, _ := json.Marshal(u)
+			q[i] = string(b)
+		}
+		lna = "  \"LocalNetworkAccessAllowedForUrls\": [" + strings.Join(q, ", ") + "],\n"
+	}
 	return []byte("{\n" +
 		"  \"URLBlocklist\": [\"*\"],\n" +
 		"  \"URLAllowlist\": [" + strings.Join(quoted, ", ") + "],\n" +
+		lna +
 		"  \"PasswordManagerEnabled\": false,\n" +
 		"  \"DownloadRestrictions\": 3,\n" +
 		"  \"BrowserSignin\": 0,\n" +
@@ -118,7 +150,7 @@ func (s *Server) setWebOrigins(_ context.Context, arg string) error {
 	if err := writeStateFile(state, append(b, '\n')); err != nil {
 		return fmt.Errorf("Web-Ursprünge nicht speicherbar: %v", err)
 	}
-	if err := writeAtomic(policy, ChromiumPolicy(origins), 0o644); err != nil {
+	if err := writeAtomic(policy, ChromiumPolicy(origins, s.LocalNetworkAccess), 0o644); err != nil {
 		return fmt.Errorf("Chromium-Richtlinie nicht schreibbar: %v", err)
 	}
 	return nil
@@ -128,11 +160,12 @@ func (s *Server) setWebOrigins(_ context.Context, arg string) error {
 // (hmi-kiosk-helper web-policy, vor dem Kiosk-Dienst). Ohne Liste bleibt die Richtlinie
 // aus dem Paket. Eine ungültige Liste ergibt die Richtlinie nur mit den festen Einträgen.
 func (s *Server) ApplyWebPolicy() error {
-	return ApplyWebPolicy(s.policyPaths())
+	policy, state := s.policyPaths()
+	return ApplyWebPolicy(policy, state, s.LocalNetworkAccess)
 }
 
 // ApplyWebPolicy ist der Startschritt mit festen Pfaden (ohne Server).
-func ApplyWebPolicy(policy, state string) error {
+func ApplyWebPolicy(policy, state string, localNetwork bool) error {
 	raw, err := readStateFile(state, maxWebOriginsState)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -141,7 +174,7 @@ func ApplyWebPolicy(policy, state string) error {
 	if err == nil {
 		origins, err = parseWebOrigins(raw)
 	}
-	if werr := writeAtomic(policy, ChromiumPolicy(origins), 0o644); werr != nil {
+	if werr := writeAtomic(policy, ChromiumPolicy(origins, localNetwork), 0o644); werr != nil {
 		return fmt.Errorf("Chromium-Richtlinie nicht schreibbar: %v", werr)
 	}
 	if err != nil {

@@ -442,7 +442,9 @@ Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Ze
 
 ### Kartenleser
 
-Das PDH-Terminal kann Mitarbeiterkarten lesen. Die Startseite von PDH bekommt die gelesene Kartennummer vom Gerät und meldet damit den Benutzer an (Kartensitzung in PDH: nach 2 Minuten ohne Eingabe oder mit „Abmelden“ endet sie). Das Gerät schickt die Nummer nur an die Seite, die von der eingestellten PDH-Adresse stammt.
+Das PDH-Terminal kann Mitarbeiterkarten lesen. Die Startseite von PDH bekommt die gelesene Kartennummer vom Gerät und meldet damit den Benutzer an (Kartensitzung in PDH: nach 2 Minuten ohne Eingabe oder mit „Abmelden“ endet sie). Das Gerät schickt die Nummer nur an die Seite, die von der eingestellten PDH-Adresse stammt. Eine aufliegende Karte wird einmal gemeldet (erst nach dem Wegnehmen und erneutem Auflegen wieder), damit sie die Kartensitzung nicht endlos verlängert.
+
+**Wichtig:** Der Ursprung der Seite muss genau der eingestellten PDH-Adresse entsprechen. Leitet PDH auf ein anderes Schema oder einen anderen Rechnernamen weiter (zum Beispiel `http` auf `https`), stimmt der Ursprung nicht mehr, und es kommen keine Karten an: dann die endgültige Adresse eintragen. Das Terminal trägt diesen Ursprung in der Chromium-Richtlinie `LocalNetworkAccessAllowedForUrls` ein, damit Chromium den Zugriff der PDH-Seite auf das Gerät (`127.0.0.1:8080`) ohne Rückfrage erlaubt.
 
 Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser**:
 
@@ -450,7 +452,7 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 |---|---|---|
 | **aus** (Standard) | – | Keine Karte wird gelesen. |
 | **PN532 über I²C** | NFC-Modul PN532 am I²C-Bus, Bus `/dev/i2c-1`, Adresse `0x24` | Bus und Adresse nur ändern, wenn das Modul anders angeschlossen ist. Die Adresse als Hex-Zahl eintragen (`0x24`). |
-| **USB-Leser** | Leser, der sich wie eine Tastatur meldet | Das Gerät aus der Liste wählen oder den Pfad (`/dev/input/event…`) von Hand eintragen. Das Terminal belegt das Gerät allein; die Nummer landet nie in einem Eingabefeld. Text wird gekürzt und in Großbuchstaben gewandelt, das Format gilt hier nicht. |
+| **USB-Leser** | Leser, der sich wie eine Tastatur meldet | Das Gerät aus der Liste wählen oder von Hand eintragen: Kennung `vvvv:pppp`, Namensteil oder genauer Pfad (`/dev/input/event…`). Meldet sich ein Leser mit mehreren Eingabeknoten (gleiche Kennung oder gleicher Namensteil), übernimmt das Terminal alle allein; ein von Hand geändertes Feld hat Vorrang vor der Liste. Das Terminal belegt die Geräte allein; die Nummer landet nie in einem Eingabefeld. Text wird gekürzt und in Großbuchstaben gewandelt, das Format gilt hier nicht. |
 
 **Anschluss des PN532** (Raspberry Pi, 3,3 V):
 
@@ -463,7 +465,7 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 
 - **Nur 3,3 V** anschließen, nicht die 5 V des Pi.
 - Am Modul den **Modus I²C** mit den Schaltern einstellen: SEL0 an (1), SEL1 aus (0), Beispiel Elechouse V3 und Nachbauten. HSU: beide aus; SPI: SEL0 aus, SEL1 an. Im Zweifel gilt die Beschriftung der Platine bzw. die Tabelle des Herstellers.
-- Das Abbild schaltet den I²C-Bus ein (`dtparam=i2c_arm=on`), lädt `i2c-dev` und nimmt den Dienstbenutzer in die Gruppe `i2c` auf. `install.sh` nimmt den Dienstbenutzer nur dann in die Gruppe `i2c` auf, wenn es sie schon gibt (das Raspberry-Pi-OS-Abbild hat sie); auf anderen Systemen vorher `groupadd -r i2c` ausführen. Bei `install.sh` auf einem vorhandenen System müssen außerdem `dtparam=i2c_arm=on` und `i2c-dev` selbst eingerichtet sein.
+- Das Abbild schaltet den I²C-Bus ein (`dtparam=i2c_arm=on`), lädt `i2c-dev` und nimmt den Dienstbenutzer in die Gruppe `i2c` auf. Das gilt nur für das Produkt PDH-Terminal: `install.sh` legt die Gruppe `i2c` bei Bedarf an und nimmt den Dienstbenutzer nur bei diesem Produkt auf, das HMI-Kiosk-Abbild und sein `install.sh` kennen sie nicht. Bei `install.sh` auf einem vorhandenen System müssen außerdem `dtparam=i2c_arm=on` und `i2c-dev` selbst eingerichtet sein.
 
 **Format der Nummer** (nur PN532): PDH vergleicht die Nummer als Text mit dem Eintrag beim Benutzer. Das Format muss zu den Einträgen in PDH passen.
 
@@ -487,6 +489,8 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 | PN532 antwortet nicht | Falsche Adresse, Schalter SEL0/SEL1 nicht auf I²C (SEL0 an, SEL1 aus), SDA und SCL vertauscht, 3,3 V fehlen. |
 | USB-Leser fehlt in der Liste | Gerät stecken, Seite neu laden; Pfad notfalls von Hand eintragen. |
 | „Zuletzt gelesen“ zeigt eine Nummer, PDH meldet nicht an | Format passt nicht zum Eintrag in PDH, oder die Karte ist in PDH nicht eingetragen. |
+| Keine Karte kommt in PDH an, Seite „Kartenleser“ zeigt die Nummer | In `chrome://policy` prüfen (die Adresse ist am Kiosk gesperrt; ersatzweise die Datei `/etc/chromium/policies/managed/hmi-kiosk.json` ansehen), ob `LocalNetworkAccessAllowedForUrls` den Ursprung der PDH-Adresse enthält; die Richtlinie schreibt der Helfer beim Start und bei jeder Änderung der PDH-Adresse. Stimmt der Ursprung der Seite nicht mit der eingestellten Adresse überein (Weiterleitung auf anderes Schema oder anderen Rechner), stimmt auch der Eintrag nicht: endgültige Adresse eintragen. |
+| Karten kommen nach einem Fehler nicht mehr an, bis die Seite neu geladen wird | Antwortet das Gerät auf den Kartenstrom mit 403 (falscher Ursprung) oder 503 (zu viele gleichzeitige Verbindungen), gibt der Browser das Verbinden auf. Erst beim nächsten Laden der Seite oder der Rückkehr vom Bildschirmschoner versucht die Seite es wieder. |
 
 ### Bekannte Einschränkungen
 

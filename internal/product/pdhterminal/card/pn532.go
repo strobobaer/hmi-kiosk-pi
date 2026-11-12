@@ -184,6 +184,7 @@ func (p *pn532) Run(ctx context.Context, emit func(string)) error {
 	if _, err := p.exchange(ctx, cmdRFConfiguration, []byte{0x05, 0xFF, 0x01, 0x02}); err != nil {
 		return err
 	}
+	var seen presence
 	t := time.NewTicker(p.interval)
 	defer t.Stop()
 	for {
@@ -199,8 +200,39 @@ func (p *pn532) Run(ctx context.Context, emit func(string)) error {
 			}
 			return err
 		}
-		if uid != "" {
+		if seen.step(uid) {
 			emit(uid)
 		}
 	}
+}
+
+// presenceGoneAfter ist die Zahl leerer Abfragen in Folge (bei 250 ms etwa 500 ms), nach der
+// eine Karte als entfernt gilt; einzelne Aussetzer des Lesers erzeugen so keine zweite Meldung.
+const presenceGoneAfter = 2
+
+// presence merkt die zuletzt gesehene UID: Eine aufliegende Karte wird einmal gemeldet,
+// nicht bei jeder Abfrage (sonst hielte sie die Kartensitzung ewig am Leben).
+type presence struct {
+	uid   string
+	empty int
+}
+
+// step wertet eine Abfrage aus und sagt, ob die UID gemeldet werden soll
+// (keine Karte → Karte, oder eine andere UID).
+func (p *presence) step(uid string) bool {
+	if uid == "" {
+		if p.uid != "" {
+			p.empty++
+			if p.empty >= presenceGoneAfter {
+				p.uid, p.empty = "", 0
+			}
+		}
+		return false
+	}
+	p.empty = 0
+	if uid == p.uid {
+		return false
+	}
+	p.uid = uid
+	return true
 }

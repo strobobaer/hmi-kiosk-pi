@@ -31,7 +31,8 @@
       </select>
     </label>
     <label>oder USB-Gerät von Hand (vvvv:pppp oder Namensteil)
-      <input type="text" name="usbDevice" value="{{.USB}}" autocapitalize="off" spellcheck="false">
+      <input type="text" name="usbDevice" value="{{.USBFree}}" autocapitalize="off" spellcheck="false">
+      <input type="hidden" name="usbPrev" value="{{.USBFree}}">
     </label>
     <label>Schreibweise der Kartennummer (PN532)
       <select name="format">
@@ -41,7 +42,7 @@
         <option value="dec"{{if eq .Format "dec"}} selected{{end}}>dezimal</option>
       </select>
     </label>
-    <p class="hint">Das von Hand eingetragene USB-Gerät hat Vorrang vor der Auswahl. Änderungen gelten sofort.</p>
+    <p class="hint">Ein von Hand geändertes USB-Gerät hat Vorrang vor der Auswahl. Änderungen gelten sofort.</p>
     <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
   </form>
 </section>

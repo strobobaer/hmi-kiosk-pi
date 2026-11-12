@@ -14,7 +14,7 @@ var errNotLinux = errors.New("Kartenleser nur unter Linux")
 // ListInputDevices: Ohne Linux gibt es keine Eingabegeräte.
 func ListInputDevices(dir string) []InputDevice { return nil }
 
-func readExclusive(ctx context.Context, path string, fn func(platform.InputEvent)) error {
+func readExclusive(ctx context.Context, paths []string, fn func(platform.InputEvent)) error {
 	return errNotLinux
 }
 

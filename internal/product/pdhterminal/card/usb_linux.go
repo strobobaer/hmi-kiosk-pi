@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -55,10 +56,10 @@ func ioctlPtr(f *os.File, req uintptr, p unsafe.Pointer) error {
 	return nil
 }
 
-// ListInputDevices listet die Eingabegeräte dir/event* mit Name und Kennung, sortiert nach Pfad.
+// ListInputDevices listet die Eingabegeräte dir/event* mit Name und Kennung, numerisch sortiert nach Pfad.
 func ListInputDevices(dir string) []InputDevice {
 	paths, _ := filepath.Glob(filepath.Join(dir, "event*"))
-	sort.Strings(paths)
+	sort.Slice(paths, func(i, j int) bool { return eventPathLess(paths[i], paths[j]) })
 	var out []InputDevice
 	for _, p := range paths {
 		f, err := os.Open(p)
@@ -82,27 +83,53 @@ func ListInputDevices(dir string) []InputDevice {
 	return out
 }
 
-// readExclusive übernimmt path mit EVIOCGRAB und liest erst danach Ereignisse. Scheitert
-// das Greifen, wird nichts gelesen: sonst landete die UID zusätzlich im Browser.
-func readExclusive(ctx context.Context, path string, fn func(platform.InputEvent)) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
+// readExclusive übernimmt alle paths mit EVIOCGRAB und liest erst danach Ereignisse (je Knoten
+// ein Lesevorgang, fn kann gleichzeitig laufen). Scheitert das Öffnen oder Greifen eines Knotens,
+// werden alle wieder freigegeben und nichts gelesen: sonst landete die UID zusätzlich im Browser.
+func readExclusive(ctx context.Context, paths []string, fn func(platform.InputEvent)) error {
+	var files []*os.File
+	closeAll := func() {
+		for _, f := range files {
+			f.Close()
+		}
 	}
-	defer f.Close()
-	if err := ioctlVal(f, eviocgrab, 1); err != nil {
-		return fmt.Errorf("Leser kann nicht exklusiv übernommen werden: %w", err)
+	for _, p := range paths {
+		f, err := os.Open(p)
+		if err != nil {
+			closeAll()
+			return fmt.Errorf("Leser kann nicht exklusiv übernommen werden: %w", err)
+		}
+		files = append(files, f)
+		if err := ioctlVal(f, eviocgrab, 1); err != nil {
+			closeAll()
+			return fmt.Errorf("Leser kann nicht exklusiv übernommen werden: %w", err)
+		}
+	}
+	if len(files) == 0 {
+		return errors.New("Leser kann nicht exklusiv übernommen werden: kein Gerät")
 	}
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
 		select {
 		case <-ctx.Done():
-			f.Close() // weckt das blockierende Lesen
+			closeAll() // weckt das blockierende Lesen
 		case <-stop:
 		}
 	}()
-	platform.ReadInputEvents(f, fn)
+	// Endet ein Knoten (getrennt), endet der ganze Leser: die übrigen werden geschlossen.
+	var once sync.Once
+	var wg sync.WaitGroup
+	for _, f := range files {
+		wg.Add(1)
+		go func(f *os.File) {
+			defer wg.Done()
+			platform.ReadInputEvents(f, fn)
+			once.Do(closeAll)
+		}(f)
+	}
+	wg.Wait()
+	closeAll()
 	if ctx.Err() != nil {
 		return nil
 	}

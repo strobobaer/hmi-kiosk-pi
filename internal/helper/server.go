@@ -54,6 +54,8 @@ type Server struct {
 	// ChromiumPolicyPath ist die Chromium-Richtlinie, WebOriginsStatePath die dauerhafte Liste der Web-Ursprünge.
 	ChromiumPolicyPath  string
 	WebOriginsStatePath string
+	// LocalNetworkAccess nimmt die Ursprünge zusätzlich in LocalNetworkAccessAllowedForUrls auf (PDH-Terminal).
+	LocalNetworkAccess bool
 
 	// ExecOut startet ein Programm und liefert seine Ausgabe (nur blkid).
 	ExecOut ExecOut
