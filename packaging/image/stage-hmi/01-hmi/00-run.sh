@@ -58,6 +58,11 @@ install -m 644 -o root -g root "${FS}/etc/xdg/openbox/rc.xml" "${R}/etc/xdg/open
 # Navigationssperre (Spezifikation 11): Chromium lädt nur die Kachelseite (127.0.0.1:8080) und die Admin-Seite am Terminal (127.0.0.1:8081).
 install -d -m 755 "${R}/etc/chromium/policies/managed"
 install -m 644 -o root -g root "${FS}/etc/chromium/policies/managed/hmi-kiosk.json" "${R}/etc/chromium/policies/managed/hmi-kiosk.json"
+# i2c-dev für den Kartenleser (PN532): die Datei bringt nur das Overlay von pdh-terminal mit.
+if [ "${HMI_PRODUCT_ID}" = pdh-terminal ]; then
+	install -d -m 755 "${R}/etc/modules-load.d"
+	install -m 644 -o root -g root "${FS}/etc/modules-load.d/pdh-terminal-i2c.conf" "${R}/etc/modules-load.d/pdh-terminal-i2c.conf"
+fi
 install -m 644 -o root -g root "${FS}/etc/pam.d/hmi-kiosk-session" "${R}/etc/pam.d/hmi-kiosk-session"
 install -m 755 -o root -g root "${FS}/usr/local/bin/hmi-kiosk-session" "${R}/usr/local/bin/hmi-kiosk-session"
 install -m 755 -o root -g root files/firstboot.sh "${R}/usr/local/sbin/hmi-kiosk-firstboot"
