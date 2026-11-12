@@ -85,6 +85,15 @@ wird mit 403 abgelehnt. Die Kartennummer wird wie bei Karten verglichen (ohne Gr
 Rand-Leerzeichen entfernt). Die Passwortprüfung ist die normale PDH-Anmeldung samt ihrer Sperren. Erfolg
 legt eine Kartensitzung an wie `/terminal/card`.
 
+**Ereignisse von PDH an die Terminalseite** (Nutzerentscheidung: Änderungen stößt der Server an).
+Neuer Kanal `GET /terminal/events` (EventSource, nur Gerätesitzungen, über die vorhandene
+`StreamsMiddleware`). K1 sendet darauf `settings`, sobald sich die Terminal-Einstellungen des
+Systembenutzers ändern (Anmeldeart, Knopf, Rückkehrzeit); die Seite übernimmt sie ohne Neuladen. Der
+Kanal ist allgemein gehalten: TP7 sendet darauf `playlist`, B1 `update` (siehe
+`2026-11-12-plattformen-design.md`). Bricht er ab, verbindet die Seite neu und lädt beim Wiederverbinden
+die aktuellen Einstellungen (keine verpassten Änderungen). Wird ein Gerät gesperrt, beendet PDH den
+Kanal sofort.
+
 ## Fehlerfälle
 
 | Fall | Am Terminal |
@@ -110,6 +119,8 @@ legt eine Kartensitzung an wie `/terminal/card`.
   Rücksetzen nach Erfolg, Sperre über alle Terminals, Bremse je Terminal über alle Wege, Ablehnung aus
   Nicht-Gerätesitzungen, Systembenutzer abgelehnt, Kartennummer ohne Groß-/Kleinschreibung,
   PIN-Regeln (Länge, triviale PINs).
+- PDH: `/terminal/events` nur für Gerätesitzungen; Ereignis `settings` nach Speichern der
+  Terminal-Einstellungen; Kanal endet beim Sperren des Geräts.
 - Gerät: Go-Tests für `reader` beim Verbinden und bei Zustandswechseln.
 - Terminalseite: Anzeige je Leserstatus und Einstellung, Rückfall auf `ok` nach 3 s.
 - Gerätetest: Prüfliste um Teil „Anmeldung ohne Leser“ (Leser abziehen → Eingabe erscheint; Knopf
