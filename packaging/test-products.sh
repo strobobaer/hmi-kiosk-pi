@@ -92,6 +92,8 @@ check "00-run.sh legt i2c nur für pdh-terminal an" bash -c "grep -B3 'groupadd 
 check "00-run.sh nimmt hmikiosk nur bei pdh-terminal in i2c auf" bash -c "grep -Fq 'HMI_GROUPS=input,video,render,i2c' packaging/image/stage-hmi/01-hmi/00-run.sh && grep -Fq 'HMI_GROUPS=input,video,render' packaging/image/stage-hmi/01-hmi/00-run.sh && ! grep -Eq 'G input,video,render,i2c|G \$\{HMI_GROUPS\},' packaging/image/stage-hmi/01-hmi/00-run.sh"
 check "00-run.sh setzt i2c_arm nur für pdh-terminal" bash -c "grep -B3 'dtparam=i2c_arm=on' packaging/image/stage-hmi/01-hmi/00-run.sh | grep -Fq 'HMI_PRODUCT_ID'"
 check "install.sh nimmt i2c nur für pdh-terminal in die Gruppen auf" bash -c "grep -B2 'groupadd -r i2c' packaging/install.sh | grep -Fq B_PRODUCT"
+check "00-run.sh beginnt mit dem Shebang" bash -c "[ \"\$(head -n 1 packaging/image/stage-hmi/01-hmi/00-run.sh)\" = '#!/bin/bash -e' ]"
+check "00-run.sh liest build.env vor dem ersten on_chroot" bash -c "r=packaging/image/stage-hmi/01-hmi/00-run.sh; b=\$(grep -n '^\. files/build.env' \$r | head -n 1 | cut -d: -f1); o=\$(grep -n '^on_chroot' \$r | head -n 1 | cut -d: -f1); [ -n \"\$b\" ] && [ -n \"\$o\" ] && [ \"\$b\" -lt \"\$o\" ]"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 i2c_case() { # i2c_case PRODUKT CONFIG-TEXT GRUPPE(ja/nein) MODULDATEI(ja/nein): gibt die Meldungen der Prüfung aus

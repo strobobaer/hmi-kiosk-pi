@@ -1,12 +1,3 @@
-# i2c (Zugriff auf /dev/i2c-1 für den Kartenleser PN532) gibt es nur im Produkt pdh-terminal.
-HMI_GROUPS=input,video,render
-HMI_I2C_GROUP=""
-if [ "${HMI_PRODUCT_ID}" = pdh-terminal ]; then
-	HMI_GROUPS=input,video,render,i2c
-	HMI_I2C_GROUP="getent group i2c >/dev/null || groupadd -r i2c"
-fi
-on_chroot <<EOF
-${HMI_I2C_GROUP}
 #!/bin/bash -e
 # Kiosk-Stufe: Benutzer, Programme, Dienste und Systemeinstellungen.
 # files/ füllt packaging/build-image.sh (rootfs/, bin/, firstboot.sh, build.env).
