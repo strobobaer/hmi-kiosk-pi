@@ -46,8 +46,11 @@ func decodeInputEvent(buf []byte) rawEvent {
 	}
 }
 
-// readInputEvents ruft fn für jedes Ereignis, bis r endet oder fehlschlägt.
-func readInputEvents(r io.Reader, fn func(rawEvent)) {
+// InputEvent ist ein dekodiertes struct input_event (Type, Code, Value).
+type InputEvent = rawEvent
+
+// ReadInputEvents ruft fn für jedes Ereignis, bis r endet oder fehlschlägt.
+func ReadInputEvents(r io.Reader, fn func(InputEvent)) {
 	buf := make([]byte, inputEventSize)
 	for {
 		if _, err := io.ReadFull(r, buf); err != nil {

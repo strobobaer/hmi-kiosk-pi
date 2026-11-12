@@ -61,7 +61,7 @@ func WatchTouch(ctx context.Context, devDir string, activity func()) error {
 }
 
 func readEvents(r io.Reader, activity func()) {
-	readInputEvents(r, func(ev rawEvent) {
+	ReadInputEvents(r, func(ev rawEvent) {
 		if ev.Type == evKey || ev.Type == evAbs {
 			activity()
 		}

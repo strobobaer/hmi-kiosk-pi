@@ -133,5 +133,5 @@ func watchCornerDevice(ctx context.Context, r *os.File, det *cornerDetector, hit
 			}
 		}
 	}()
-	readInputEvents(r, feed)
+	ReadInputEvents(r, feed)
 }
