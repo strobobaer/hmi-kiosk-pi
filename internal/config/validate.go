@@ -45,7 +45,7 @@ func validMode(m Mode) bool { return m == ModeTakeover || m == ModeLock }
 
 // Validate checks a configuration for values that would be unsafe or
 // unusable downstream (shell/ini injection, duplicate IDs, dangling refs).
-// Sie ist ValidateCore + ValidateHMI + ValidatePDH; ein Produkt ruft nur seine Teile.
+// Sie ist ValidateCore + ValidateHMI + ValidatePDH + ValidateCard; ein Produkt ruft nur seine Teile.
 func Validate(c Config) error {
 	if err := ValidateCore(c); err != nil {
 		return err
@@ -53,7 +53,10 @@ func Validate(c Config) error {
 	if err := ValidateHMI(c); err != nil {
 		return err
 	}
-	return ValidatePDH(c.PDH)
+	if err := ValidatePDH(c.PDH); err != nil {
+		return err
+	}
+	return ValidateCard(c.Card)
 }
 
 // ValidateCore prüft, was beide Produkte teilen: Schema, Terminal, Netzwerk, Anzeige, Update.

@@ -1,0 +1,88 @@
+package pdhterminal
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"hmikiosk/internal/config"
+	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/web"
+)
+
+// inputDir ist der Ordner der Eingabegeräte, aus dem die USB-Leser zur Auswahl stammen.
+const inputDir = "/dev/input"
+
+// cardSettings übersetzt die Konfiguration in die Einstellungen des Kartendienstes.
+func cardSettings(c config.CardCfg) card.Settings {
+	bus, addr := c.Settings()
+	return card.Settings{Type: c.Type, I2CBus: bus, I2CAddr: addr, USBDevice: c.USBDevice, Format: c.Format}
+}
+
+// cardView ist, was die Seite Kartenleser anzeigt.
+type cardView struct {
+	Type, Bus, Addr, USB, Format string
+	Devices                      []card.InputDevice
+	Active                       bool
+	Detail                       string
+	Last                         string // fertiger Satz zur letzten Karte
+	Notice                       string
+}
+
+func (p *adminProduct) renderCard(f web.AdminFrame, w http.ResponseWriter, status int, errMsg, notice string, form *config.CardCfg) {
+	cfg, err := f.Load()
+	if err != nil {
+		f.Render(w, http.StatusInternalServerError, "card", "card", "Kartenleser", err.Error(), cardView{})
+		return
+	}
+	shown := cfg.Card
+	if form != nil {
+		shown = *form
+	}
+	bus, addr := shown.Settings()
+	st := p.cards.Status()
+	v := cardView{
+		Type: shown.Type, Bus: bus, Addr: fmt.Sprintf("%#x", addr), USB: shown.USBDevice, Format: shown.Format,
+		Devices: card.ListInputDevices(inputDir), Active: st.Active, Detail: st.Detail, Notice: notice,
+		Last: "Noch keine Karte gelesen",
+	}
+	if e, ok := p.cards.Hub().Last(); ok {
+		n := int(time.Since(e.At).Seconds())
+		if n < 0 {
+			n = 0
+		}
+		v.Last = fmt.Sprintf("Zuletzt gelesen: %s (vor %d s)", e.UID, n)
+	}
+	f.Render(w, status, "card", "card", "Kartenleser", errMsg, v)
+}
+
+func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		p.renderCard(f, w, http.StatusBadRequest, "Formular unlesbar", "", nil)
+		return
+	}
+	in := config.CardCfg{
+		Type:      strings.TrimSpace(r.PostFormValue("type")),
+		I2CBus:    strings.TrimSpace(r.PostFormValue("i2cBus")),
+		Format:    strings.TrimSpace(r.PostFormValue("format")),
+		USBDevice: strings.TrimSpace(r.PostFormValue("usbDevice")),
+	}
+	if in.USBDevice == "" {
+		in.USBDevice = strings.TrimSpace(r.PostFormValue("usbSelect"))
+	}
+	if s := strings.TrimSpace(r.PostFormValue("i2cAddr")); s != "" {
+		n, err := strconv.ParseInt(s, 0, 0)
+		if err != nil {
+			p.renderCard(f, w, http.StatusBadRequest, fmt.Sprintf("Adresse ungültig: %q (erwartet z. B. 0x24)", s), "", &in)
+			return
+		}
+		in.I2CAddr = int(n)
+	}
+	if err := f.Update(func(c *config.Config) error { c.Card = in; return nil }); err != nil {
+		p.renderCard(f, w, http.StatusBadRequest, err.Error(), "", &in)
+		return
+	}
+	p.renderCard(f, w, http.StatusOK, "", "Einstellungen gespeichert.", nil)
+}

@@ -93,7 +93,7 @@ type service struct {
 	updates  *updatecheck.Service
 	presence appcore.AdminPresence
 	client   Client
-	cards    *card.Hub                          // Kartenereignisse (SSE auf der Startseite)
+	cards    *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
 	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
 	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
 	certSrc  atomic.Pointer[web.CertSource]
@@ -125,7 +125,8 @@ func newService(o Options) (*service, error) {
 	o.AdminAddr = orDefault(o.AdminAddr, DefaultAdminAddr)
 	o.LocalAdminAddr = orDefault(o.LocalAdminAddr, DefaultLocalAdminAddr)
 	o.HelperSocket = orDefault(o.HelperSocket, DefaultHelperSocket)
-	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket), cards: card.NewHub(time.Now)}
+	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket)}
+	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
 
 	journal, err := appcore.NewJournal(filepath.Join(o.DataDir, logDirName))
 	s.journal = journal
@@ -188,6 +189,7 @@ func (s *service) apply(c config.Config) {
 	s.cfg, s.cfgWarn = c, "" // Der Aufrufer hat gespeichert, config.json ist also wieder gültig.
 	s.mu.Unlock()
 	s.origins.Set(config.PDHOrigins(c.PDH))
+	s.cards.Apply(cardSettings(c.Card))
 }
 
 // cleanupStartup räumt auf, was ein abgestürzter Vorgänger hinterlassen hat. Die alte
@@ -287,6 +289,8 @@ func (s *service) serve(parent context.Context) error {
 			f()
 		}()
 	}
+	// Der Kartenleser läuft unabhängig von Chromium; apply folgt späteren Änderungen.
+	s.cards.Apply(cardSettings(s.config().Card))
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 
@@ -298,7 +302,7 @@ func (s *service) serve(parent context.Context) error {
 	}
 	bound := Bound{Local: l.Addr().String()}
 	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client,
-		card.EventsHandler(s.cards, func() string { return cardOrigin(s.config().PDH) })))
+		card.EventsHandler(s.cards.Hub(), func() string { return cardOrigin(s.config().PDH) })))
 	localErr := make(chan error, 1)
 	background(func() {
 		if err := local.Serve(l); !errors.Is(err, http.ErrServerClosed) {
@@ -338,6 +342,7 @@ func (s *service) serve(parent context.Context) error {
 }
 
 func (s *service) close() {
+	s.cards.Close()
 	if log.Writer() == s.journal {
 		log.SetOutput(os.Stderr)
 	}
@@ -560,7 +565,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
 		LocalActive:          s.presence.Touch,
 		LocalLeft:            s.localLeft,
-		Product:              Admin(s.o.DataDir, s.client),
+		Product:              Admin(s.o.DataDir, s.client, s.cards),
 	}
 }
 

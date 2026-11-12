@@ -129,6 +129,8 @@ type Config struct {
 	// PDH fehlt in der Datei, solange nichts eingetragen ist (omitzero, Go 1.24): alte
 	// Konfigurationen bleiben Byte für Byte gleich.
 	PDH PDHCfg `json:"pdh,omitzero"`
+	// Card ist der Kartenleser des PDH-Terminals; fehlt ebenfalls, solange nichts eingestellt ist.
+	Card CardCfg `json:"card,omitzero"`
 }
 
 const SchemaVersion = 1

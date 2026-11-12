@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/web"
 )
 
@@ -34,11 +35,12 @@ type pdhView struct {
 type adminProduct struct {
 	dataDir string
 	client  Client
+	cards   *card.Service
 }
 
 // Admin beschreibt das PDH-Terminal für den Admin-Rahmen.
-func Admin(dataDir string, client Client) *web.AdminProduct {
-	p := &adminProduct{dataDir: dataDir, client: client}
+func Admin(dataDir string, client Client, cards *card.Service) *web.AdminProduct {
+	p := &adminProduct{dataDir: dataDir, client: client, cards: cards}
 	return &web.AdminProduct{
 		ID: "pdh-terminal", Name: "PDH-Terminal", Home: "/admin/pdh", HMI: false, IdleSeconds: 120,
 		Nav: []web.NavItem{
@@ -56,8 +58,9 @@ func Admin(dataDir string, client Client) *web.AdminProduct {
 			{Method: http.MethodPost, Path: "/admin/pdh/pair", Handle: p.pair},
 			{Method: http.MethodPost, Path: "/admin/pdh/unpair", Handle: p.unpair},
 			{Method: http.MethodGet, Path: "/admin/card", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
-				f.Render(w, http.StatusOK, "card", "card", "Kartenleser", "", nil)
+				p.renderCard(f, w, http.StatusOK, "", "", nil)
 			}},
+			{Method: http.MethodPost, Path: "/admin/card/settings", Handle: p.cardSave},
 		},
 	}
 }

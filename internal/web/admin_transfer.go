@@ -121,6 +121,7 @@ func (a *admin) merge(ex exportFile, cur config.Config) (config.Config, error) {
 	next.Kiosk.NetworkTiles = cur.Kiosk.NetworkTiles
 	// Die Anbindung an PDH gehört zu diesem Gerät.
 	next.PDH = cur.PDH
+	next.Card = cur.Card // der Leser hängt an diesem Gerät
 	// Ein älterer Export ohne Update-Abschnitt brächte nur die Standardwerte mit und schaltete
 	// eine bewusst abgeschaltete Prüfung wieder ein.
 	if !ex.hasUpdate {

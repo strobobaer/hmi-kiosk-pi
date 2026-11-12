@@ -1,6 +1,49 @@
 {{define "content"}}
+{{with .Body}}
 <section class="panel stack">
   <h2>Kartenleser</h2>
-  <p>Kartenleser folgt in einer späteren Version.</p>
+  {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
+  <p>Zustand: <span class="msg {{if .Active}}ok{{else}}warn{{end}}">{{.Detail}}</span></p>
+  <p>{{.Last}}</p>
 </section>
+
+<section class="panel stack">
+  <h2>Einstellungen</h2>
+  <form method="post" action="/admin/card/settings" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Leser
+      <select name="type">
+        <option value=""{{if eq .Type ""}} selected{{end}}>Aus</option>
+        <option value="pn532-i2c"{{if eq .Type "pn532-i2c"}} selected{{end}}>PN532 (I²C)</option>
+        <option value="usb"{{if eq .Type "usb"}} selected{{end}}>USB-Leser</option>
+      </select>
+    </label>
+    <label>I²C-Bus (PN532)
+      <input type="text" name="i2cBus" value="{{.Bus}}" autocapitalize="off" spellcheck="false" placeholder="/dev/i2c-1">
+    </label>
+    <label>I²C-Adresse (PN532, hexadezimal)
+      <input type="text" name="i2cAddr" value="{{.Addr}}" autocapitalize="off" spellcheck="false" placeholder="0x24">
+    </label>
+    <label>USB-Gerät
+      <select name="usbSelect">
+        <option value="">– nicht gewählt –</option>
+        {{range $.Body.Devices}}<option value="{{.ID}}"{{if eq .ID $.Body.USB}} selected{{end}}>{{.Name}} ({{.ID}})</option>{{end}}
+      </select>
+    </label>
+    <label>oder USB-Gerät von Hand (vvvv:pppp oder Namensteil)
+      <input type="text" name="usbDevice" value="{{.USB}}" autocapitalize="off" spellcheck="false">
+    </label>
+    <label>Schreibweise der Kartennummer (PN532)
+      <select name="format">
+        <option value=""{{if eq .Format ""}} selected{{end}}>Standard (hex)</option>
+        <option value="hex"{{if eq .Format "hex"}} selected{{end}}>hex</option>
+        <option value="hex-rev"{{if eq .Format "hex-rev"}} selected{{end}}>hex, Bytes umgekehrt</option>
+        <option value="dec"{{if eq .Format "dec"}} selected{{end}}>dezimal</option>
+      </select>
+    </label>
+    <p class="hint">Das von Hand eingetragene USB-Gerät hat Vorrang vor der Auswahl. Änderungen gelten sofort.</p>
+    <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+  </form>
+</section>
+{{end}}
 {{end}}
