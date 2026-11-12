@@ -483,6 +483,8 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 
 **Zustand und Selbstprüfung:** Die Seite zeigt den Zustand des Lesers (zum Beispiel „bereit“ oder die Fehlermeldung beim Öffnen des Geräts). Die Selbstprüfung des Terminals hat einen Schritt **kartenleser**; bei Typ „aus“ besteht er mit „kein Kartenleser eingestellt“, sonst prüft er, ob der Leser antwortet (Zeitgrenze 5 Sekunden).
 
+**Leserstatus im Kartenstrom:** Der Strom des Geräts (`/api/card/events`) meldet zusätzlich zum Ereignis `card` das Ereignis `reader` mit `{"state":"ok"|"none"|"error"}`: sofort nach dem Verbinden und bei jedem Wechsel. `none` heißt Typ „aus“, `error` heißt Leser eingestellt, aber nicht verfügbar; beim Start gilt `ok`, damit die Eingabe nicht aufblitzt. Ohne Leser (`none`/`error`) zeigt die PDH-Seite die in PDH eingestellte Anmeldeart (Eingabe von Kartennummer/PIN oder Benutzer/Passwort) statt „Karte auflegen“. Ältere PDH-Seiten ignorieren das Ereignis; die Karten kommen unverändert.
+
 | Beobachtung | Mögliche Ursache |
 |---|---|
 | Zustand zeigt einen Fehler beim Öffnen von `/dev/i2c-1` | I²C-Bus aus (kein `dtparam=i2c_arm=on`), `i2c-dev` nicht geladen oder Dienstbenutzer nicht in der Gruppe `i2c`. |

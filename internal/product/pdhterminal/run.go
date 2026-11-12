@@ -302,7 +302,7 @@ func (s *service) serve(parent context.Context) error {
 	}
 	bound := Bound{Local: l.Addr().String()}
 	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client,
-		card.EventsHandler(s.cards.Hub(), func() string { return cardOrigin(s.config().PDH) })))
+		card.EventsHandler(s.cards.Hub(), s.cards, func() string { return cardOrigin(s.config().PDH) })))
 	localErr := make(chan error, 1)
 	background(func() {
 		if err := local.Serve(l); !errors.Is(err, http.ErrServerClosed) {

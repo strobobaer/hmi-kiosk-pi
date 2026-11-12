@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 const testOrigin = "https://pdh.example"
 
 func newEventsHandler(h *Hub, origin string) http.Handler {
-	return EventsHandler(h, func() string { return origin })
+	return EventsHandler(h, &fakeState{state: StateOK}, func() string { return origin })
 }
 
 func TestEventsOriginRejected(t *testing.T) {
@@ -208,5 +209,114 @@ func TestEventsDropsStale(t *testing.T) {
 	case l := <-got:
 		t.Fatalf("veraltetes Ereignis geliefert: %q", l)
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+type fakeState struct {
+	mu    sync.Mutex
+	state string
+	subs  []chan struct{}
+}
+
+func (f *fakeState) ReaderState() string { f.mu.Lock(); defer f.mu.Unlock(); return f.state }
+func (f *fakeState) WatchState() (<-chan struct{}, func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ch := make(chan struct{}, 1)
+	f.subs = append(f.subs, ch)
+	return ch, func() {}
+}
+func (f *fakeState) set(s string, notify bool) {
+	f.mu.Lock()
+	f.state = s
+	subs := append([]chan struct{}(nil), f.subs...)
+	f.mu.Unlock()
+	if notify {
+		for _, c := range subs {
+			select {
+			case c <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func readLines(resp *http.Response) <-chan string {
+	out := make(chan string, 64)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			out <- sc.Text()
+		}
+		close(out)
+	}()
+	return out
+}
+
+// nextData liefert die nächste data-Zeile samt vorangehendem event-Namen.
+func nextEvent(t *testing.T, lines <-chan string, wait time.Duration) (string, string, bool) {
+	t.Helper()
+	var ev string
+	timeout := time.After(wait)
+	for {
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				return "", "", false
+			}
+			if strings.HasPrefix(l, "event: ") {
+				ev = strings.TrimPrefix(l, "event: ")
+			}
+			if strings.HasPrefix(l, "data: ") {
+				return ev, strings.TrimPrefix(l, "data: "), true
+			}
+		case <-timeout:
+			return "", "", false
+		}
+	}
+}
+
+func TestEventsReaderEvent(t *testing.T) {
+	hub := NewHub(time.Now)
+	st := &fakeState{state: StateNone}
+	srv := httptest.NewServer(EventsHandler(hub, st, func() string { return testOrigin }))
+	defer srv.Close()
+	resp, closeBody := openStream(t, srv.URL)
+	defer closeBody()
+	lines := readLines(resp)
+
+	// Erstes Ereignis: reader mit aktuellem Zustand.
+	ev, data, ok := nextEvent(t, lines, 3*time.Second)
+	if !ok || ev != "reader" || data != `{"state":"none"}` {
+		t.Fatalf("erstes Ereignis: %q %q %v", ev, data, ok)
+	}
+	// Signal ohne Wechsel -> kein doppeltes Ereignis.
+	st.set(StateNone, true)
+	if ev, data, ok := nextEvent(t, lines, 200*time.Millisecond); ok {
+		t.Fatalf("doppeltes Ereignis: %q %q", ev, data)
+	}
+	// Wechsel -> neues reader.
+	st.set(StateOK, true)
+	ev, data, ok = nextEvent(t, lines, 3*time.Second)
+	if !ok || ev != "reader" || data != `{"state":"ok"}` {
+		t.Fatalf("Wechsel: %q %q %v", ev, data, ok)
+	}
+	// card-Ereignisse unverändert.
+	hub.Publish("DEADBEEF")
+	ev, data, ok = nextEvent(t, lines, 3*time.Second)
+	if !ok || ev != "card" || !strings.Contains(data, `"uid":"DEADBEEF"`) {
+		t.Fatalf("card: %q %q %v", ev, data, ok)
+	}
+}
+
+func TestEventsReaderOriginUnchanged(t *testing.T) {
+	st := &fakeState{state: StateOK}
+	h := EventsHandler(NewHub(time.Now), st, func() string { return testOrigin })
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Origin", "http://evil.example")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "reader") {
+		t.Fatalf("Status %d Body %q", w.Code, w.Body.String())
 	}
 }

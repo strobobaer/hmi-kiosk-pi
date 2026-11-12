@@ -174,3 +174,80 @@ func TestOpenReaderKnownTypes(t *testing.T) {
 		t.Errorf("Alias pn532 darf nicht gelten: %v", err)
 	}
 }
+
+func signalled(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	case <-time.After(2 * time.Second):
+		return false
+	}
+}
+
+func TestServiceReaderState(t *testing.T) {
+	// aus -> none
+	s := newTestService(&opLog{}, nil)
+	defer s.Close()
+	if got := s.ReaderState(); got != StateNone {
+		t.Fatalf("vor Apply: %q", got)
+	}
+	sig, stop := s.WatchState()
+	defer stop()
+	s.Apply(Settings{})
+	if got := s.ReaderState(); got != StateNone {
+		t.Fatalf("aus: %q", got)
+	}
+
+	// Start -> ok (kein Aufblitzen der Eingabe), Signal beim Wechsel none -> ok
+	block := make(chan struct{})
+	s.open = func(Settings) (reader, error) { <-block; return nil, errors.New("kaputt") }
+	s.Apply(Settings{Type: "usb"})
+	if !signalled(sig) {
+		t.Fatal("kein Signal beim Start")
+	}
+	if got := s.ReaderState(); got != StateOK {
+		t.Fatalf("Start: %q", got)
+	}
+	// Öffnen scheitert -> error, Signal
+	close(block)
+	if !signalled(sig) {
+		t.Fatal("kein Signal beim Fehler")
+	}
+	if got := s.ReaderState(); got != StateError {
+		t.Fatalf("Fehler: %q", got)
+	}
+
+	// Wieder aus -> none, Signal (Apply schreibt direkt)
+	s.Apply(Settings{})
+	if !signalled(sig) {
+		t.Fatal("kein Signal bei aus")
+	}
+	if got := s.ReaderState(); got != StateNone {
+		t.Fatalf("aus: %q", got)
+	}
+}
+
+func TestServiceReaderStateStable(t *testing.T) {
+	l := &opLog{}
+	s := newTestService(l, nil)
+	defer s.Close()
+	s.stable = 30 * time.Millisecond
+	s.Apply(Settings{Type: "usb"})
+	waitFor(t, "aktiv", func() bool { return s.Status().Active })
+	if got := s.ReaderState(); got != StateOK {
+		t.Fatalf("stabil: %q", got)
+	}
+}
+
+func TestServiceWatchStateStop(t *testing.T) {
+	s := newTestService(&opLog{}, nil)
+	defer s.Close()
+	sig, stop := s.WatchState()
+	stop()
+	s.Apply(Settings{Type: "usb"})
+	select {
+	case <-sig:
+		t.Error("Signal nach stop")
+	case <-time.After(50 * time.Millisecond):
+	}
+}

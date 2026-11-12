@@ -61,6 +61,8 @@ type Service struct {
 	done    chan struct{}
 	rd      reader // laufender Leser, sonst nil
 	status  Status
+	watch   map[int]chan struct{} // Beobachter von ReaderState
+	watchID int
 	closed  bool
 }
 
@@ -88,7 +90,7 @@ func (s *Service) setStatus(ctx context.Context, st Status) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ctx.Err() == nil {
-		s.status = st
+		s.setStatusLocked(st)
 	}
 }
 
@@ -108,14 +110,14 @@ func (s *Service) Apply(st Settings) {
 	s.mu.Lock()
 	s.cur, s.started = st, true
 	if st.off() {
-		s.status = Status{Detail: "aus"}
+		s.setStatusLocked(Status{Detail: "aus"})
 		s.mu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.done = cancel, done
-	s.status = Status{Detail: "Leser startet"}
+	s.setStatusLocked(Status{Detail: "Leser startet"})
 	s.mu.Unlock()
 	go s.loop(ctx, st, done)
 }
@@ -234,4 +236,64 @@ func openReader(st Settings) (reader, error) {
 		return &usbReader{devs: devs}, nil
 	}
 	return nil, fmt.Errorf("unbekannter Lesertyp %q", st.Type)
+}
+
+// Leserzustände für den Kartenstrom (Ereignis reader).
+const (
+	StateOK    = "ok"    // Leser läuft (oder startet gerade)
+	StateNone  = "none"  // kein Leser eingestellt
+	StateError = "error" // Leser eingestellt, aber nicht verfügbar
+)
+
+func stateOf(st Status) string {
+	switch {
+	case st.Active, st.Detail == "Leser startet":
+		return StateOK
+	case st.Detail == "aus":
+		return StateNone
+	}
+	return StateError
+}
+
+// ReaderState liefert den Zustand für die PDH-Seite: Typ aus -> none; aktiv oder startend
+// -> ok (damit die Eingabe beim Start nicht aufblitzt); sonst error.
+func (s *Service) ReaderState() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return stateOf(s.status)
+}
+
+// WatchState liefert einen Kanal (Puffer 1), der bei jeder Änderung von ReaderState ein
+// Signal bekommt, und eine Funktion zum Abmelden.
+func (s *Service) WatchState() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	s.mu.Lock()
+	if s.watch == nil {
+		s.watch = map[int]chan struct{}{}
+	}
+	id := s.watchID
+	s.watchID++
+	s.watch[id] = ch
+	s.mu.Unlock()
+	return ch, func() {
+		s.mu.Lock()
+		delete(s.watch, id)
+		s.mu.Unlock()
+	}
+}
+
+// setStatusLocked ist die einzige Stelle, die s.status schreibt (s.mu gehalten). Ändert
+// sich dabei ReaderState, werden die Beobachter benachrichtigt.
+func (s *Service) setStatusLocked(st Status) {
+	before := stateOf(s.status)
+	s.status = st
+	if stateOf(st) == before {
+		return
+	}
+	for _, ch := range s.watch {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 }

@@ -9,10 +9,17 @@ import (
 // pingInterval ist der Abstand der Keep-alive-Kommentare im Strom (Tests kürzen ihn).
 var pingInterval = 25 * time.Second
 
-// EventsHandler liefert Kartenereignisse als Server-Sent Events. origin liefert den
+// StateSource liefert den Leserzustand und meldet Änderungen.
+type StateSource interface {
+	ReaderState() string
+	WatchState() (<-chan struct{}, func())
+}
+
+// EventsHandler liefert Kartenereignisse (event: card) und den Leserzustand (event: reader)
+// als Server-Sent Events; ältere PDH-Seiten ignorieren reader. origin liefert den
 // einzigen erlaubten Anfrage-Ursprung (scheme://host[:port], klein, ohne Pfad); ist er
 // leer oder weicht der Origin-Header ab, antwortet der Handler mit 403 ohne CORS-Kopfzeilen.
-func EventsHandler(h *Hub, origin func() string) http.Handler {
+func EventsHandler(h *Hub, st StateSource, origin func() string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed := origin()
 		if got := r.Header.Get("Origin"); allowed == "" || got != allowed {
@@ -32,7 +39,7 @@ func EventsHandler(h *Hub, origin func() string) http.Handler {
 			}
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodGet:
-			serveEvents(w, r, h)
+			serveEvents(w, r, h, st)
 		default:
 			hd.Set("Allow", "GET, OPTIONS")
 			http.Error(w, "Methode nicht erlaubt", http.StatusMethodNotAllowed)
@@ -40,7 +47,7 @@ func EventsHandler(h *Hub, origin func() string) http.Handler {
 	})
 }
 
-func serveEvents(w http.ResponseWriter, r *http.Request, h *Hub) {
+func serveEvents(w http.ResponseWriter, r *http.Request, h *Hub, st StateSource) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming nicht unterstützt", http.StatusInternalServerError)
@@ -63,6 +70,36 @@ func serveEvents(w http.ResponseWriter, r *http.Request, h *Hub) {
 	w.WriteHeader(http.StatusOK)
 	fl.Flush()
 
+	// Zustand sofort melden und bei Wechsel erneut; nie doppelt.
+	var stateCh <-chan struct{}
+	last := ""
+	sendState := func() bool {
+		cur := st.ReaderState()
+		if cur == last {
+			return true
+		}
+		data, err := json.Marshal(struct {
+			State string `json:"state"`
+		}{cur})
+		if err != nil {
+			return true
+		}
+		if _, err := w.Write([]byte("event: reader\ndata: " + string(data) + "\n\n")); err != nil {
+			return false
+		}
+		last = cur
+		fl.Flush()
+		return true
+	}
+	if st != nil {
+		var stop func()
+		stateCh, stop = st.WatchState()
+		defer stop()
+		if !sendState() {
+			return
+		}
+	}
+
 	tick := time.NewTicker(pingInterval)
 	defer tick.Stop()
 	for {
@@ -81,6 +118,10 @@ func serveEvents(w http.ResponseWriter, r *http.Request, h *Hub) {
 				return
 			}
 			fl.Flush()
+		case <-stateCh:
+			if !sendState() {
+				return
+			}
 		case <-tick.C:
 			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
 				return
