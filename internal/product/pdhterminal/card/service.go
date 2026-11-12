@@ -30,6 +30,7 @@ func (s Settings) off() bool { return s.Type == "" || s.Type == "aus" }
 type Status struct {
 	Active bool
 	Detail string
+	State  string // StateOK | StateNone | StateError (explizit geführt, unabhängig vom Anzeigetext)
 }
 
 // reader liest Karten bis ctx endet (nil) oder ein Fehler auftritt.
@@ -72,7 +73,7 @@ func NewService(hub *Hub, logf func(string, ...any)) *Service {
 		logf = func(string, ...any) {}
 	}
 	return &Service{hub: hub, logf: logf, open: openReader, retry: defaultRetry, stable: defaultStable,
-		status: Status{Detail: "aus"}}
+		status: Status{Detail: "aus", State: StateNone}}
 }
 
 // Hub liefert den Ereignisverteiler.
@@ -110,14 +111,14 @@ func (s *Service) Apply(st Settings) {
 	s.mu.Lock()
 	s.cur, s.started = st, true
 	if st.off() {
-		s.setStatusLocked(Status{Detail: "aus"})
+		s.setStatusLocked(Status{Detail: "aus", State: StateNone})
 		s.mu.Unlock()
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	s.cancel, s.done = cancel, done
-	s.setStatusLocked(Status{Detail: "Leser startet"})
+	s.setStatusLocked(Status{Detail: "Leser startet", State: StateOK})
 	s.mu.Unlock()
 	go s.loop(ctx, st, done)
 }
@@ -155,7 +156,7 @@ func (s *Service) loop(ctx context.Context, st Settings, done chan struct{}) {
 			err = errors.New("Leser beendet")
 		}
 		s.logf("kartenleser: %v", err)
-		s.setStatus(ctx, Status{Detail: err.Error()})
+		s.setStatus(ctx, Status{Detail: err.Error(), State: StateError})
 		select {
 		case <-ctx.Done():
 			return
@@ -181,7 +182,7 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 	// Als aktiv gilt der Leser erst, wenn er stable lang ohne Fehler läuft; sonst würde
 	// ein sofort scheiternder Leser (z. B. Grab) zwischen "bereit" und Fehler flackern.
 	t := time.AfterFunc(s.stable, func() {
-		s.setStatus(ctx, Status{Active: true, Detail: readyText(st, r)})
+		s.setStatus(ctx, Status{Active: true, Detail: readyText(st, r), State: StateOK})
 	})
 	defer t.Stop()
 	return r.Run(ctx, s.hub.Publish)
@@ -246,13 +247,10 @@ const (
 )
 
 func stateOf(st Status) string {
-	switch {
-	case st.Active, st.Detail == "Leser startet":
-		return StateOK
-	case st.Detail == "aus":
-		return StateNone
+	if st.State == "" {
+		return StateError
 	}
-	return StateError
+	return st.State
 }
 
 // ReaderState liefert den Zustand für die PDH-Seite: Typ aus -> none; aktiv oder startend

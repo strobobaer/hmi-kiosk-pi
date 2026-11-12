@@ -213,10 +213,13 @@ func TestEventsDropsStale(t *testing.T) {
 }
 
 type fakeState struct {
-	mu    sync.Mutex
-	state string
-	subs  []chan struct{}
+	mu      sync.Mutex
+	state   string
+	subs    []chan struct{}
+	stopped int // Zahl der Abmeldungen von WatchState
 }
+
+func (f *fakeState) stops() int { f.mu.Lock(); defer f.mu.Unlock(); return f.stopped }
 
 func (f *fakeState) ReaderState() string { f.mu.Lock(); defer f.mu.Unlock(); return f.state }
 func (f *fakeState) WatchState() (<-chan struct{}, func()) {
@@ -224,7 +227,7 @@ func (f *fakeState) WatchState() (<-chan struct{}, func()) {
 	defer f.mu.Unlock()
 	ch := make(chan struct{}, 1)
 	f.subs = append(f.subs, ch)
-	return ch, func() {}
+	return ch, func() { f.mu.Lock(); f.stopped++; f.mu.Unlock() }
 }
 func (f *fakeState) set(s string, notify bool) {
 	f.mu.Lock()
@@ -253,7 +256,7 @@ func readLines(resp *http.Response) <-chan string {
 	return out
 }
 
-// nextData liefert die nächste data-Zeile samt vorangehendem event-Namen.
+// nextEvent liefert die nächste data-Zeile samt vorangehendem event-Namen.
 func nextEvent(t *testing.T, lines <-chan string, wait time.Duration) (string, string, bool) {
 	t.Helper()
 	var ev string
@@ -318,5 +321,28 @@ func TestEventsReaderOriginUnchanged(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "reader") {
 		t.Fatalf("Status %d Body %q", w.Code, w.Body.String())
+	}
+}
+
+// Beim Ende des Stroms (Client trennt) wird WatchState abgemeldet.
+func TestEventsReaderUnsubscribeOnEnd(t *testing.T) {
+	st := &fakeState{state: StateOK}
+	srv := httptest.NewServer(EventsHandler(NewHub(time.Now), st, func() string { return testOrigin }))
+	defer srv.Close()
+	resp, closeBody := openStream(t, srv.URL)
+	lines := readLines(resp)
+	if ev, _, ok := nextEvent(t, lines, 3*time.Second); !ok || ev != "reader" {
+		t.Fatalf("erstes Ereignis: %q %v", ev, ok)
+	}
+	if n := st.stops(); n != 0 {
+		t.Fatalf("zu früh abgemeldet: %d", n)
+	}
+	closeBody()
+	deadline := time.Now().Add(3 * time.Second)
+	for st.stops() != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := st.stops(); n != 1 {
+		t.Fatalf("Abmeldungen nach Stromende: %d, erwartet 1", n)
 	}
 }
