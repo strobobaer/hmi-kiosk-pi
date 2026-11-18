@@ -9,6 +9,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/web"
 )
 
@@ -98,4 +99,11 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 		return
 	}
 	p.renderCard(f, w, http.StatusOK, "", "Einstellungen gespeichert.", nil)
+}
+
+// statusDisplaySettings übersetzt die Konfiguration in die Einstellungen des Displaydienstes.
+func statusDisplaySettings(c config.StatusDisplayCfg) oled.Settings {
+	bus, addr := c.Settings()
+	_, reason := c.Known()
+	return oled.Settings{Type: c.Type, Bus: bus, Addr: addr, Unsupported: reason}
 }

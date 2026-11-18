@@ -24,6 +24,7 @@ import (
 	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/selftest"
@@ -94,6 +95,7 @@ type service struct {
 	presence appcore.AdminPresence
 	client   Client
 	cards    *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
+	display  *oled.Service                      // OLED-Statusdisplay
 	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
 	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
 	certSrc  atomic.Pointer[web.CertSource]
@@ -127,6 +129,7 @@ func newService(o Options) (*service, error) {
 	o.HelperSocket = orDefault(o.HelperSocket, DefaultHelperSocket)
 	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket)}
 	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
+	s.display = oled.NewService(log.Printf)
 
 	journal, err := appcore.NewJournal(filepath.Join(o.DataDir, logDirName))
 	s.journal = journal
@@ -190,6 +193,7 @@ func (s *service) apply(c config.Config) {
 	s.mu.Unlock()
 	s.origins.Set(config.PDHOrigins(c.PDH))
 	s.cards.Apply(cardSettings(c.Card))
+	s.display.Apply(statusDisplaySettings(c.StatusDisplay))
 }
 
 // cleanupStartup räumt auf, was ein abgestürzter Vorgänger hinterlassen hat. Die alte
@@ -291,6 +295,7 @@ func (s *service) serve(parent context.Context) error {
 	}
 	// Der Kartenleser läuft unabhängig von Chromium; apply folgt späteren Änderungen.
 	s.cards.Apply(cardSettings(s.config().Card))
+	s.display.Apply(statusDisplaySettings(s.config().StatusDisplay))
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 
@@ -343,6 +348,7 @@ func (s *service) serve(parent context.Context) error {
 
 func (s *service) close() {
 	s.cards.Close()
+	s.display.Close()
 	if log.Writer() == s.journal {
 		log.SetOutput(os.Stderr)
 	}
