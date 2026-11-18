@@ -19,3 +19,5 @@ func readExclusive(ctx context.Context, paths []string, fn func(platform.InputEv
 }
 
 func openI2C(bus string, addr int) (i2cConn, error) { return nil, errNotLinux }
+
+func openSPI(dev string) (spiBus, error) { return nil, errNotLinux }
