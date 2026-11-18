@@ -131,6 +131,9 @@ type Config struct {
 	PDH PDHCfg `json:"pdh,omitzero"`
 	// Card ist der Kartenleser des PDH-Terminals; fehlt ebenfalls, solange nichts eingestellt ist.
 	Card CardCfg `json:"card,omitzero"`
+	// StatusDisplay ist das OLED-Statusdisplay des PDH-Terminals (nicht der HMI-Bildschirm
+	// "display"); fehlt ebenfalls, solange nichts eingestellt ist.
+	StatusDisplay StatusDisplayCfg `json:"statusDisplay,omitzero"`
 }
 
 const SchemaVersion = 1

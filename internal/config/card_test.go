@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,7 +29,6 @@ func TestValidateCard(t *testing.T) {
 		{"usb ohne Gerät", CardCfg{Type: "usb"}, "Gerät"},
 		{"usb zu lang", CardCfg{Type: "usb", USBDevice: long}, "Gerät"},
 		{"usb Steuerzeichen", CardCfg{Type: "usb", USBDevice: "a\nb"}, "Steuerzeichen"},
-		{"Typ unbekannt", CardCfg{Type: "nfc"}, "Typ"},
 		{"Format hex", CardCfg{Type: "usb", USBDevice: "x", Format: "hex"}, ""},
 		{"Format dec", CardCfg{Format: "dec"}, ""},
 		{"Format bin", CardCfg{Format: "bin"}, "Format"},
@@ -81,5 +81,108 @@ func TestConfigWithoutCardUnchanged(t *testing.T) {
 	second, _ := os.ReadFile(filepath.Join(dir, "config.json"))
 	if string(first) != string(second) {
 		t.Fatalf("Bytes geändert:\n%s\n---\n%s", first, second)
+	}
+}
+
+func TestValidateCardStrictUnknownType(t *testing.T) {
+	err := ValidateCardStrict(CardCfg{Type: "nfc"})
+	if err == nil || !strings.Contains(err.Error(), "nicht unterstützt") {
+		t.Fatalf("Fehler %v", err)
+	}
+}
+
+func TestValidateCardLenientUnknownType(t *testing.T) {
+	c := CardCfg{Type: "pn7150"}
+	if err := ValidateCard(c); err != nil {
+		t.Fatalf("locker: %v", err)
+	}
+	if err := ValidateCardStrict(c); err == nil {
+		t.Fatal("streng: Fehler erwartet")
+	}
+	ok, reason := c.Known()
+	if ok || reason != "Lesertyp „pn7150“ wird von dieser Version nicht unterstützt" {
+		t.Fatalf("Known: %v %q", ok, reason)
+	}
+	if ok, _ := (CardCfg{Type: "pn532-i2c", PN532Bus: "uart"}).Known(); !ok {
+		t.Fatal("bekannt erwartet")
+	}
+}
+
+func TestValidateCardBus(t *testing.T) {
+	for _, b := range []string{"", "spi", "uart"} {
+		if err := ValidateCardStrict(CardCfg{Type: "pn532-i2c", PN532Bus: b}); err != nil {
+			t.Fatalf("%q streng: %v", b, err)
+		}
+	}
+	c := CardCfg{Type: "pn532-i2c", PN532Bus: "i2c3"}
+	if err := ValidateCard(c); err != nil {
+		t.Fatalf("locker: %v", err)
+	}
+	if err := ValidateCardStrict(c); err == nil {
+		t.Fatal("streng: Fehler erwartet")
+	}
+	ok, reason := c.Known()
+	if ok || reason != "PN532-Anschluss „i2c3“ wird von dieser Version nicht unterstützt" {
+		t.Fatalf("Known: %v %q", ok, reason)
+	}
+}
+
+func TestValidateCardDevices(t *testing.T) {
+	good := []CardCfg{
+		{SPIDev: "/dev/spidev0.1"}, {UARTDev: "/dev/ttyAMA0"}, {UARTDev: "/dev/ttyUSB12"},
+	}
+	for _, c := range good {
+		if err := ValidateCard(c); err != nil {
+			t.Fatalf("%+v locker: %v", c, err)
+		}
+		if err := ValidateCardStrict(c); err != nil {
+			t.Fatalf("%+v streng: %v", c, err)
+		}
+	}
+	bad := []CardCfg{
+		{SPIDev: "/dev/spidev0"}, {SPIDev: "/dev/sda"}, {UARTDev: "/dev/ttyAMA0;x"}, {UARTDev: "/dev/sda"},
+	}
+	for _, c := range bad {
+		if err := ValidateCard(c); err == nil {
+			t.Fatalf("%+v locker: Fehler erwartet", c)
+		}
+		if err := ValidateCardStrict(c); err == nil {
+			t.Fatalf("%+v streng: Fehler erwartet", c)
+		}
+	}
+}
+
+func TestCardDefaults(t *testing.T) {
+	if (CardCfg{}).SPIDevice() != "/dev/spidev0.0" || (CardCfg{}).UARTDevice() != "/dev/ttyAMA0" {
+		t.Fatal("Standardwerte")
+	}
+	c := CardCfg{SPIDev: "/dev/spidev1.0", UARTDev: "/dev/ttyUSB0"}
+	if c.SPIDevice() != "/dev/spidev1.0" || c.UARTDevice() != "/dev/ttyUSB0" {
+		t.Fatal("gesetzte Werte")
+	}
+}
+
+func TestOldCardConfigRoundTrip(t *testing.T) {
+	c := Default()
+	c.Card = CardCfg{Type: "pn532-i2c", I2CBus: "/dev/i2c-1"}
+	first, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Config
+	if err := json.Unmarshal(first, &back); err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.MarshalIndent(back, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("Ausgaben unterscheiden sich:\n%s\n---\n%s", first, second)
+	}
+	for _, k := range []string{"statusDisplay", "pn532Bus", "spiDev", "uartDev"} {
+		if strings.Contains(string(first), k) {
+			t.Fatalf("Schlüssel %q in alter Konfiguration", k)
+		}
 	}
 }
