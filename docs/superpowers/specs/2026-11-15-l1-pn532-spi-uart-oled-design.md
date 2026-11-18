@@ -171,8 +171,11 @@ Kommt nach `docs/betrieb.md` und in die Geräteprüfliste.
 | PN532 SPI | SCK, MOSI, MISO, SS; SEL0 aus, SEL1 an | 23, 19, 21, 24 (CE0), dazu 3,3 V an 17, GND an 20 |
 | PN532 UART | TXD des Moduls → Pin 10 (RXD), RXD des Moduls → Pin 8 (TXD); beide Schalter aus | 3,3 V an 17, GND an 14 |
 
-Das OLED nimmt Pin 1 für 3,3 V, der PN532 Pin 17. So braucht jedes Modul eigene Kabel, aber keinen
-Y-Verteiler.
+Das OLED nimmt Pin 1 für 3,3 V, der PN532 Pin 17. So braucht die Versorgung keinen Verteiler.
+Korrektur (2026-11-18): Läuft der PN532 über I²C, teilen sich OLED und PN532 aber Pin 3 (SDA) und
+Pin 5 (SCL); dafür braucht es je einen Y-Verbinder oder ein Stück Lochraster. Bei SPI und UART hängt
+das OLED allein am I²C-Bus. Die Verdrahtung mit Bildern steht in
+`hardware/verdrahtung/pdh-terminal-verdrahtung.pdf`.
 
 ## Rückwärtskompatibilität
 
