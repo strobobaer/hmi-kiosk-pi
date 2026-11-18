@@ -3,6 +3,7 @@ package oled
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"os"
 	"strconv"
@@ -40,8 +41,11 @@ func cpuPercent(prev, cur cpuTimes) float64 {
 		return 0
 	}
 	total := float64(cur.total - prev.total)
-	idle := float64(cur.idle - prev.idle)
-	return (total - idle) / total * 100
+	var idle float64
+	if cur.idle > prev.idle { // iowait kann rückwärts laufen
+		idle = float64(cur.idle - prev.idle)
+	}
+	return clampPercent((total - idle) / total * 100)
 }
 
 // readRAM berechnet (MemTotal-MemAvailable)/MemTotal in Prozent aus /proc/meminfo.
@@ -95,4 +99,9 @@ func ipAddress() string {
 		return a.IP.String()
 	}
 	return "Offline"
+}
+
+// clampPercent begrenzt v auf 0 bis 100.
+func clampPercent(v float64) float64 {
+	return math.Min(100, math.Max(0, v))
 }

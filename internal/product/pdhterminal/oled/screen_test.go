@@ -102,3 +102,28 @@ func TestRectInclusive(t *testing.T) {
 		t.Errorf("Rect: %v", r[2:5])
 	}
 }
+
+func TestRenderClampsOver100(t *testing.T) {
+	r := rows(Render(Metrics{CPU: 150, RAM: 150, IP: "x"}))
+	ref := rows(Render(Metrics{CPU: 100, RAM: 100, IP: "x"}))
+	for y := range r {
+		if r[y] != ref[y] {
+			t.Fatalf("Zeile %d weicht von 100%%-Bild ab", y)
+		}
+	}
+	for y := 42; y <= 47; y++ {
+		if r[y][127] != '#' {
+			t.Errorf("Rahmen x=127 in Zeile %d beschädigt", y)
+		}
+	}
+	if r[44][126] != '#' || r[44][125] != '#' {
+		t.Error("Füllung endet nicht bei x=126")
+	}
+	if r[45][126] != '#' {
+		t.Error("Füllung fehlt")
+	}
+	// Rahmenrand rechts darf nur der Rahmen sein: Zeile 42 (innen oben leer) x=127 gesetzt, 126 leer
+	if r[42][126] != '.' {
+		t.Error("Füllung ragt über Zeile 43 hinaus")
+	}
+}

@@ -15,6 +15,7 @@ type Metrics struct {
 
 // Render zeichnet das Statusbild wie das raspi-Oled-Skript.
 func Render(m Metrics) *Canvas {
+	m.CPU, m.RAM = clampPercent(m.CPU), clampPercent(m.RAM)
 	c := NewCanvas()
 	c.Text(0, 0, "CPU", 1)
 	temp := "--"

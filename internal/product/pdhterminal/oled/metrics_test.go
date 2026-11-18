@@ -49,3 +49,11 @@ func TestReadTemp(t *testing.T) {
 		t.Error("fehlende Datei muss false liefern")
 	}
 }
+
+func TestCPUPercentIdleRegression(t *testing.T) {
+	prev := cpuTimes{idle: 900, total: 1000}
+	cur := cpuTimes{idle: 880, total: 1100} // iowait lief rückwärts
+	if got := cpuPercent(prev, cur); got < 0 || got > 100 {
+		t.Errorf("cpuPercent = %v, want in [0,100]", got)
+	}
+}
