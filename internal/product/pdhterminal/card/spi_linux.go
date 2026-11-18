@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"unsafe"
 )
 
@@ -73,9 +74,8 @@ func (s *spidev) Transfer(tx []byte) ([]byte, error) {
 		bitsPerWord: 8,
 	}
 	err := ioctlPtr(s.f, spiIocMessage1, unsafe.Pointer(&xfer))
-	// tx und rx müssen bis hierher am Leben bleiben (die Struktur trägt nur Zahlen).
-	_ = tx[0]
-	_ = rx[0]
+	runtime.KeepAlive(tx) // die Struktur trägt nur Zahlen; Puffer bis nach dem ioctl am Leben halten
+	runtime.KeepAlive(rx)
 	if err != nil {
 		return nil, err
 	}
