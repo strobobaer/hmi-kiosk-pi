@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"hmikiosk/internal/config"
 )
 
 func TestCoreStepsOnlyProtection(t *testing.T) {
@@ -14,7 +16,7 @@ func TestCoreStepsOnlyProtection(t *testing.T) {
 		t.Fatalf("Schritte %+v", steps)
 	}
 	hmi := HMISteps()
-	if len(hmi) != len(StepNames)-1 {
+	if len(hmi) != len(StepNames)-2 {
 		t.Fatalf("%d HMI-Schritte", len(hmi))
 	}
 	for i, s := range hmi {
@@ -96,5 +98,33 @@ func TestCardStepTimeout(t *testing.T) {
 	}})
 	if r.OK {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestStatusDisplayStep(t *testing.T) {
+	step := StatusDisplayStep()
+	if step.Name != StepStatusDisplay || StepStatusDisplay != "statusdisplay" {
+		t.Fatalf("Name %q", step.Name)
+	}
+	cfg := func() config.Config {
+		return config.Config{StatusDisplay: config.StatusDisplayCfg{Type: "sh1106", I2CBus: "/dev/i2c-3", I2CAddr: 0x3D}}
+	}
+	cases := []struct {
+		name   string
+		probe  func(context.Context) error
+		ok     bool
+		detail string
+	}{
+		{"aus", nil, true, "Statusdisplay aus"},
+		{"Fehler", func(context.Context) error { return errors.New("Gerät fehlt") }, false, "Statusdisplay antwortet nicht (/dev/i2c-3, 0x3d): Gerät fehlt"},
+		{"ok", func(context.Context) error { return nil }, true, "Statusdisplay antwortet (/dev/i2c-3, 0x3d)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := step.Run(context.Background(), Deps{Config: cfg, StatusDisplay: c.probe})
+			if r.OK != c.ok || r.Detail != c.detail {
+				t.Fatalf("%+v", r)
+			}
+		})
 	}
 }

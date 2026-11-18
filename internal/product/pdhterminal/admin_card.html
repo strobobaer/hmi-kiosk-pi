@@ -4,6 +4,7 @@
   <h2>Kartenleser</h2>
   {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
   <p>Zustand: <span class="msg {{if .Active}}ok{{else}}warn{{end}}">{{.Detail}}</span></p>
+  {{if .Unsupported}}<p class="msg warn" role="alert">{{.Unsupported}}. Der Leser bleibt aus, die gespeicherten Werte bleiben unverändert, bis hier gespeichert wird.</p>{{end}}
   <p>{{.Last}}</p>
 </section>
 
@@ -15,14 +16,23 @@
       <select name="type">
         <option value=""{{if eq .Type ""}} selected{{end}}>Aus</option>
         <option value="pn532-i2c"{{if eq .Type "pn532-i2c"}} selected{{end}}>PN532 (I²C)</option>
+        <option value="pn532-spi"{{if eq .Type "pn532-spi"}} selected{{end}}>PN532 (SPI)</option>
+        <option value="pn532-uart"{{if eq .Type "pn532-uart"}} selected{{end}}>PN532 (UART)</option>
         <option value="usb"{{if eq .Type "usb"}} selected{{end}}>USB-Leser</option>
       </select>
     </label>
+    <p class="hint">Schalter am PN532-Modul: I²C „SEL0 an, SEL1 aus“, SPI „SEL0 aus, SEL1 an“, UART „beide Schalter aus“.</p>
     <label>I²C-Bus (PN532)
       <input type="text" name="i2cBus" value="{{.Bus}}" autocapitalize="off" spellcheck="false" placeholder="/dev/i2c-1">
     </label>
     <label>I²C-Adresse (PN532, hexadezimal)
       <input type="text" name="i2cAddr" value="{{.Addr}}" autocapitalize="off" spellcheck="false" placeholder="0x24">
+    </label>
+    <label>SPI-Gerät (PN532)
+      <input type="text" name="spiDev" value="{{.SPIDev}}" autocapitalize="off" spellcheck="false" placeholder="/dev/spidev0.0">
+    </label>
+    <label>Serielle Schnittstelle (PN532, UART)
+      <input type="text" name="uartDev" value="{{.UARTDev}}" autocapitalize="off" spellcheck="false" placeholder="/dev/ttyAMA0">
     </label>
     <label>USB-Gerät
       <select name="usbSelect">

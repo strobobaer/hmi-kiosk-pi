@@ -1,0 +1,41 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <h2>Statusdisplay</h2>
+  {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
+  {{if .TestMsg}}<p class="msg {{if .TestOK}}ok{{else}}err{{end}}" role="status">{{.TestMsg}}</p>{{end}}
+  <p>Zustand: <span class="msg {{.StateClass}}">{{.Detail}}</span></p>
+  {{if .Unsupported}}<p class="msg warn" role="alert">{{.Unsupported}}. Das Display bleibt aus, die gespeicherten Werte bleiben unverändert, bis hier gespeichert wird.</p>{{end}}
+</section>
+
+<section class="panel stack">
+  <h2>Einstellungen</h2>
+  <form method="post" action="/admin/statusdisplay" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Display
+      <select name="type">
+        <option value=""{{if eq .Type ""}} selected{{end}}>Aus</option>
+        <option value="sh1106"{{if eq .Type "sh1106"}} selected{{end}}>SH1106 (OLED, I²C)</option>
+      </select>
+    </label>
+    <label>I²C-Bus
+      <input type="text" name="i2cBus" value="{{.Bus}}" autocapitalize="off" spellcheck="false" placeholder="/dev/i2c-1">
+    </label>
+    <label>I²C-Adresse (hexadezimal)
+      <input type="text" name="i2cAddr" value="{{.Addr}}" autocapitalize="off" spellcheck="false" placeholder="0x3C">
+    </label>
+    <p class="hint">Änderungen gelten sofort.</p>
+    <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="panel stack">
+  <h2>Prüfen</h2>
+  <form method="post" action="/admin/statusdisplay/test" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <p class="hint">Fragt das Display unter dem gespeicherten Bus und der gespeicherten Adresse an.</p>
+    <div class="actions"><button type="submit" class="btn">Display prüfen</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}

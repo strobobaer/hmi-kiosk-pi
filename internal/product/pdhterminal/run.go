@@ -571,7 +571,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
 		LocalActive:          s.presence.Touch,
 		LocalLeft:            s.localLeft,
-		Product:              Admin(s.o.DataDir, s.client, s.cards),
+		Product:              Admin(s.o.DataDir, s.client, s.cards, s.display),
 	}
 }
 
@@ -598,7 +598,13 @@ func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 	if t := s.config().Card.Type; t != "" && t != "aus" {
 		d.CardReader = s.cards.Probe
 	}
-	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep()))
+	if sd := s.config().StatusDisplay; sd.Type != "" {
+		if ok, _ := sd.Known(); ok {
+			bus, addr := sd.Settings()
+			d.StatusDisplay = func(context.Context) error { return oled.Probe(bus, addr) }
+		}
+	}
+	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep(), selftest.StatusDisplayStep()))
 	out := make([]web.SelftestStep, len(res))
 	for i, r := range res {
 		out[i] = web.SelftestStep{Name: r.Name, OK: r.OK, Detail: r.Detail, NeedsHuman: r.NeedsHuman}

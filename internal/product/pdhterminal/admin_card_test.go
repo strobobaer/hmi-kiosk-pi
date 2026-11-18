@@ -108,3 +108,56 @@ func TestCardSettingsMapping(t *testing.T) {
 		t.Errorf("pn7150 muss Unsupported setzen: %+v", got)
 	}
 }
+
+func TestCardSaveSPI(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	r := e.post("/admin/card/settings", url.Values{"type": {"pn532-spi"}, "spiDev": {"/dev/spidev0.1"}, "uartDev": {"/dev/ttyS0"}})
+	if r.Code != http.StatusOK {
+		t.Fatalf("Speichern: %d\n%s", r.Code, r.Body.String())
+	}
+	c, _, _ := e.store.Load()
+	want := config.CardCfg{Type: "pn532-i2c", PN532Bus: "spi", SPIDev: "/dev/spidev0.1"}
+	if c.Card != want {
+		t.Fatalf("Konfiguration %+v, erwartet %+v", c.Card, want)
+	}
+	if body := e.get("/admin/card").Body.String(); !strings.Contains(body, `value="pn532-spi" selected`) {
+		t.Fatalf("pn532-spi nicht gewählt:\n%s", body)
+	}
+	r = e.post("/admin/card/settings", url.Values{"type": {"pn532-uart"}, "uartDev": {"/dev/ttyS0"}})
+	if r.Code != http.StatusOK {
+		t.Fatalf("UART: %d", r.Code)
+	}
+	c, _, _ = e.store.Load()
+	if want := (config.CardCfg{Type: "pn532-i2c", PN532Bus: "uart", UARTDev: "/dev/ttyS0"}); c.Card != want {
+		t.Fatalf("Konfiguration %+v, erwartet %+v", c.Card, want)
+	}
+}
+
+func TestCardSaveRejectsUnknown(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	r := e.post("/admin/card/settings", url.Values{"type": {"pn7150"}})
+	if r.Code != http.StatusBadRequest {
+		t.Fatalf("%d, erwartet 400", r.Code)
+	}
+	c, _, _ := e.store.Load()
+	if c.Card != (config.CardCfg{}) {
+		t.Fatalf("Konfiguration verändert: %+v", c.Card)
+	}
+}
+
+func TestCardPageShowsUnsupported(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	c, _, _ := e.store.Load()
+	c.Card = config.CardCfg{Type: "pn7150"}
+	if err := e.store.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	body := e.get("/admin/card").Body.String()
+	_, reason := c.Card.Known()
+	if !strings.Contains(body, reason) {
+		t.Fatalf("Grund %q fehlt:\n%s", reason, body)
+	}
+	if !strings.Contains(body, `value="" selected`) {
+		t.Fatalf("Auswahl nicht auf Aus:\n%s", body)
+	}
+}

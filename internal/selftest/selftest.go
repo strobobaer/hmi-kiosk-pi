@@ -30,12 +30,14 @@ const (
 	StepProtection = "schutz"
 	// StepCard gehört zum PDH-Terminal (CardStep), nicht zu HMISteps.
 	StepCard = "kartenleser"
+	// StepStatusDisplay gehört ebenfalls zum PDH-Terminal (StatusDisplayStep).
+	StepStatusDisplay = "statusdisplay"
 
 	// StepPrecondition meldet, dass die Prüfung gar nicht erst läuft.
 	StepPrecondition = "voraussetzung"
 )
 
-var StepNames = []string{StepClient, StepWindow, StepTouch, StepReturn, StepProcessEnd, StepTerminals, StepProtection, StepCard}
+var StepNames = []string{StepClient, StepWindow, StepTouch, StepReturn, StepProcessEnd, StepTerminals, StepProtection, StepCard, StepStatusDisplay}
 
 // StepResult: OK=false heißt Fehler oder nicht prüfbar. OK=true mit NeedsHuman
 // heißt: nichts Falsches gemessen, aber ein Mensch muss etwas bestätigen.
@@ -123,7 +125,9 @@ type Deps struct {
 	ServicePID func() int
 	// CardReader prüft den Kartenleser und liefert seine Kennung; nil heißt: keiner eingestellt.
 	CardReader func(ctx context.Context) (string, error)
-	Timing     Timing
+	// StatusDisplay prüft das OLED-Statusdisplay; nil heißt: keines eingestellt.
+	StatusDisplay func(ctx context.Context) error
+	Timing        Timing
 }
 
 func (d Deps) show(page string) {
@@ -330,5 +334,27 @@ func CardStep() Step {
 			return StepResult{Detail: err.Error()}
 		}
 		return StepResult{OK: true, Detail: info}
+	}}
+}
+
+// StatusDisplayStep prüft das OLED-Statusdisplay des PDH-Terminals. Ohne eingestelltes
+// Display (StatusDisplay == nil) gilt der Schritt als bestanden. Bus und Adresse für den
+// Text kommen aus der Konfiguration.
+func StatusDisplayStep() Step {
+	return Step{StepStatusDisplay, func(ctx context.Context, d Deps) StepResult {
+		if d.StatusDisplay == nil {
+			return StepResult{OK: true, Detail: "Statusdisplay aus"}
+		}
+		var cfg config.Config
+		if d.Config != nil {
+			cfg = d.Config()
+		}
+		bus, addr := cfg.StatusDisplay.Settings()
+		ctx, cancel := context.WithTimeout(ctx, cardProbeTimeout)
+		defer cancel()
+		if err := d.StatusDisplay(ctx); err != nil {
+			return StepResult{Detail: fmt.Sprintf("Statusdisplay antwortet nicht (%s, %#x): %v", bus, addr, err)}
+		}
+		return StepResult{OK: true, Detail: fmt.Sprintf("Statusdisplay antwortet (%s, %#x)", bus, addr)}
 	}}
 }

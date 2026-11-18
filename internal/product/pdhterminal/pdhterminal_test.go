@@ -21,6 +21,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/web"
 )
@@ -196,6 +197,7 @@ type adminEnv struct {
 	dir     string
 	store   *config.Store
 	cards   *card.Service
+	product *adminProduct
 	h       http.Handler
 	cookies map[string]string
 }
@@ -222,13 +224,16 @@ func newAdminEnv(t *testing.T, client Client) *adminEnv {
 	}
 	cards := card.NewService(card.NewHub(time.Now), nil)
 	t.Cleanup(cards.Close)
+	display := oled.NewService(nil)
+	t.Cleanup(display.Close)
+	prod := newAdminProduct(dir, client, cards, display)
 	h := web.NewAdmin(web.AdminDeps{
 		Store: store, Box: box, Apply: func(config.Config) {}, Helper: nopHelper{},
 		Status:  func() web.SystemStatus { return web.SystemStatus{} },
 		KeyFile: filepath.Join(dir, "secrets.key"), TLSDir: t.TempDir(), LogDir: t.TempDir(),
-		Product: Admin(dir, client, cards),
+		Product: prod.product(),
 	})
-	e := &adminEnv{t: t, dir: dir, store: store, cards: cards, h: h, cookies: map[string]string{}}
+	e := &adminEnv{t: t, dir: dir, store: store, cards: cards, product: prod, h: h, cookies: map[string]string{}}
 	m := csrfRe.FindStringSubmatch(e.get("/admin/login").Body.String())
 	if m == nil {
 		t.Fatal("kein CSRF-Feld auf der Anmeldeseite")

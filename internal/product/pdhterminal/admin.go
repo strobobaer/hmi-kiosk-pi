@@ -11,6 +11,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/web"
 )
 
@@ -19,6 +20,9 @@ var pdhPage string
 
 //go:embed admin_card.html
 var cardPage string
+
+//go:embed admin_statusdisplay.html
+var statusDisplayPage string
 
 const checkTimeout = 5 * time.Second
 
@@ -36,20 +40,31 @@ type adminProduct struct {
 	dataDir string
 	client  Client
 	cards   *card.Service
+	display *oled.Service
+	// probe prüft das Statusdisplay (Variable für Tests).
+	probe func(bus string, addr int) error
+}
+
+func newAdminProduct(dataDir string, client Client, cards *card.Service, display *oled.Service) *adminProduct {
+	return &adminProduct{dataDir: dataDir, client: client, cards: cards, display: display, probe: oled.Probe}
 }
 
 // Admin beschreibt das PDH-Terminal für den Admin-Rahmen.
-func Admin(dataDir string, client Client, cards *card.Service) *web.AdminProduct {
-	p := &adminProduct{dataDir: dataDir, client: client, cards: cards}
+func Admin(dataDir string, client Client, cards *card.Service, display *oled.Service) *web.AdminProduct {
+	return newAdminProduct(dataDir, client, cards, display).product()
+}
+
+func (p *adminProduct) product() *web.AdminProduct {
 	return &web.AdminProduct{
 		ID: "pdh-terminal", Name: "PDH-Terminal", Home: "/admin/pdh", HMI: false, IdleSeconds: 120,
 		Nav: []web.NavItem{
 			{Section: "pdh", Label: "PDH", Path: "/admin/pdh"},
 			{Section: "card", Label: "Kartenleser", Path: "/admin/card"},
+			{Section: "statusdisplay", Label: "Statusdisplay", Path: "/admin/statusdisplay"},
 			{Section: "network", Label: "Netzwerk", Path: "/admin/network"},
 			{Section: "system", Label: "System", Path: "/admin/system"},
 		},
-		Pages: map[string]string{"pdh": pdhPage, "card": cardPage},
+		Pages: map[string]string{"pdh": pdhPage, "card": cardPage, "statusdisplay": statusDisplayPage},
 		Routes: []web.ProductRoute{
 			{Method: http.MethodGet, Path: "/admin/pdh", Handle: func(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
 				p.render(f, w, r, http.StatusOK, "", "", nil)
@@ -61,6 +76,11 @@ func Admin(dataDir string, client Client, cards *card.Service) *web.AdminProduct
 				p.renderCard(f, w, http.StatusOK, "", "", nil)
 			}},
 			{Method: http.MethodPost, Path: "/admin/card/settings", Handle: p.cardSave},
+			{Method: http.MethodGet, Path: "/admin/statusdisplay", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
+				p.renderStatusDisplay(f, w, http.StatusOK, "", "", nil)
+			}},
+			{Method: http.MethodPost, Path: "/admin/statusdisplay", Handle: p.statusDisplaySave},
+			{Method: http.MethodPost, Path: "/admin/statusdisplay/test", Handle: p.statusDisplayTest},
 		},
 	}
 }
