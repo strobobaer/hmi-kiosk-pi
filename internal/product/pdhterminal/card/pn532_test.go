@@ -22,9 +22,9 @@ func TestEncodeFrame(t *testing.T) {
 	}
 }
 
-var listResp = []byte{0x01, 0x00, 0x00, 0xFF, 0x0C, 0xF4, 0xD5, 0x4B, 0x01, 0x01, 0x00, 0x04, 0x08, 0x04, 0xDE, 0xAD, 0xBE, 0xEF, 0x96, 0x00}
+var listResp = []byte{0x00, 0x00, 0xFF, 0x0C, 0xF4, 0xD5, 0x4B, 0x01, 0x01, 0x00, 0x04, 0x08, 0x04, 0xDE, 0xAD, 0xBE, 0xEF, 0x96, 0x00}
 
-// respFrame baut eine Antwort (mit Statusbyte) fuer cmd mit den Daten.
+// respFrame baut eine Antwort (ohne Statusbyte) fuer cmd mit den Daten.
 func respFrame(cmd byte, data []byte) []byte {
 	body := append([]byte{0xD5, cmd + 1}, data...)
 	sum := 0
@@ -32,7 +32,7 @@ func respFrame(cmd byte, data []byte) []byte {
 		sum += int(b)
 	}
 	n := byte(len(body))
-	out := []byte{0x01, 0x00, 0x00, 0xFF, n, byte(0x100-int(n)) & 0xFF}
+	out := []byte{0x00, 0x00, 0xFF, n, byte(0x100-int(n)) & 0xFF}
 	out = append(out, body...)
 	return append(out, byte(0x100-sum)&0xFF, 0x00)
 }
@@ -55,13 +55,13 @@ func TestDecodeFrame(t *testing.T) {
 		return b
 	}
 	bad := map[string][]byte{
-		"DCS":      mut(func(b []byte) { b[18] ^= 1 }),
-		"CMD+1":    mut(func(b []byte) { b[7] = 0x4C }),
-		"Status 0": mut(func(b []byte) { b[0] = 0 }),
-		"LCS":      mut(func(b []byte) { b[5] = 0 }),
-		"D5":       mut(func(b []byte) { b[6] = 0xD4 }),
-		"kurz":     listResp[:10],
-		"leer":     nil,
+		"DCS":    mut(func(b []byte) { b[17] ^= 1 }),
+		"CMD+1":  mut(func(b []byte) { b[6] = 0x4C }),
+		"Anfang": mut(func(b []byte) { b[0] = 1 }),
+		"LCS":    mut(func(b []byte) { b[4] = 0 }),
+		"D5":     mut(func(b []byte) { b[5] = 0xD4 }),
+		"kurz":   listResp[:9],
+		"leer":   nil,
 	}
 	for name, b := range bad {
 		if _, err := decodeFrame(b, 0x4A); err == nil {
@@ -92,13 +92,18 @@ func (c *fakeConn) Write(p []byte) (int, error) {
 func (c *fakeConn) Close() error { c.closed = true; return nil }
 
 var (
-	ack   = []byte{0x01, 0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00}
+	ack   = []byte{0x01, 0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00} // I²C-Lesung: Statusbyte + ACK
 	ready = []byte{0x01}
 )
 
+// i2cResp stellt einer Antwort das I²C-Statusbyte „bereit“ voran.
+func i2cResp(frame []byte) []byte { return append([]byte{0x01}, frame...) }
+
+func newTestPN532(c i2cConn, format string) *pn532 { return newPN532(newI2CTransport(c), format) }
+
 func TestPN532Poll(t *testing.T) {
-	c := &fakeConn{reads: [][]byte{ready, ack, ready, listResp}}
-	r := newPN532(c, "hex")
+	c := &fakeConn{reads: [][]byte{ready, ack, ready, i2cResp(listResp)}}
+	r := newTestPN532(c, "hex")
 	uid, err := r.poll(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -111,8 +116,8 @@ func TestPN532Poll(t *testing.T) {
 	}
 
 	// NbTg = 0: keine Karte
-	c = &fakeConn{reads: [][]byte{ready, ack, ready, respFrame(0x4A, []byte{0x00})}}
-	uid, err = newPN532(c, "hex").poll(context.Background())
+	c = &fakeConn{reads: [][]byte{ready, ack, ready, i2cResp(respFrame(0x4A, []byte{0x00}))}}
+	uid, err = newTestPN532(c, "hex").poll(context.Background())
 	if err != nil || uid != "" {
 		t.Errorf("ohne Karte: uid %q err %v", uid, err)
 	}
@@ -120,25 +125,25 @@ func TestPN532Poll(t *testing.T) {
 
 func TestPN532EmptyUIDNotEmitted(t *testing.T) {
 	// NbTg=1, aber NFCIDLen=0: leere UID, darf nicht als "0" ausgegeben werden.
-	c := &fakeConn{reads: [][]byte{ready, ack, ready, respFrame(0x4A, []byte{1, 1, 0, 4, 8, 0})}}
-	uid, err := newPN532(c, "dec").poll(context.Background())
+	c := &fakeConn{reads: [][]byte{ready, ack, ready, i2cResp(respFrame(0x4A, []byte{1, 1, 0, 4, 8, 0}))}}
+	uid, err := newTestPN532(c, "dec").poll(context.Background())
 	if err != nil || uid != "" {
 		t.Errorf("uid %q err %v", uid, err)
 	}
 }
 
 func TestPN532Format(t *testing.T) {
-	c := &fakeConn{reads: [][]byte{ready, ack, ready, listResp}}
-	uid, err := newPN532(c, "dec").poll(context.Background())
+	c := &fakeConn{reads: [][]byte{ready, ack, ready, i2cResp(listResp)}}
+	uid, err := newTestPN532(c, "dec").poll(context.Background())
 	if err != nil || uid != "4022250974" {
 		t.Errorf("uid %q err %v", uid, err)
 	}
 }
 
 func TestPN532Probe(t *testing.T) {
-	c := &fakeConn{reads: [][]byte{ready, ack, ready, respFrame(0x02, []byte{0x32, 0x01, 0x06, 0x07})}}
-	got, err := newPN532(c, "").Probe(context.Background())
-	if err != nil || got != "PN532 v1.6" {
+	c := &fakeConn{reads: [][]byte{ready, ack, ready, i2cResp(respFrame(0x02, []byte{0x32, 0x01, 0x06, 0x07}))}}
+	got, err := newTestPN532(c, "").Probe(context.Background())
+	if err != nil || got != "PN532 über I²C, Firmware 1.6" {
 		t.Errorf("got %q err %v", got, err)
 	}
 }
@@ -162,7 +167,7 @@ func TestPresenceEmitsOnTransitionOnly(t *testing.T) {
 }
 
 // pollReads ist die Antwortfolge einer Befehlsrunde (bereit, ACK, bereit, Antwort).
-func pollReads(resp []byte) [][]byte { return [][]byte{ready, ack, ready, resp} }
+func pollReads(resp []byte) [][]byte { return [][]byte{ready, ack, ready, i2cResp(resp)} }
 
 func TestPN532RunEmitsOncePerPresence(t *testing.T) {
 	none := respFrame(0x4A, []byte{0x00})
@@ -173,7 +178,7 @@ func TestPN532RunEmitsOncePerPresence(t *testing.T) {
 		reads = append(reads, pollReads(r)...)
 	}
 	c := &fakeConn{reads: reads}
-	r := newPN532(c, "hex")
+	r := newTestPN532(c, "hex")
 	r.interval = time.Millisecond
 	var got []string
 	err := r.Run(context.Background(), func(u string) { got = append(got, u) })
@@ -182,5 +187,28 @@ func TestPN532RunEmitsOncePerPresence(t *testing.T) {
 	}
 	if want := []string{"DEADBEEF", "DEADBEEF"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ausgegeben %q, erwartet %q", got, want)
+	}
+}
+
+func TestI2CTransportStripsStatus(t *testing.T) {
+	frame := []byte{0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00}
+	c := &fakeConn{reads: [][]byte{{0x01}, append([]byte{0x01}, frame...)}}
+	tr := newI2CTransport(c)
+	if tr.Name() != "I²C" {
+		t.Errorf("Name %q", tr.Name())
+	}
+	got, err := tr.ReadFrame(context.Background(), 6)
+	if err != nil || !bytes.Equal(got, frame) {
+		t.Errorf("got %x err %v, want %x", got, err, frame)
+	}
+
+	// nie „bereit“: Fehler nach der Zeitgrenze
+	var never [][]byte
+	for i := 0; i < 100; i++ {
+		never = append(never, []byte{0x00})
+	}
+	tr = newI2CTransport(&fakeConn{reads: never})
+	if _, err := tr.ReadFrame(context.Background(), 6); err == nil || err.Error() != "PN532: keine Antwort" {
+		t.Errorf("err %v, erwartet \"PN532: keine Antwort\"", err)
 	}
 }

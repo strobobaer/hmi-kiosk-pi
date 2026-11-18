@@ -24,10 +24,13 @@ const (
 
 var pn532Ack = []byte{0x00, 0x00, 0xFF, 0x00, 0xFF, 0x00}
 
-// i2cConn ist der Transport zum PN532 (unter Linux ein /dev/i2c-N mit gesetzter Adresse).
-type i2cConn interface {
-	Read([]byte) (int, error)
-	Write([]byte) (int, error)
+// pn532Transport bewegt Rahmen zum und vom PN532; das Protokoll kennt den Bus nicht.
+type pn532Transport interface {
+	Name() string // "I²C", "SPI", "UART"
+	WriteFrame(ctx context.Context, frame []byte) error
+	// ReadFrame wartet höchstens pn532ReadyTimeout auf „bereit“ und liefert bis zu max Bytes ab dem
+	// Rahmenanfang (00 00 FF …), ohne Statusbyte.
+	ReadFrame(ctx context.Context, max int) ([]byte, error)
 	Close() error
 }
 
@@ -43,29 +46,26 @@ func encodeFrame(cmd byte, data []byte) []byte {
 	return append(out, byte(0x100-sum)&0xFF, 0x00)
 }
 
-// decodeFrame prüft eine Antwort (buf beginnt mit dem I²C-Statusbyte) und liefert deren Daten.
+// decodeFrame prüft eine Antwort (frame beginnt mit 00 00 FF, ohne Statusbyte) und liefert deren Daten.
 func decodeFrame(buf []byte, cmd byte) ([]byte, error) {
-	if len(buf) < 8 {
+	if len(buf) < 7 {
 		return nil, errors.New("PN532: Antwort zu kurz")
 	}
-	if buf[0]&0x01 == 0 {
-		return nil, errors.New("PN532: Antwort nicht bereit")
-	}
-	if !bytes.Equal(buf[1:4], []byte{0x00, 0x00, 0xFF}) {
+	if !bytes.Equal(buf[0:3], []byte{0x00, 0x00, 0xFF}) {
 		return nil, errors.New("PN532: ungültiger Rahmenanfang")
 	}
-	n := int(buf[4])
-	if (n+int(buf[5]))&0xFF != 0 {
+	n := int(buf[3])
+	if (n+int(buf[4]))&0xFF != 0 {
 		return nil, errors.New("PN532: Längenprüfsumme falsch")
 	}
-	if n < 2 || len(buf) < 6+n+2 {
+	if n < 2 || len(buf) < 5+n+2 {
 		return nil, errors.New("PN532: Rahmen unvollständig")
 	}
-	body := buf[6 : 6+n]
+	body := buf[5 : 5+n]
 	if body[0] != 0xD5 || body[1] != cmd+1 {
 		return nil, fmt.Errorf("PN532: unerwartete Antwort %02X %02X", body[0], body[1])
 	}
-	sum := int(buf[6+n])
+	sum := int(buf[5+n])
 	for _, b := range body {
 		sum += int(b)
 	}
@@ -75,62 +75,35 @@ func decodeFrame(buf []byte, cmd byte) ([]byte, error) {
 	return body[2:], nil
 }
 
-// pn532 liest UIDs über einen i2cConn.
+// pn532 liest UIDs über einen pn532Transport.
 type pn532 struct {
-	conn   i2cConn
+	t      pn532Transport
 	format string
 
 	mu       sync.Mutex // eine Befehlsfolge zur Zeit (Poll und Probe)
 	interval time.Duration
 }
 
-func newPN532(conn i2cConn, format string) *pn532 {
-	return &pn532{conn: conn, format: format, interval: pn532PollInterval}
-}
-
-func (p *pn532) waitReady(ctx context.Context) error {
-	deadline := time.Now().Add(pn532ReadyTimeout)
-	var b [1]byte
-	for {
-		if _, err := p.conn.Read(b[:]); err != nil {
-			return err
-		}
-		if b[0]&0x01 == 1 {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return errors.New("PN532: keine Antwort")
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(pn532ReadyStep):
-		}
-	}
+func newPN532(t pn532Transport, format string) *pn532 {
+	return &pn532{t: t, format: format, interval: pn532PollInterval}
 }
 
 // exchange sendet einen Befehl, prüft das ACK und liefert die Antwortdaten.
 func (p *pn532) exchange(ctx context.Context, cmd byte, data []byte) ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, err := p.conn.Write(encodeFrame(cmd, data)); err != nil {
+	if err := p.t.WriteFrame(ctx, encodeFrame(cmd, data)); err != nil {
 		return nil, err
 	}
-	if err := p.waitReady(ctx); err != nil {
+	ack, err := p.t.ReadFrame(ctx, len(pn532Ack))
+	if err != nil {
 		return nil, err
 	}
-	ack := make([]byte, 1+len(pn532Ack))
-	if _, err := p.conn.Read(ack); err != nil {
-		return nil, err
-	}
-	if !bytes.Equal(ack[1:], pn532Ack) {
+	if !bytes.HasPrefix(ack, pn532Ack) {
 		return nil, errors.New("PN532: ACK fehlt")
 	}
-	if err := p.waitReady(ctx); err != nil {
-		return nil, err
-	}
-	resp := make([]byte, pn532RespBuf)
-	if _, err := p.conn.Read(resp); err != nil {
+	resp, err := p.t.ReadFrame(ctx, pn532RespBuf)
+	if err != nil {
 		return nil, err
 	}
 	return decodeFrame(resp, cmd)
@@ -168,15 +141,15 @@ func (p *pn532) Probe(ctx context.Context) (string, error) {
 	if len(d) < 4 {
 		return "", errors.New("PN532: Versionsantwort zu kurz")
 	}
-	return fmt.Sprintf("PN532 v%d.%d", d[1], d[2]), nil
+	return fmt.Sprintf("PN532 über %s, Firmware %d.%d", p.t.Name(), d[1], d[2]), nil
 }
 
 // Close schließt den Transport.
-func (p *pn532) Close() error { return p.conn.Close() }
+func (p *pn532) Close() error { return p.t.Close() }
 
 // Run richtet den Leser ein und fragt zyklisch nach Karten, bis ctx endet oder ein Fehler auftritt.
 func (p *pn532) Run(ctx context.Context, emit func(string)) error {
-	defer p.conn.Close()
+	defer p.t.Close()
 	if _, err := p.exchange(ctx, cmdSAMConfiguration, []byte{0x01, 0x14, 0x01}); err != nil {
 		return err
 	}

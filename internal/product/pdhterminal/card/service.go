@@ -228,7 +228,7 @@ func openReader(st Settings) (reader, error) {
 		if err != nil {
 			return nil, err
 		}
-		return newPN532(conn, st.Format), nil
+		return newPN532(newI2CTransport(conn), st.Format), nil
 	case TypeUSB:
 		devs := matchDevices(ListInputDevices("/dev/input"), st.USBDevice)
 		if len(devs) == 0 {

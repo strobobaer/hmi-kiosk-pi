@@ -73,7 +73,7 @@ func TestCardStep(t *testing.T) {
 	}{
 		{"nicht eingestellt", nil, true, "kein Kartenleser eingestellt"},
 		{"Fehler", func(context.Context) (string, error) { return "", errors.New("Gerät fehlt") }, false, "Gerät fehlt"},
-		{"gefunden", func(context.Context) (string, error) { return "PN532 v1.6", nil }, true, "PN532 v1.6"},
+		{"gefunden", func(context.Context) (string, error) { return "PN532 über I²C, Firmware 1.6", nil }, true, "PN532 über I²C, Firmware 1.6"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
