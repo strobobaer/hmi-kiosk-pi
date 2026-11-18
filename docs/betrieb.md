@@ -524,11 +524,19 @@ dtparam=spi=on
 dtparam=uart0=on
 ```
 
+Außerdem den Dienstbenutzer in die Gruppen aufnehmen und den Dienst danach neu starten (sonst meldet der Leser „Kein Zugriff“):
+
+```
+sudo usermod -aG spi,dialout hmikiosk
+sudo systemctl restart hmi-kiosk.service
+```
+
 `cmdline.txt` darf kein `console=ttyAMA0` enthalten (der UART an Pin 8/10 muss frei bleiben); am Pi 5 zeigt `serial0` auf den Debug-Stecker, die Standardeinstellung passt.
 
 | Beobachtung | Mögliche Ursache |
 |---|---|
 | Leser meldet „SPI ist im System nicht eingeschaltet (/dev/spidev0.0 fehlt)“ | `dtparam=spi=on` fehlt in `config.txt` (Installation ohne neues Abbild): Zeile eintragen, neu starten. |
+| Leser meldet „Kein Zugriff auf /dev/spidev0.0 (oder /dev/ttyAMA0): Dienstbenutzer nicht in der Gruppe spi (dialout)“ | Programm-Update ohne neues Abbild: `sudo usermod -aG spi,dialout hmikiosk`, danach den Dienst neu starten (`sudo systemctl restart hmi-kiosk`). |
 | Leser meldet „UART … (/dev/ttyAMA0 fehlt)“ oder antwortet nicht | `dtparam=uart0=on` fehlt, Konsole auf `ttyAMA0` in `cmdline.txt`, TXD/RXD nicht gekreuzt, Schalter nicht beide aus. |
 | PN532 über SPI antwortet nicht | Schalter nicht SEL0 aus/SEL1 an, SS nicht an Pin 24 (CE0), Dienstbenutzer nicht in der Gruppe `spi`. |
 | Display bleibt dunkel, Selbstprüfung „statusdisplay“ rot | Falsche Adresse oder falscher Bus, SDA/SCL vertauscht, I²C-Bus aus; bei I²C-Leser: Y-Verbinder prüfen. |

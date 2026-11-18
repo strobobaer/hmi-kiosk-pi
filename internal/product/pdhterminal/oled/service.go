@@ -165,6 +165,7 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 
 	var prev cpuTimes
 	var havePrev bool
+	var lastCPU float64 // letzter gültiger Wert, falls eine Messung unbrauchbar ist
 	t := time.NewTicker(s.interval)
 	defer t.Stop()
 	for {
@@ -172,11 +173,14 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 		if raw, err := os.ReadFile(s.procStat); err == nil {
 			if cur, err := readCPU(string(raw)); err == nil {
 				if havePrev { // die erste Messung zeigt 0 %
-					m.CPU = cpuPercent(prev, cur)
+					if pct, ok := cpuPercent(prev, cur); ok {
+						lastCPU = pct
+					}
 				}
 				prev, havePrev = cur, true
 			}
 		}
+		m.CPU = lastCPU
 		if raw, err := os.ReadFile(s.meminfo); err == nil {
 			m.RAM, _ = readRAM(string(raw))
 		}

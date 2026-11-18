@@ -160,7 +160,7 @@ expect_busses() { # expect_busses ok|fehler BESCHREIBUNG PRODUKT CONFIG SPI DIAL
 	local want="$1" d="$2" out
 	shift 2
 	out=$(busses_case "$@" 2>&1)
-	if [ "$want" = ok ] && ! echo "$out" | grep -q '^FEHLER'; then ok "$d"
+	if [ "$want" = ok ] && echo "$out" | grep -q '^OK' && ! echo "$out" | grep -q '^FEHLER'; then ok "$d"
 	elif [ "$want" = fehler ] && echo "$out" | grep -q '^FEHLER'; then ok "$d"
 	else bad "$d ($out)"; fi
 }

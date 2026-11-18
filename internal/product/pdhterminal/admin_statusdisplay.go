@@ -94,6 +94,14 @@ func (p *adminProduct) statusDisplayTest(f web.AdminFrame, w http.ResponseWriter
 		p.renderStatusDisplay(f, w, http.StatusInternalServerError, err.Error(), "", nil)
 		return
 	}
+	if cfg.StatusDisplay.Type == "" {
+		p.renderStatusDisplayTest(f, w, http.StatusOK, "", "", nil, "Statusdisplay aus", true)
+		return
+	}
+	if ok, reason := cfg.StatusDisplay.Known(); !ok {
+		p.renderStatusDisplayTest(f, w, http.StatusOK, "", "", nil, "Statusdisplay: "+reason, false)
+		return
+	}
 	bus, addr := cfg.StatusDisplay.Settings()
 	if err := p.probe(bus, addr); err != nil {
 		p.renderStatusDisplayTest(f, w, http.StatusOK, "", "", nil, fmt.Sprintf("Statusdisplay antwortet nicht (%s, %#x): %v", bus, addr, err), false)

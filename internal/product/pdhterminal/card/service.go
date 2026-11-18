@@ -24,7 +24,7 @@ const (
 
 // Settings beschreibt den gewählten Kartenleser (das Paket kennt config nicht).
 type Settings struct {
-	Type      string // "" oder "aus" (kein Leser), TypePN532I2C oder TypeUSB
+	Type      string // "" oder "aus" (kein Leser), TypePN532I2C oder TypeUSB; mit Unsupported erzwingt der Dienst „aus“
 	I2CBus    string // Nummer oder Gerätepfad, z. B. "1"
 	I2CAddr   int    // 0 = 0x24
 	USBDevice string // vvvv:pppp oder Namensteil
@@ -265,6 +265,9 @@ func openPN532(st Settings) (reader, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("SPI ist im System nicht eingeschaltet (%s fehlt): neues Abbild oder dtparam=spi=on in config.txt", st.SPIDev)
 		}
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, noAccessErr(st.SPIDev, "spi")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -273,6 +276,9 @@ func openPN532(st Settings) (reader, error) {
 		port, err := openUART(st.UARTDev)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("UART ist im System nicht eingeschaltet (%s fehlt): neues Abbild oder dtparam=uart0=on in config.txt", st.UARTDev)
+		}
+		if errors.Is(err, fs.ErrPermission) {
+			return nil, noAccessErr(st.UARTDev, "dialout")
 		}
 		if err != nil {
 			return nil, err
@@ -284,6 +290,12 @@ func openPN532(st Settings) (reader, error) {
 		return nil, err
 	}
 	return newPN532(newI2CTransport(conn), st.Format), nil
+}
+
+// noAccessErr erklärt, warum der Dienstbenutzer das Gerät nicht öffnen darf (Programm-Update
+// ohne neues Abbild: die Gruppe fehlt noch).
+func noAccessErr(dev, group string) error {
+	return fmt.Errorf("Kein Zugriff auf %s: Dienstbenutzer nicht in der Gruppe %s (neues Abbild oder „usermod -aG %s hmikiosk“, danach Dienst neu starten)", dev, group, group)
 }
 
 // Leserzustände für den Kartenstrom (Ereignis reader).

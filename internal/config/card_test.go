@@ -106,6 +106,12 @@ func TestValidateCardLenientUnknownType(t *testing.T) {
 	if ok, _ := (CardCfg{Type: "pn532-i2c", PN532Bus: "uart"}).Known(); !ok {
 		t.Fatal("bekannt erwartet")
 	}
+	if ok, _ := (CardCfg{Type: "usb", PN532Bus: "i2c3"}).Known(); !ok {
+		t.Fatal("PN532Bus eines anderen Typs darf nicht stören")
+	}
+	if ok, _ := (CardCfg{Type: "pn532-i2c", PN532Bus: "i2c3"}).Known(); ok {
+		t.Fatal("unbekannter PN532-Anschluss muss unbekannt bleiben")
+	}
 }
 
 func TestValidateCardBus(t *testing.T) {

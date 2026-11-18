@@ -16,11 +16,11 @@ func TestCPUPercent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cpuPercent(a, b); math.Abs(got-50) > 1e-9 {
-		t.Errorf("cpuPercent = %v, want 50", got)
+	if got, ok := cpuPercent(a, b); !ok || math.Abs(got-50) > 1e-9 {
+		t.Errorf("cpuPercent = %v, %v, want 50, true", got, ok)
 	}
-	if got := cpuPercent(a, a); got != 0 {
-		t.Errorf("ohne Zeitablauf = %v, want 0", got)
+	if _, ok := cpuPercent(a, a); ok {
+		t.Error("ohne Zeitablauf muss die Messung verworfen werden")
 	}
 	if _, err := readCPU("nichts"); err == nil {
 		t.Error("Fehler erwartet")
@@ -53,7 +53,7 @@ func TestReadTemp(t *testing.T) {
 func TestCPUPercentIdleRegression(t *testing.T) {
 	prev := cpuTimes{idle: 900, total: 1000}
 	cur := cpuTimes{idle: 880, total: 1100} // iowait lief rückwärts
-	if got := cpuPercent(prev, cur); got < 0 || got > 100 {
-		t.Errorf("cpuPercent = %v, want in [0,100]", got)
+	if got, ok := cpuPercent(prev, cur); ok {
+		t.Errorf("Idle rückläufig muss verworfen werden, bekam %v", got)
 	}
 }

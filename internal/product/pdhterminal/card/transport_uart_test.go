@@ -135,3 +135,15 @@ func TestPN532OverUARTPoll(t *testing.T) {
 		t.Errorf("UID %q", got)
 	}
 }
+
+func TestUARTWriteFrameDropsStaleBytes(t *testing.T) {
+	s := &fakeSerial{reads: [][]byte{pn532Ack}}
+	tr := newUARTTransport(s).(*uartTransport)
+	tr.buf = respFrame(0x4A, []byte{0x00}) // Rest einer früheren, nie abgeholten Antwort
+	if err := tr.WriteFrame(context.Background(), encodeFrame(0x02, nil)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := tr.ReadFrame(context.Background(), 6); err != nil || !bytes.Equal(got, pn532Ack) {
+		t.Fatalf("ACK %x, %v", got, err)
+	}
+}

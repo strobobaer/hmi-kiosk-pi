@@ -193,3 +193,9 @@ code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
 .on-terminal .nav a { min-height: 56px; padding: 16px 18px; }
 /* Platz für die Bildschirmtastatur (ein Drittel der Höhe), damit das unterste Feld frei bleibt. */
 .on-terminal .main { padding-bottom: 40vh; }
+/* Kartenleser-Formular: Felder nur zur gewählten Leserart (reines CSS, kein Skript). */
+form:not(:has(option[value="pn532-i2c"]:checked)) .f-i2c,
+form:not(:has(option[value="pn532-spi"]:checked)) .f-spi,
+form:not(:has(option[value="pn532-uart"]:checked)) .f-uart,
+form:not(:has(option[value="usb"]:checked)) .f-usb,
+form:not(:has(option[value^="pn532"]:checked)) .f-pn532 { display: none; }

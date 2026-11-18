@@ -50,3 +50,23 @@ func TestStatusDisplaySaveAndTest(t *testing.T) {
 		t.Fatalf("Fehler fehlt: %d\n%s", r.Code, r.Body.String())
 	}
 }
+
+func TestStatusDisplayTestOffAndUnknown(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	probed := false
+	e.product.probe = func(string, int) error { probed = true; return nil }
+	r := e.post("/admin/statusdisplay/test", url.Values{})
+	if !strings.Contains(r.Body.String(), "Statusdisplay aus") || probed {
+		t.Fatalf("aus: probe=%v\n%s", probed, r.Body.String())
+	}
+	c, _, _ := e.store.Load()
+	c.StatusDisplay = config.StatusDisplayCfg{Type: "ssd1306"}
+	if err := e.store.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	_, reason := c.StatusDisplay.Known()
+	r = e.post("/admin/statusdisplay/test", url.Values{})
+	if !strings.Contains(r.Body.String(), reason) || probed {
+		t.Fatalf("unbekannt: probe=%v, Grund %q fehlt\n%s", probed, reason, r.Body.String())
+	}
+}

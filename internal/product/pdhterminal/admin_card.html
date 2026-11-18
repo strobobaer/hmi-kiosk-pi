@@ -21,30 +21,30 @@
         <option value="usb"{{if eq .Type "usb"}} selected{{end}}>USB-Leser</option>
       </select>
     </label>
-    <p class="hint">Schalter am PN532-Modul: I²C „SEL0 an, SEL1 aus“, SPI „SEL0 aus, SEL1 an“, UART „beide Schalter aus“.</p>
-    <label>I²C-Bus (PN532)
+    <p class="hint f-pn532">Schalter am PN532-Modul: I²C „SEL0 an, SEL1 aus“, SPI „SEL0 aus, SEL1 an“, UART „beide Schalter aus“.</p>
+    <label class="f-i2c">I²C-Bus (PN532)
       <input type="text" name="i2cBus" value="{{.Bus}}" autocapitalize="off" spellcheck="false" placeholder="/dev/i2c-1">
     </label>
-    <label>I²C-Adresse (PN532, hexadezimal)
+    <label class="f-i2c">I²C-Adresse (PN532, hexadezimal)
       <input type="text" name="i2cAddr" value="{{.Addr}}" autocapitalize="off" spellcheck="false" placeholder="0x24">
     </label>
-    <label>SPI-Gerät (PN532)
+    <label class="f-spi">SPI-Gerät (PN532)
       <input type="text" name="spiDev" value="{{.SPIDev}}" autocapitalize="off" spellcheck="false" placeholder="/dev/spidev0.0">
     </label>
-    <label>Serielle Schnittstelle (PN532, UART)
+    <label class="f-uart">Serielle Schnittstelle (PN532, UART)
       <input type="text" name="uartDev" value="{{.UARTDev}}" autocapitalize="off" spellcheck="false" placeholder="/dev/ttyAMA0">
     </label>
-    <label>USB-Gerät
+    <label class="f-usb">USB-Gerät
       <select name="usbSelect">
         <option value="">– nicht gewählt –</option>
         {{range $.Body.Devices}}<option value="{{.ID}}"{{if eq .ID $.Body.USB}} selected{{end}}>{{.Name}} ({{.ID}})</option>{{end}}
       </select>
     </label>
-    <label>oder USB-Gerät von Hand (vvvv:pppp oder Namensteil)
+    <label class="f-usb">oder USB-Gerät von Hand (vvvv:pppp oder Namensteil)
       <input type="text" name="usbDevice" value="{{.USBFree}}" autocapitalize="off" spellcheck="false">
       <input type="hidden" name="usbPrev" value="{{.USBFree}}">
     </label>
-    <label>Schreibweise der Kartennummer (PN532)
+    <label class="f-pn532">Schreibweise der Kartennummer (PN532)
       <select name="format">
         <option value=""{{if eq .Format ""}} selected{{end}}>Standard (hex)</option>
         <option value="hex"{{if eq .Format "hex"}} selected{{end}}>hex</option>

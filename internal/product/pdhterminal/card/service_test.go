@@ -3,6 +3,7 @@ package card
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -304,5 +305,31 @@ func TestOpenReaderMissingUARTDevice(t *testing.T) {
 	want := "UART ist im System nicht eingeschaltet (" + dev + " fehlt): neues Abbild oder dtparam=uart0=on in config.txt"
 	if err == nil || err.Error() != want {
 		t.Errorf("Fehler %v, erwartet %q", err, want)
+	}
+}
+
+func TestOpenReaderNoPermission(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("nur unter Linux")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("als root gibt es keine Zugriffsverweigerung")
+	}
+	dev := filepath.Join(t.TempDir(), "gerät")
+	if err := os.WriteFile(dev, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		st    Settings
+		group string
+	}{
+		{Settings{Type: TypePN532I2C, Bus: BusSPI, SPIDev: dev}, "spi"},
+		{Settings{Type: TypePN532I2C, Bus: BusUART, UARTDev: dev}, "dialout"},
+	} {
+		_, err := openReader(tc.st)
+		want := "Kein Zugriff auf " + dev + ": Dienstbenutzer nicht in der Gruppe " + tc.group + " (neues Abbild oder „usermod -aG " + tc.group + " hmikiosk“, danach Dienst neu starten)"
+		if err == nil || err.Error() != want {
+			t.Errorf("%s: Fehler %v, erwartet %q", tc.group, err, want)
+		}
 	}
 }

@@ -161,3 +161,45 @@ func TestCardPageShowsUnsupported(t *testing.T) {
 		t.Fatalf("Auswahl nicht auf Aus:\n%s", body)
 	}
 }
+
+func TestCardSaveIgnoresI2CFieldsForOtherTypes(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	bad := url.Values{"i2cBus": {"kaputt"}, "i2cAddr": {"zz"}}
+	for name, in := range map[string]struct {
+		typ   string
+		extra url.Values
+		want  config.CardCfg
+	}{
+		"spi":  {"pn532-spi", url.Values{"spiDev": {"/dev/spidev0.0"}}, config.CardCfg{Type: "pn532-i2c", PN532Bus: "spi", SPIDev: "/dev/spidev0.0"}},
+		"uart": {"pn532-uart", url.Values{"uartDev": {"/dev/ttyAMA0"}}, config.CardCfg{Type: "pn532-i2c", PN532Bus: "uart", UARTDev: "/dev/ttyAMA0"}},
+		"usb":  {"usb", url.Values{"usbDevice": {"1234:5678"}}, config.CardCfg{Type: "usb", USBDevice: "1234:5678"}},
+	} {
+		v := url.Values{"type": {in.typ}}
+		for k, vs := range bad {
+			v[k] = vs
+		}
+		for k, vs := range in.extra {
+			v[k] = vs
+		}
+		if r := e.post("/admin/card/settings", v); r.Code != http.StatusOK {
+			t.Fatalf("%s: %d\n%s", name, r.Code, r.Body.String())
+		}
+		if c, _, _ := e.store.Load(); c.Card != in.want {
+			t.Fatalf("%s: Konfiguration %+v, erwartet %+v", name, c.Card, in.want)
+		}
+	}
+	// Bei pn532-i2c bleibt die Prüfung bestehen.
+	if r := e.post("/admin/card/settings", url.Values{"type": {"pn532-i2c"}, "i2cAddr": {"zz"}}); r.Code != http.StatusBadRequest {
+		t.Fatalf("i2c mit ungültiger Adresse: %d, erwartet 400", r.Code)
+	}
+}
+
+func TestAdminCardFieldGroups(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	body := e.get("/admin/card").Body.String()
+	for _, cls := range []string{"f-i2c", "f-spi", "f-uart", "f-usb", "f-pn532"} {
+		if !strings.Contains(body, cls) {
+			t.Errorf("Feldgruppe %s fehlt im Formular", cls)
+		}
+	}
+}

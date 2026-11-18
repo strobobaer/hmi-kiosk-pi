@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	tcFlush   = 0x540B // TCFLSH
-	tciOFlush = 2      // TCIOFLUSH
-	cBaud     = 0x100F // CBAUD | CBAUDEX
+	tcFlush   = 0x540B     // TCFLSH
+	tciOFlush = 2          // TCIOFLUSH
+	cBaud     = 0x100F     // CBAUD | CBAUDEX
+	crtscts   = 0x80000000 // CRTSCTS
 )
 
 // uartPort liest blockierend mit Zeitgrenze (VMIN=0, VTIME=1); ein leerer Read ist der Zeitablauf.
@@ -44,10 +45,10 @@ func openUART(dev string) (serialPort, error) {
 		return nil, fmt.Errorf("UART %s: %w", dev, err)
 	}
 	// cfmakeraw von Hand
-	tio.Iflag &^= syscall.IGNBRK | syscall.BRKINT | syscall.PARMRK | syscall.ISTRIP | syscall.INLCR | syscall.IGNCR | syscall.ICRNL | syscall.IXON
+	tio.Iflag &^= syscall.IGNBRK | syscall.BRKINT | syscall.PARMRK | syscall.ISTRIP | syscall.INLCR | syscall.IGNCR | syscall.ICRNL | syscall.IXON | syscall.IXOFF | syscall.IXANY
 	tio.Oflag &^= syscall.OPOST
 	tio.Lflag &^= syscall.ECHO | syscall.ECHONL | syscall.ICANON | syscall.ISIG | syscall.IEXTEN
-	tio.Cflag &^= syscall.CSIZE | syscall.PARENB | syscall.CSTOPB | cBaud
+	tio.Cflag &^= syscall.CSIZE | syscall.PARENB | syscall.CSTOPB | cBaud | crtscts
 	tio.Cflag |= syscall.CS8 | syscall.CLOCAL | syscall.CREAD | syscall.B115200
 	tio.Ispeed, tio.Ospeed = syscall.B115200, syscall.B115200
 	tio.Cc[syscall.VMIN] = 0

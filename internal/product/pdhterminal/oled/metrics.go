@@ -35,17 +35,16 @@ func readCPU(procStat string) (cpuTimes, error) {
 	return cpuTimes{}, errors.New("keine cpu-Zeile in /proc/stat")
 }
 
-// cpuPercent ist die Auslastung zwischen zwei Messungen in Prozent.
-func cpuPercent(prev, cur cpuTimes) float64 {
-	if cur.total <= prev.total {
-		return 0
+// cpuPercent ist die Auslastung zwischen zwei Messungen in Prozent. ok ist false, wenn die
+// Messung unbrauchbar ist (keine Zeit vergangen oder Idle läuft rückwärts, etwa iowait);
+// der Aufrufer behält dann den vorigen Wert.
+func cpuPercent(prev, cur cpuTimes) (pct float64, ok bool) {
+	if cur.total <= prev.total || cur.idle < prev.idle {
+		return 0, false
 	}
 	total := float64(cur.total - prev.total)
-	var idle float64
-	if cur.idle > prev.idle { // iowait kann rückwärts laufen
-		idle = float64(cur.idle - prev.idle)
-	}
-	return clampPercent((total - idle) / total * 100)
+	idle := float64(cur.idle - prev.idle)
+	return clampPercent((total - idle) / total * 100), true
 }
 
 // readRAM berechnet (MemTotal-MemAvailable)/MemTotal in Prozent aus /proc/meminfo.

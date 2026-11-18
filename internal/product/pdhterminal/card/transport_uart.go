@@ -29,6 +29,7 @@ func newUARTTransport(p serialPort) pn532Transport { return &uartTransport{p: p}
 func (t *uartTransport) Name() string { return "UART" }
 
 func (t *uartTransport) WriteFrame(_ context.Context, frame []byte) error {
+	t.buf = t.buf[:0] // Reste einer früheren Antwort gehören nicht zur neuen ACK
 	out := frame
 	if !t.woken {
 		out = append(append([]byte(nil), uartWakeup...), frame...)

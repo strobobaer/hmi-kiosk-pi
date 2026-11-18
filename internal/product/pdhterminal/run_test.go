@@ -148,3 +148,18 @@ func TestOriginsSentAtStartAndOnApply(t *testing.T) {
 	s.apply(cfg)
 	want(cfg) // leere Liste, solange keine Adresse eingetragen ist
 }
+
+func TestAdminSelftestUnknownDisplayTypeIsRed(t *testing.T) {
+	s := &service{cfg: config.Config{StatusDisplay: config.StatusDisplayCfg{Type: "ssd1306"}}}
+	_, reason := s.cfg.StatusDisplay.Known()
+	for _, st := range s.adminSelftest(context.Background()) {
+		if st.Name != "statusdisplay" {
+			continue
+		}
+		if st.OK || !strings.Contains(st.Detail, reason) {
+			t.Fatalf("Schritt statusdisplay: %+v, erwartet rot mit Grund %q", st, reason)
+		}
+		return
+	}
+	t.Fatal("Schritt statusdisplay fehlt")
+}

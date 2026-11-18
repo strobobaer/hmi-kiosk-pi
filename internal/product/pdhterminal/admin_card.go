@@ -81,12 +81,23 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 	}
 	in := config.CardCfg{
 		Type:      strings.TrimSpace(r.PostFormValue("type")),
-		I2CBus:    strings.TrimSpace(r.PostFormValue("i2cBus")),
 		Format:    strings.TrimSpace(r.PostFormValue("format")),
 		USBDevice: strings.TrimSpace(r.PostFormValue("usbDevice")),
 	}
 	// Das Formular kennt pn532-spi und pn532-uart; gespeichert wird immer pn532-i2c mit PN532Bus.
+	// I²C-Bus und -Adresse gelten nur für pn532-i2c; bei den anderen Arten bleiben sie leer, damit ein
+	// (ausgeblendetes) ungültiges Feld das Speichern nicht blockiert.
 	switch in.Type {
+	case "pn532-i2c":
+		in.I2CBus = strings.TrimSpace(r.PostFormValue("i2cBus"))
+		if s := strings.TrimSpace(r.PostFormValue("i2cAddr")); s != "" {
+			n, err := strconv.ParseInt(s, 0, 0)
+			if err != nil {
+				p.renderCard(f, w, http.StatusBadRequest, fmt.Sprintf("Adresse ungültig: %q (erwartet z. B. 0x24)", s), "", &in)
+				return
+			}
+			in.I2CAddr = int(n)
+		}
 	case "pn532-spi":
 		in.Type, in.PN532Bus = config.CardTypePN532I2C, config.CardBusSPI
 		in.SPIDev = strings.TrimSpace(r.PostFormValue("spiDev"))
@@ -98,14 +109,6 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 	if sel := strings.TrimSpace(r.PostFormValue("usbSelect")); sel != "" &&
 		(in.USBDevice == "" || in.USBDevice == strings.TrimSpace(r.PostFormValue("usbPrev"))) {
 		in.USBDevice = sel
-	}
-	if s := strings.TrimSpace(r.PostFormValue("i2cAddr")); s != "" {
-		n, err := strconv.ParseInt(s, 0, 0)
-		if err != nil {
-			p.renderCard(f, w, http.StatusBadRequest, fmt.Sprintf("Adresse ungültig: %q (erwartet z. B. 0x24)", s), "", &in)
-			return
-		}
-		in.I2CAddr = int(n)
 	}
 	if err := config.ValidateCardStrict(in); err != nil {
 		p.renderCard(f, w, http.StatusBadRequest, err.Error(), "", &in)

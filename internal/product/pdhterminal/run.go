@@ -599,8 +599,10 @@ func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 		d.CardReader = s.cards.Probe
 	}
 	if sd := s.config().StatusDisplay; sd.Type != "" {
-		if ok, _ := sd.Known(); ok {
+		if ok, reason := sd.Known(); ok {
 			d.StatusDisplay = func(_ context.Context, bus string, addr int) error { return oled.Probe(bus, addr) }
+		} else {
+			d.StatusDisplay = func(context.Context, string, int) error { return errors.New(reason) }
 		}
 	}
 	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep(), selftest.StatusDisplayStep()))

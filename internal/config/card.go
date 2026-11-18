@@ -66,10 +66,12 @@ func (c CardCfg) Known() (ok bool, reason string) {
 	default:
 		return false, fmt.Sprintf("Lesertyp „%s“ wird von dieser Version nicht unterstützt", c.Type)
 	}
-	switch c.PN532Bus {
-	case "", CardBusSPI, CardBusUART:
-	default:
-		return false, fmt.Sprintf("PN532-Anschluss „%s“ wird von dieser Version nicht unterstützt", c.PN532Bus)
+	if c.Type == CardTypePN532I2C { // der Anschluss gilt nur für den PN532
+		switch c.PN532Bus {
+		case "", CardBusSPI, CardBusUART:
+		default:
+			return false, fmt.Sprintf("PN532-Anschluss „%s“ wird von dieser Version nicht unterstützt", c.PN532Bus)
+		}
 	}
 	return true, ""
 }
