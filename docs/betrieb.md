@@ -7,7 +7,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung, da
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen (je Produkt)
 3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
-4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser)
+4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser, Kartenleser und Statusdisplay)
 5. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -493,6 +493,46 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 | „Zuletzt gelesen“ zeigt eine Nummer, PDH meldet nicht an | Format passt nicht zum Eintrag in PDH, oder die Karte ist in PDH nicht eingetragen. |
 | Keine Karte kommt in PDH an, Seite „Kartenleser“ zeigt die Nummer | In `chrome://policy` prüfen (die Adresse ist am Kiosk gesperrt; ersatzweise die Datei `/etc/chromium/policies/managed/hmi-kiosk.json` ansehen), ob `LocalNetworkAccessAllowedForUrls` den Ursprung der PDH-Adresse enthält; die Richtlinie schreibt der Helfer beim Start und bei jeder Änderung der PDH-Adresse. Stimmt der Ursprung der Seite nicht mit der eingestellten Adresse überein (Weiterleitung auf anderes Schema oder anderen Rechner), stimmt auch der Eintrag nicht: endgültige Adresse eintragen. |
 | Karten kommen nach einem Fehler nicht mehr an, bis die Seite neu geladen wird | Antwortet das Gerät auf den Kartenstrom mit 403 (falscher Ursprung) oder 503 (zu viele gleichzeitige Verbindungen), gibt der Browser das Verbinden auf. Erst beim nächsten Laden der Seite oder der Rückkehr vom Bildschirmschoner versucht die Seite es wieder. |
+
+### Kartenleser und Statusdisplay
+
+Dieser Abschnitt ergänzt „Kartenleser“ um den Anschluss des PN532 über **SPI** oder **UART** und um das **Statusdisplay** (OLED SH1106, 1,3 Zoll). Alles gilt nur für das PDH-Terminal auf dem Raspberry Pi 5, alles mit 3,3 V. Die Verdrahtung mit Bildern steht in `hardware/verdrahtung/pdh-terminal-verdrahtung.pdf`, das Gehäuse in `hardware/gehaeuse/`.
+
+**Verdrahtung** (Pin der Stiftleiste des Pi):
+
+| Modul | Anschluss | Pi-Pin |
+|---|---|---|
+| OLED SH1106 | VCC, GND, SDA, SCL | 1, 9, 3, 5 (I²C-Bus; Adresse `0x3C`) |
+| PN532 über I²C | VCC, GND, SDA, SCL; SEL0 an, SEL1 aus | 17, 6, 3, 5 (Adresse `0x24`) |
+| PN532 über SPI | SCK, MOSI, MISO, SS; SEL0 aus, SEL1 an | 23, 19, 21, 24 (CE0); dazu 3,3 V an 17, GND an 20 |
+| PN532 über UART | TXD des Moduls an Pin 10 (RXD), RXD des Moduls an Pin 8 (TXD); beide Schalter aus | 3,3 V an 17, GND an 14 |
+
+- Das OLED nimmt Pin 1 für 3,3 V, der PN532 Pin 17; so braucht die Versorgung keinen Verteiler.
+- **Korrektur (2026-11-18):** Läuft der PN532 über I²C, teilen sich OLED und PN532 **Pin 3 (SDA) und Pin 5 (SCL)**. Dafür braucht es je einen **Y-Verbinder** (oder ein Stück Lochraster). Bei SPI und UART hängt das OLED allein am I²C-Bus.
+- **Schalterstellung am Modul** (Elechouse V3 und Nachbauten; im Zweifel gilt die Beschriftung der Platine): I²C: SEL0 an, SEL1 aus. SPI: SEL0 aus, SEL1 an. UART (HSU): beide aus.
+
+**Einstellen** (Admin-Seite, 5 Sekunden oben rechts drücken):
+
+- **Kartenleser:** Typ **PN532 (I²C)**, **PN532 (SPI)** oder **PN532 (UART)**. Gerät bei SPI `/dev/spidev0.0`, bei UART `/dev/ttyAMA0`; nur ändern, wenn das Modul anders angeschlossen ist. Die Schalterstellung steht als Hinweis neben der Auswahl.
+- **Statusdisplay:** Typ **SH1106**, Bus `/dev/i2c-1`, Adresse `0x3C`. Der Knopf **Testen** führt die Prüfung der Selbstprüfung aus und zeigt das Ergebnis. Das Display zeigt CPU-Temperatur, CPU-Last, RAM-Auslastung und die IPv4-Adresse (ohne Netz „Offline“) und wird jede Sekunde neu gezeichnet. Beim Beenden oder Ausschalten wird es gelöscht. Es läuft getrennt vom Kartenleser: Fällt es aus, liest der Leser weiter, und es startet nach 5 Sekunden neu.
+- Die **Selbstprüfung** hat die Schritte **kartenleser** (nennt den Bus, zum Beispiel „PN532 über SPI, Firmware 1.6“) und **statusdisplay** (bei Typ „aus“: „Statusdisplay aus“).
+
+**Abbild und Installation:** Das Abbild des PDH-Terminals schaltet SPI und UART ein (`dtparam=spi=on` und `dtparam=uart0=on` im letzten `[all]`-Abschnitt von `config.txt`) und nimmt den Dienstbenutzer in die Gruppen `spi` und `dialout` auf. `install.sh` auf einem vorhandenen System legt die Gruppe `spi` bei Bedarf an und nimmt den Dienstbenutzer bei diesem Produkt in `spi` und `dialout` auf, schreibt aber **nichts in `config.txt`**. Bei einer Installation ohne neues Abbild die beiden Zeilen selbst am Ende von `/boot/firmware/config.txt` im letzten `[all]`-Abschnitt eintragen und neu starten:
+
+```
+dtparam=spi=on
+dtparam=uart0=on
+```
+
+`cmdline.txt` darf kein `console=ttyAMA0` enthalten (der UART an Pin 8/10 muss frei bleiben); am Pi 5 zeigt `serial0` auf den Debug-Stecker, die Standardeinstellung passt.
+
+| Beobachtung | Mögliche Ursache |
+|---|---|
+| Leser meldet „SPI ist im System nicht eingeschaltet (/dev/spidev0.0 fehlt)“ | `dtparam=spi=on` fehlt in `config.txt` (Installation ohne neues Abbild): Zeile eintragen, neu starten. |
+| Leser meldet „UART … (/dev/ttyAMA0 fehlt)“ oder antwortet nicht | `dtparam=uart0=on` fehlt, Konsole auf `ttyAMA0` in `cmdline.txt`, TXD/RXD nicht gekreuzt, Schalter nicht beide aus. |
+| PN532 über SPI antwortet nicht | Schalter nicht SEL0 aus/SEL1 an, SS nicht an Pin 24 (CE0), Dienstbenutzer nicht in der Gruppe `spi`. |
+| Display bleibt dunkel, Selbstprüfung „statusdisplay“ rot | Falsche Adresse oder falscher Bus, SDA/SCL vertauscht, I²C-Bus aus; bei I²C-Leser: Y-Verbinder prüfen. |
+| Nach Zurückrollen auf 0.2.x meldet der Leser einen Fehler | Gewollt: das alte Programm kennt SPI/UART nicht; das Terminal startet, die Anmeldung per Tastatur bleibt nutzbar. |
 
 ### Bekannte Einschränkungen
 

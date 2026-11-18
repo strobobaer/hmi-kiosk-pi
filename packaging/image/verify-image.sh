@@ -317,10 +317,13 @@ done
 grep -Eq '^hmikiosk:[!*]' "$R/etc/shadow" || msg="$msg; Passwort nicht gesperrt"
 if [ -z "$msg" ]; then ok benutzer "hmikiosk UID $uid, Gruppen input video render, ohne Passwort"; else bad benutzer "${msg#; }"; fi
 
-# I²C für den Kartenleser (nur PDH-Terminal)
+# I²C, SPI und UART für den Kartenleser (nur PDH-Terminal)
 # shellcheck source=packaging/image/verify-i2c.sh
 . "$(dirname "$0")/verify-i2c.sh"
 check_i2c "$product" "$R" "$B"
+# shellcheck source=packaging/image/verify-busses.sh
+. "$(dirname "$0")/verify-busses.sh"
+check_busses "$product" "$R" "$B"
 
 # Fensterregeln: Remmina ohne Rahmen bei 0,48, darunter maximiert (Rand oben 48)
 lw=$(flat "$R/etc/hmi-kiosk/labwc/rc.xml" 2>/dev/null || true)

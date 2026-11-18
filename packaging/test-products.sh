@@ -130,6 +130,56 @@ expect_i2c fehler "i2c: pdh-terminal ohne Gruppenmitgliedschaft schlägt fehl" p
 expect_i2c fehler "i2c: pdh-terminal ohne Moduldatei schlägt fehl" pdh-terminal "$cfg_with" ja nein
 expect_i2c ok "i2c: hmi-kiosk braucht weder i2c_arm noch Gruppe noch Moduldatei" hmi-kiosk "$cfg_without" nein nein
 
+# SPI und UART für den Kartenleser (nur pdh-terminal): Prüffunktion aus verify-busses.sh gegen Testbäume.
+check "00-run.sh legt die Gruppe spi an" grep -Fq 'getent group spi >/dev/null || groupadd -r spi' packaging/image/stage-hmi/01-hmi/00-run.sh
+check "00-run.sh legt spi nur für pdh-terminal an" bash -c "grep -B3 'groupadd -r spi' packaging/image/stage-hmi/01-hmi/00-run.sh | grep -Fq 'HMI_PRODUCT_ID'"
+check "00-run.sh nimmt hmikiosk nur bei pdh-terminal in spi und dialout auf" bash -c "grep -Fq 'HMI_GROUPS=input,video,render,i2c,spi,dialout' packaging/image/stage-hmi/01-hmi/00-run.sh && grep -Fq 'HMI_GROUPS=input,video,render' packaging/image/stage-hmi/01-hmi/00-run.sh"
+check "00-run.sh setzt spi=on nur für pdh-terminal" bash -c "grep -B3 'dtparam=spi=on' packaging/image/stage-hmi/01-hmi/00-run.sh | grep -Fq 'HMI_PRODUCT_ID'"
+check "00-run.sh setzt uart0=on nur für pdh-terminal" bash -c "grep -B3 'dtparam=uart0=on' packaging/image/stage-hmi/01-hmi/00-run.sh | grep -Fq 'HMI_PRODUCT_ID'"
+check "install.sh nimmt spi und dialout nur für pdh-terminal in die Gruppen auf" bash -c "grep -B3 'KIOSK_GROUPS,i2c,spi,dialout' packaging/install.sh | grep -Fq B_PRODUCT"
+check "install.sh legt die Gruppe spi an" grep -Fq 'getent group spi >/dev/null || groupadd -r spi' packaging/install.sh
+check "install.sh schreibt nicht in config.txt" bash -c "! grep -q 'config.txt' packaging/install.sh"
+busses_case() { # busses_case PRODUKT CONFIG-TEXT SPI(ja/nein) DIALOUT(ja/nein) CMDLINE-TEXT: gibt die Meldungen der Prüfung aus
+	local t g
+	t=$(mktemp -d "$tmp/busses.XXXXXX")
+	mkdir -p "$t/R/etc" "$t/B"
+	printf '%b' "$2" >"$t/B/config.txt"
+	printf '%s\n' "$5" >"$t/B/cmdline.txt"
+	if [ "$3" = ja ]; then g="spi:x:997:hmikiosk\n"; else g="spi:x:997:\n"; fi
+	if [ "$4" = ja ]; then g="${g}dialout:x:20:hmikiosk\n"; else g="${g}dialout:x:20:\n"; fi
+	printf '%b' "$g" >"$t/R/etc/group"
+	(
+		ok() { echo "OK $1"; }
+		bad() { echo "FEHLER $1"; }
+		# shellcheck source=packaging/image/verify-busses.sh
+		. packaging/image/verify-busses.sh
+		check_busses "$1" "$t/R" "$t/B"
+	)
+}
+expect_busses() { # expect_busses ok|fehler BESCHREIBUNG PRODUKT CONFIG SPI DIALOUT CMDLINE
+	local want="$1" d="$2" out
+	shift 2
+	out=$(busses_case "$@" 2>&1)
+	if [ "$want" = ok ] && ! echo "$out" | grep -q '^FEHLER'; then ok "$d"
+	elif [ "$want" = fehler ] && echo "$out" | grep -q '^FEHLER'; then ok "$d"
+	else bad "$d ($out)"; fi
+}
+cfg_bus='dtparam=audio=on\n[all]\ndtparam=pciex1\ndtparam=i2c_arm=on\ndtparam=spi=on\ndtparam=uart0=on\n'
+cfg_nospi='dtparam=audio=on\n[all]\ndtparam=pciex1\ndtparam=uart0=on\n'
+cfg_nouart='dtparam=audio=on\n[all]\ndtparam=pciex1\ndtparam=spi=on\n'
+cfg_busearly='dtparam=spi=on\ndtparam=uart0=on\n[pi4]\ndtparam=x\n[all]\ndtparam=pciex1\n'
+cmd_ok='console=tty1 root=PARTUUID=x rootwait'
+cmd_ser='console=ttyAMA0,115200 console=tty1 root=PARTUUID=x rootwait'
+expect_busses ok "spi/uart: pdh-terminal mit beiden Zeilen, Gruppen und freier Konsole besteht" pdh-terminal "$cfg_bus" ja ja "$cmd_ok"
+expect_busses fehler "spi/uart: pdh-terminal ohne dtparam=spi=on schlägt fehl" pdh-terminal "$cfg_nospi" ja ja "$cmd_ok"
+expect_busses fehler "spi/uart: pdh-terminal ohne dtparam=uart0=on schlägt fehl" pdh-terminal "$cfg_nouart" ja ja "$cmd_ok"
+expect_busses fehler "spi/uart: Zeilen nur im Kopf (nicht im letzten [all]) schlagen fehl" pdh-terminal "$cfg_busearly" ja ja "$cmd_ok"
+expect_busses fehler "spi/uart: pdh-terminal ohne Gruppe spi schlägt fehl" pdh-terminal "$cfg_bus" nein ja "$cmd_ok"
+expect_busses fehler "spi/uart: pdh-terminal ohne Gruppe dialout schlägt fehl" pdh-terminal "$cfg_bus" ja nein "$cmd_ok"
+expect_busses fehler "spi/uart: console=ttyAMA0 in cmdline.txt schlägt fehl" pdh-terminal "$cfg_bus" ja ja "$cmd_ser"
+expect_busses fehler "spi/uart: hmi-kiosk mit den Zeilen in config.txt schlägt fehl" hmi-kiosk "$cfg_bus" nein nein "$cmd_ok"
+expect_busses ok "spi/uart: hmi-kiosk ohne die Zeilen besteht" hmi-kiosk 'dtparam=audio=on\n[all]\ndtparam=pciex1\n' nein nein "$cmd_ok"
+
 # Hilfsfunktionen.
 if out=$( (load_product nope) 2>&1) ; then bad "unbekanntes Produkt wurde angenommen"; elif echo "$out" | grep -q 'Unbekanntes Produkt'; then ok "unbekanntes Produkt: klare Meldung"; else bad "unbekanntes Produkt: Meldung fehlt ($out)"; fi
 if out=$( (load_product '../x') 2>&1); then bad "Pfad in Produktkennung wurde angenommen"; else ok "Pfad in Produktkennung abgelehnt"; fi

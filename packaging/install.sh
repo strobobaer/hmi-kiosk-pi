@@ -187,10 +187,12 @@ install_packages() {
 # --- Benutzer ---
 
 ensure_user() {
-	# i2c (Kartenleser am PN532) gibt es nur im Produkt pdh-terminal; die Gruppe fehlt im Standardsystem.
+	# i2c und spi (Kartenleser PN532, Statusdisplay) gibt es nur im Produkt pdh-terminal; die Gruppen fehlen im
+	# Standardsystem. dialout (UART) kennt Raspberry Pi OS. Die Boot-Einstellungen bleiben unberührt (siehe docs/betrieb.md).
 	if [ "$B_PRODUCT" = pdh-terminal ]; then
 		getent group i2c >/dev/null || groupadd -r i2c
-		KIOSK_GROUPS="$KIOSK_GROUPS,i2c"
+		getent group spi >/dev/null || groupadd -r spi
+		KIOSK_GROUPS="$KIOSK_GROUPS,i2c,spi,dialout"
 	fi
 	if ! getent group "$KIOSK_USER" >/dev/null; then
 		if getent group "$KIOSK_UID_WISH" >/dev/null; then

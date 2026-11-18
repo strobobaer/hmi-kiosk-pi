@@ -14,16 +14,19 @@ FS=files/rootfs
 KIOSK_UID=1100
 
 # Dienstbenutzer ohne Passwort und ohne Shell; der erste Benutzer aus pi-gen wird gesperrt.
-# i2c (Zugriff auf /dev/i2c-1 für den Kartenleser PN532) gibt es nur im Produkt pdh-terminal;
-# die Gruppe fehlt im Standardabbild.
+# i2c, spi und dialout (Zugriff auf I²C, SPI und UART für Kartenleser PN532 und Statusdisplay) gibt es nur im Produkt pdh-terminal;
+# die Gruppen i2c und spi fehlen im Standardabbild.
 HMI_GROUPS=input,video,render
 HMI_I2C_GROUP=":"
+HMI_SPI_GROUP=":"
 if [ "${HMI_PRODUCT_ID}" = pdh-terminal ]; then
-	HMI_GROUPS=input,video,render,i2c
+	HMI_GROUPS=input,video,render,i2c,spi,dialout
 	HMI_I2C_GROUP="getent group i2c >/dev/null || groupadd -r i2c"
+	HMI_SPI_GROUP="getent group spi >/dev/null || groupadd -r spi"
 fi
 on_chroot <<EOF
 ${HMI_I2C_GROUP}
+${HMI_SPI_GROUP}
 if ! getent group hmikiosk >/dev/null; then groupadd -g ${KIOSK_UID} hmikiosk; fi
 if ! id -u hmikiosk >/dev/null 2>&1; then
 	useradd -u ${KIOSK_UID} -g hmikiosk -G ${HMI_GROUPS} -m -d /home/hmikiosk -s /usr/sbin/nologin -c "HMI-Kiosk" hmikiosk
@@ -114,6 +117,15 @@ fi
 # weiteres [all] würde pciex1 aus dem letzten Block verdrängen, den verify-image.sh prüft.
 if [ "${HMI_PRODUCT_ID}" = pdh-terminal ] && ! final_all_block "${CONFIG}" | grep -Eq '^dtparam=i2c_arm=on[[:space:]]*$'; then
 	printf '# I2C-Bus fuer den Kartenleser (PN532)\ndtparam=i2c_arm=on\n' >>"${CONFIG}"
+fi
+
+# SPI und UART des Pi (nur PDH-Terminal: Kartenleser PN532 über SPI oder UART). Auch diese Zeilen kommen in den
+# letzten [all]-Block, kein weiteres [all]; je Zeile einzeln, damit ein vorhandener Eintrag nicht doppelt steht.
+if [ "${HMI_PRODUCT_ID}" = pdh-terminal ] && ! final_all_block "${CONFIG}" | grep -Eq '^dtparam=spi=on[[:space:]]*$'; then
+	printf '# SPI fuer den Kartenleser (PN532)\ndtparam=spi=on\n' >>"${CONFIG}"
+fi
+if [ "${HMI_PRODUCT_ID}" = pdh-terminal ] && ! final_all_block "${CONFIG}" | grep -Eq '^dtparam=uart0=on[[:space:]]*$'; then
+	printf '# UART fuer den Kartenleser (PN532)\ndtparam=uart0=on\n' >>"${CONFIG}"
 fi
 
 # Unsichtbares Zeigerthema für labwc: ein durchsichtiges Bild 1x1 im Xcursor-Format.
