@@ -10,7 +10,8 @@ PN532-Kartenleser (Elechouse V3) und OLED SH1106 1,3" (I²C). Der Bildschirm ist
 | `pdh-terminal-lid.stl` | Pultdeckel, bereits gedreht: Sichtseite liegt auf dem Druckbett |
 | `pdh-terminal-base.step`, `pdh-terminal-lid.step` | dieselben Teile als STEP mit echten Flächen, beide in Einbaulage (für Fusion, FreeCAD, Onshape …) |
 | `pdh-terminal-baugruppe.step` | Wanne und Deckel zusammen als Baugruppe |
-| `pdh-terminal-gehaeuse-step.py` | erzeugt die STEP-Dateien (CadQuery), Maße wie in der `.scad` |
+| `fusion360/PDH-Terminal-Gehaeuse/` | Fusion-360-Skript: baut das Gehäuse parametrisch mit Zeitleiste auf |
+| `pdh-terminal-gehaeuse-step.py` | erzeugt die STEP-Dateien (CadQuery) aus demselben Bauplan wie das Fusion-Skript |
 | `vorschau-*.png` | Ansichten aus den STL-Dateien |
 
 ## Maße zuerst prüfen
@@ -54,10 +55,27 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD":/w -w /w openscad/openscad:2021.01 
 
 Die Ausgabe muss `Volumes: 2` zeigen (ein geschlossener Körper) und darf keine Warnung enthalten.
 
+## In Fusion 360 bearbeiten
+
+1. In Fusion: **Dienstprogramme → Add-Ins → Skripte und Add-Ins** (Umschalt+S), Reiter **Skripte**.
+2. Auf **+** neben „Meine Skripte“ klicken und den Ordner `fusion360/PDH-Terminal-Gehaeuse` wählen.
+3. Das Skript auswählen und **Ausführen**. Es legt ein neues Design an; am Ende zeigt eine Meldung die
+   Volumen von Wanne und Deckel im Vergleich zur OpenSCAD-Fassung.
+4. Design speichern. Ab dann ist es ein normales Fusion-Design: Maße unter **Ändern → Parameter ändern**
+   (z. B. `pn_b`, `ol_b`, `fenster_vers`, `neigung`), alles Weitere über die Zeitleiste.
+
+Die Körper heißen „Wanne“ und „Deckel“ und liegen in Einbaulage. Zum Drucken den Deckel als STL
+exportieren und im Slicer mit der Sichtseite nach unten legen. Ohne Einschmelzmuttern `insert_d` auf 2,5
+setzen. Die Kartenecken versucht das Skript als Skizzenrundung zu setzen; gelingt das in einer
+Fusion-Version nicht, bleiben sie eckig, die Maße gelten trotzdem.
+
+Bauplan, Fusion-Skript und STEP-Skript sind eine Quelle: Die Geometrie steht nur in
+`PDH-Terminal-Gehaeuse.py` (Funktion `build`). Wer dort etwas ändert, prüft es mit dem STEP-Skript.
+
 ## STEP neu erzeugen
 
 Nach den STL-Dateien, weil das Skript sein Ergebnis mit ihnen vergleicht. Ein Maß, das in der `.scad`
-geändert wird, muss auch in `pdh-terminal-gehaeuse-step.py` geändert werden; sonst bricht das Skript
+geändert wird, muss auch in den Parametern des Fusion-Skripts geändert werden; sonst bricht das Skript
 mit „STEP weicht von den STL-Dateien ab“ ab (Grenze 0,5 % Volumen).
 
 ```bash

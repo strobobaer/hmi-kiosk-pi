@@ -1,0 +1,11 @@
+{
+	"autodeskProduct": "Fusion",
+	"type": "script",
+	"author": "PDH-Terminal",
+	"description": {
+		"": "Baut das Pultgehäuse G1 (Raspberry Pi 5, PN532, OLED) parametrisch mit Zeitleiste und Benutzerparametern auf."
+	},
+	"version": "1.0.0",
+	"supportedOS": "windows|mac",
+	"editEnabled": true
+}
