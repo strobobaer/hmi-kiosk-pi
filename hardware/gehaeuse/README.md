@@ -8,6 +8,9 @@ PN532-Kartenleser (Elechouse V3) und OLED SH1106 1,3" (I²C). Der Bildschirm ist
 | `pdh-terminal-gehaeuse.scad` | parametrische Quelle (OpenSCAD 2021.01), alle Maße oben in der Datei |
 | `pdh-terminal-base.stl` | Wanne, 104 × 112 mm, Boden aufs Druckbett |
 | `pdh-terminal-lid.stl` | Pultdeckel, bereits gedreht: Sichtseite liegt auf dem Druckbett |
+| `pdh-terminal-base.step`, `pdh-terminal-lid.step` | dieselben Teile als STEP mit echten Flächen, beide in Einbaulage (für Fusion, FreeCAD, Onshape …) |
+| `pdh-terminal-baugruppe.step` | Wanne und Deckel zusammen als Baugruppe |
+| `pdh-terminal-gehaeuse-step.py` | erzeugt die STEP-Dateien (CadQuery), Maße wie in der `.scad` |
 | `vorschau-*.png` | Ansichten aus den STL-Dateien |
 
 ## Maße zuerst prüfen
@@ -50,3 +53,15 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD":/w -w /w openscad/openscad:2021.01 
 ```
 
 Die Ausgabe muss `Volumes: 2` zeigen (ein geschlossener Körper) und darf keine Warnung enthalten.
+
+## STEP neu erzeugen
+
+Nach den STL-Dateien, weil das Skript sein Ergebnis mit ihnen vergleicht. Ein Maß, das in der `.scad`
+geändert wird, muss auch in `pdh-terminal-gehaeuse-step.py` geändert werden; sonst bricht das Skript
+mit „STEP weicht von den STL-Dateien ab“ ab (Grenze 0,5 % Volumen).
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD":/w -w /w python:3.12-slim sh -c \
+  "apt-get update -qq && apt-get install -y -qq libgl1 libglib2.0-0 >/dev/null && \
+   pip install -q --root-user-action=ignore cadquery && python pdh-terminal-gehaeuse-step.py"
+```
