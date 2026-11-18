@@ -111,13 +111,13 @@ func TestStatusDisplayStep(t *testing.T) {
 	}
 	cases := []struct {
 		name   string
-		probe  func(context.Context) error
+		probe  func(context.Context, string, int) error
 		ok     bool
 		detail string
 	}{
 		{"aus", nil, true, "Statusdisplay aus"},
-		{"Fehler", func(context.Context) error { return errors.New("Gerät fehlt") }, false, "Statusdisplay antwortet nicht (/dev/i2c-3, 0x3d): Gerät fehlt"},
-		{"ok", func(context.Context) error { return nil }, true, "Statusdisplay antwortet (/dev/i2c-3, 0x3d)"},
+		{"Fehler", func(context.Context, string, int) error { return errors.New("Gerät fehlt") }, false, "Statusdisplay antwortet nicht (/dev/i2c-3, 0x3d): Gerät fehlt"},
+		{"ok", func(context.Context, string, int) error { return nil }, true, "Statusdisplay antwortet (/dev/i2c-3, 0x3d)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -126,5 +126,38 @@ func TestStatusDisplayStep(t *testing.T) {
 				t.Fatalf("%+v", r)
 			}
 		})
+	}
+}
+
+// Ein hängender Bus darf die Selbstprüfung nicht blockieren, auch wenn die Probe ctx ignoriert;
+// geprüft und gemeldet werden dieselben Bus und Adresse.
+func TestStatusDisplayStepTimeout(t *testing.T) {
+	old := cardProbeTimeout
+	cardProbeTimeout = 20 * time.Millisecond
+	defer func() { cardProbeTimeout = old }()
+	release := make(chan struct{})
+	defer close(release)
+	started := make(chan struct{})
+	var gotBus string
+	var gotAddr int
+	d := Deps{
+		Config: func() config.Config {
+			return config.Config{StatusDisplay: config.StatusDisplayCfg{Type: "sh1106", I2CBus: "/dev/i2c-3", I2CAddr: 0x3D}}
+		},
+		StatusDisplay: func(_ context.Context, bus string, addr int) error {
+			gotBus, gotAddr = bus, addr
+			close(started)
+			<-release
+			return nil
+		},
+	}
+	start := time.Now()
+	r := StatusDisplayStep().Run(context.Background(), d)
+	if time.Since(start) > 2*time.Second || r.OK || !strings.Contains(r.Detail, "(/dev/i2c-3, 0x3d)") {
+		t.Fatalf("%+v nach %v", r, time.Since(start))
+	}
+	<-started // die Probe lief (und schrieb gotBus/gotAddr) vor dem Lesen
+	if gotBus != "/dev/i2c-3" || gotAddr != 0x3D {
+		t.Fatalf("Probe mit %q %#x", gotBus, gotAddr)
 	}
 }

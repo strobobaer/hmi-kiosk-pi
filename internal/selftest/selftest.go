@@ -125,8 +125,9 @@ type Deps struct {
 	ServicePID func() int
 	// CardReader prüft den Kartenleser und liefert seine Kennung; nil heißt: keiner eingestellt.
 	CardReader func(ctx context.Context) (string, error)
-	// StatusDisplay prüft das OLED-Statusdisplay; nil heißt: keines eingestellt.
-	StatusDisplay func(ctx context.Context) error
+	// StatusDisplay prüft das OLED-Statusdisplay unter bus/addr (vom Schritt aus der Konfiguration
+	// bestimmt); nil heißt: keines eingestellt. Die Zeitgrenze setzt der Schritt, auch wenn die Funktion ctx ignoriert.
+	StatusDisplay func(ctx context.Context, bus string, addr int) error
 	Timing        Timing
 }
 
@@ -352,7 +353,16 @@ func StatusDisplayStep() Step {
 		bus, addr := cfg.StatusDisplay.Settings()
 		ctx, cancel := context.WithTimeout(ctx, cardProbeTimeout)
 		defer cancel()
-		if err := d.StatusDisplay(ctx); err != nil {
+		// Ein hängender Bus darf den Schritt nicht blockieren: Prüfung im eigenen Goroutine, ctx entscheidet.
+		done := make(chan error, 1)
+		go func() { done <- d.StatusDisplay(ctx, bus, addr) }()
+		var err error
+		select {
+		case err = <-done:
+		case <-ctx.Done():
+			err = fmt.Errorf("keine Antwort innerhalb der Zeitgrenze")
+		}
+		if err != nil {
 			return StepResult{Detail: fmt.Sprintf("Statusdisplay antwortet nicht (%s, %#x): %v", bus, addr, err)}
 		}
 		return StepResult{OK: true, Detail: fmt.Sprintf("Statusdisplay antwortet (%s, %#x)", bus, addr)}

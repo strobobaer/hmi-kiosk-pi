@@ -600,8 +600,7 @@ func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 	}
 	if sd := s.config().StatusDisplay; sd.Type != "" {
 		if ok, _ := sd.Known(); ok {
-			bus, addr := sd.Settings()
-			d.StatusDisplay = func(context.Context) error { return oled.Probe(bus, addr) }
+			d.StatusDisplay = func(_ context.Context, bus string, addr int) error { return oled.Probe(bus, addr) }
 		}
 	}
 	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep(), selftest.StatusDisplayStep()))
