@@ -3,6 +3,8 @@ package card
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -249,5 +251,58 @@ func TestServiceWatchStateStop(t *testing.T) {
 	case <-sig:
 		t.Error("Signal nach stop")
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestServiceUnsupportedIsErrorWithoutRetry(t *testing.T) {
+	l := &opLog{}
+	var logged []string
+	var mu sync.Mutex
+	s := newTestService(l, nil)
+	s.logf = func(f string, a ...any) { mu.Lock(); logged = append(logged, f); mu.Unlock() }
+	defer s.Close()
+	const reason = "Lesertyp „pn7150“ wird von dieser Version nicht unterstützt"
+	s.Apply(Settings{Type: "pn7150", Unsupported: reason})
+	if st := s.Status(); st != (Status{Detail: reason, State: StateError}) {
+		t.Errorf("Status %+v", st)
+	}
+	if got := s.ReaderState(); got != StateError {
+		t.Errorf("ReaderState %q", got)
+	}
+	if _, err := s.Probe(context.Background()); err == nil || err.Error() != reason {
+		t.Errorf("Probe: %v", err)
+	}
+	time.Sleep(30 * time.Millisecond) // mehrere retry-Zeiten
+	if ops := l.get(); len(ops) != 0 {
+		t.Errorf("open darf nie aufgerufen werden: %v", ops)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(logged) != 1 {
+		t.Errorf("Logzeilen %d, erwartet 1", len(logged))
+	}
+}
+
+func TestOpenReaderMissingSPIDevice(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("nur unter Linux")
+	}
+	dev := filepath.Join(t.TempDir(), "spidev9.9")
+	_, err := openReader(Settings{Type: TypePN532I2C, Bus: BusSPI, SPIDev: dev})
+	want := "SPI ist im System nicht eingeschaltet (" + dev + " fehlt): neues Abbild oder dtparam=spi=on in config.txt"
+	if err == nil || err.Error() != want {
+		t.Errorf("Fehler %v, erwartet %q", err, want)
+	}
+}
+
+func TestOpenReaderMissingUARTDevice(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("nur unter Linux")
+	}
+	dev := filepath.Join(t.TempDir(), "ttyAMA9")
+	_, err := openReader(Settings{Type: TypePN532I2C, Bus: BusUART, UARTDev: dev})
+	want := "UART ist im System nicht eingeschaltet (" + dev + " fehlt): neues Abbild oder dtparam=uart0=on in config.txt"
+	if err == nil || err.Error() != want {
+		t.Errorf("Fehler %v, erwartet %q", err, want)
 	}
 }

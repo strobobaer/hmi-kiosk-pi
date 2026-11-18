@@ -18,7 +18,11 @@ const inputDir = "/dev/input"
 // cardSettings übersetzt die Konfiguration in die Einstellungen des Kartendienstes.
 func cardSettings(c config.CardCfg) card.Settings {
 	bus, addr := c.Settings()
-	return card.Settings{Type: c.Type, I2CBus: bus, I2CAddr: addr, USBDevice: c.USBDevice, Format: c.Format}
+	_, reason := c.Known()
+	return card.Settings{
+		Type: c.Type, I2CBus: bus, I2CAddr: addr, USBDevice: c.USBDevice, Format: c.Format,
+		Bus: c.PN532Bus, SPIDev: c.SPIDevice(), UARTDev: c.UARTDevice(), Unsupported: reason,
+	}
 }
 
 // cardView ist, was die Seite Kartenleser anzeigt.

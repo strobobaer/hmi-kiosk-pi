@@ -93,3 +93,18 @@ func TestAdminCardUSBFreeFieldPrefill(t *testing.T) {
 		t.Fatalf("Freitext nicht vorbelegt:\n%s", body)
 	}
 }
+
+func TestCardSettingsMapping(t *testing.T) {
+	got := cardSettings(config.CardCfg{Type: "pn532-i2c", PN532Bus: "spi"})
+	if got.Bus != "spi" || got.SPIDev != "/dev/spidev0.0" || got.Unsupported != "" {
+		t.Errorf("SPI: %+v", got)
+	}
+	got = cardSettings(config.CardCfg{Type: "pn532-i2c", PN532Bus: "uart"})
+	if got.Bus != "uart" || got.UARTDev != "/dev/ttyAMA0" {
+		t.Errorf("UART: %+v", got)
+	}
+	got = cardSettings(config.CardCfg{Type: "pn7150"})
+	if got.Unsupported == "" {
+		t.Errorf("pn7150 muss Unsupported setzen: %+v", got)
+	}
+}

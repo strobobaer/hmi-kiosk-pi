@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"sync"
 	"time"
 )
@@ -15,6 +16,12 @@ const (
 	TypeUSB      = "usb"
 )
 
+// Anschlüsse des PN532; leer heißt I²C.
+const (
+	BusSPI  = "spi"
+	BusUART = "uart"
+)
+
 // Settings beschreibt den gewählten Kartenleser (das Paket kennt config nicht).
 type Settings struct {
 	Type      string // "" oder "aus" (kein Leser), TypePN532I2C oder TypeUSB
@@ -22,9 +29,14 @@ type Settings struct {
 	I2CAddr   int    // 0 = 0x24
 	USBDevice string // vvvv:pppp oder Namensteil
 	Format    string // nur PN532, siehe FormatUID
+
+	Bus         string // nur PN532: "" (I²C), BusSPI oder BusUART
+	SPIDev      string // Gerätepfad bei BusSPI
+	UARTDev     string // Gerätepfad bei BusUART
+	Unsupported string // Grund, wenn Typ oder Anschluss dieser Version unbekannt sind (Leser bleibt aus)
 }
 
-func (s Settings) off() bool { return s.Type == "" || s.Type == "aus" }
+func (s Settings) off() bool { return s.Type == "" || s.Type == "aus" || s.Unsupported != "" }
 
 // Status ist der Zustand des Lesers für die Anzeige.
 type Status struct {
@@ -110,6 +122,12 @@ func (s *Service) Apply(st Settings) {
 
 	s.mu.Lock()
 	s.cur, s.started = st, true
+	if st.Unsupported != "" {
+		s.setStatusLocked(Status{Detail: st.Unsupported, State: StateError})
+		s.mu.Unlock()
+		s.logf("kartenleser: %s", st.Unsupported)
+		return
+	}
 	if st.off() {
 		s.setStatusLocked(Status{Detail: "aus", State: StateNone})
 		s.mu.Unlock()
@@ -203,6 +221,9 @@ func (s *Service) Probe(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	st, rd := s.cur, s.rd
 	s.mu.Unlock()
+	if st.Unsupported != "" {
+		return "", errors.New(st.Unsupported)
+	}
 	if st.off() {
 		return "", errors.New("Kartenleser aus")
 	}
@@ -224,11 +245,7 @@ func (s *Service) Probe(ctx context.Context) (string, error) {
 func openReader(st Settings) (reader, error) {
 	switch st.Type {
 	case TypePN532I2C:
-		conn, err := openI2C(st.I2CBus, st.I2CAddr)
-		if err != nil {
-			return nil, err
-		}
-		return newPN532(newI2CTransport(conn), st.Format), nil
+		return openPN532(st)
 	case TypeUSB:
 		devs := matchDevices(ListInputDevices("/dev/input"), st.USBDevice)
 		if len(devs) == 0 {
@@ -237,6 +254,36 @@ func openReader(st Settings) (reader, error) {
 		return &usbReader{devs: devs}, nil
 	}
 	return nil, fmt.Errorf("unbekannter Lesertyp %q", st.Type)
+}
+
+// openPN532 öffnet den PN532 am gewählten Anschluss. Fehlt das SPI-/UART-Gerät, ist
+// meist die Systemeinstellung (config.txt) zu alt; die Meldung sagt, was zu tun ist.
+func openPN532(st Settings) (reader, error) {
+	switch st.Bus {
+	case BusSPI:
+		bus, err := openSPI(st.SPIDev)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("SPI ist im System nicht eingeschaltet (%s fehlt): neues Abbild oder dtparam=spi=on in config.txt", st.SPIDev)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return newPN532(newSPITransport(bus), st.Format), nil
+	case BusUART:
+		port, err := openUART(st.UARTDev)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("UART ist im System nicht eingeschaltet (%s fehlt): neues Abbild oder dtparam=uart0=on in config.txt", st.UARTDev)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return newPN532(newUARTTransport(port), st.Format), nil
+	}
+	conn, err := openI2C(st.I2CBus, st.I2CAddr)
+	if err != nil {
+		return nil, err
+	}
+	return newPN532(newI2CTransport(conn), st.Format), nil
 }
 
 // Leserzustände für den Kartenstrom (Ereignis reader).
