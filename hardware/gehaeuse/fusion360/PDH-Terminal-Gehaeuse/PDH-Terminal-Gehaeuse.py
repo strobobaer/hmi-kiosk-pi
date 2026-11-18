@@ -243,6 +243,7 @@ class FusionBuilder:
         self.bodies = {}
         self.sign = ""  # Vorzeichen der Drehung, beim ersten Drehen geprüft
         self.sign_checked = False
+        self.skipped = []  # Maße, die Fusion als überbestimmt abgelehnt hat
 
     def vi(self, expr):
         return self.core.ValueInput.createByString(str(expr))
@@ -274,7 +275,15 @@ class FusionBuilder:
                   else F.DimensionOrientations.VerticalDimensionOrientation)
         g1, g2 = p1.geometry, p2.geometry
         tp = self.core.Point3D.create((g1.x + g2.x) / 2 + 0.2, (g1.y + g2.y) / 2 + 0.2, 0)
-        d = sk.sketchDimensions.addDistanceDimension(p1, p2, orient, tp)
+        try:
+            d = sk.sketchDimensions.addDistanceDimension(p1, p2, orient, tp)
+        except RuntimeError as err:
+            # Fusion hat die Lage schon durch eine eigene Abhängigkeit festgelegt; ein zweites Maß wäre
+            # überbestimmt. Die Geometrie liegt richtig, nur dieses Maß folgt dann nicht dem Parameter.
+            if "OVER_CONSTRAINTS" not in str(err):
+                raise
+            self.skipped.append(f"{sk.name}: {expr}")
+            return
         d.parameter.expression = str(expr) if val > 0 else f"-({expr})"
 
     def corner(self, lines, x, y):
@@ -432,6 +441,9 @@ def run(context):
             dev = abs(vol - ref) / ref * 100
             lines.append(f"{name}: {vol:.0f} mm³ (Soll {ref:.0f}, Abweichung {dev:.2f} %)"
                          + ("" if dev <= 0.5 else "  ← PRÜFEN"))
+        if b.skipped:
+            lines.append(f"\n{len(b.skipped)} Maße waren schon durch Fusion festgelegt und wurden "
+                         "übersprungen, z. B. " + "; ".join(b.skipped[:3]))
         ui.messageBox("Gehäuse G1 aufgebaut.\n\n" + "\n".join(lines)
                       + "\n\nMaße ändern: Ändern → Parameter ändern.", "PDH-Terminal Gehäuse")
     except Exception:
