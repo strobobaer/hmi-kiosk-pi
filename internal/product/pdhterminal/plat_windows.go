@@ -4,10 +4,13 @@ package pdhterminal
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
 
+	"hmikiosk/internal/browser"
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/selftest"
 )
@@ -50,8 +53,20 @@ func displayPlatformReason(c config.StatusDisplayCfg) string {
 	return ""
 }
 
-// platformBrowserNote: Der Browser (Edge) kommt mit seiner eigenen Anbindung.
-const platformBrowserNote = "Die Anzeige im Browser ist unter Windows noch nicht angebunden"
+// newWindow: Das Edge-Fenster gehört zu einem Prozess des Jobs, den pids liefert.
+func newWindow(pids func() ([]uint32, error)) window { return browser.NewEdgeWindow(pids) }
+
+// readRegistry liest den Standardwert eines Registry-Schlüssels (HKLM\...).
+func readRegistry(key string) (string, error) { return browser.ReadRegistry(key) }
+
+// edgeProfileDir ist %LOCALAPPDATA%\PDH-Terminal\edge, das eigene Profil des Terminals.
+func edgeProfileDir() string {
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = filepath.Join(os.TempDir(), "PDH-Terminal-lokal")
+	}
+	return filepath.Join(base, "PDH-Terminal", "edge")
+}
 
 // selftestSteps: Konfiguration, Kartenleser und „Edge gefunden“ (die Edge-Anbindung füllt den Schritt).
 func (s *service) selftestSteps(*selftest.Deps) []selftest.Step {
@@ -70,7 +85,11 @@ func (s *service) selftestSteps(*selftest.Deps) []selftest.Step {
 		}},
 		selftest.CardStep(),
 		{Name: "edge", Run: func(context.Context, selftest.Deps) selftest.StepResult {
-			return selftest.StepResult{OK: true, Detail: "Edge gefunden: noch nicht angebunden"}
+			p, err := browser.FindEdge(readRegistry)
+			if err != nil {
+				return selftest.StepResult{Detail: err.Error()}
+			}
+			return selftest.StepResult{OK: true, Detail: "Edge gefunden: " + p}
 		}},
 	}
 }

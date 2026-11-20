@@ -146,3 +146,33 @@ func (p *execProcess) Stop(grace time.Duration) error {
 	}
 	return nil
 }
+
+// jobPidList ist JOBOBJECT_BASIC_PROCESS_ID_LIST mit Platz für 256 Kennungen.
+type jobPidList struct {
+	Assigned, InList uint32
+	IDs              [256]uintptr
+}
+
+const jobObjectBasicProcessIDList = 3
+
+// ProcessIDs liefert die Kennungen der Prozesse, die im Job laufen (höchstens 256).
+func (p *execProcess) ProcessIDs() ([]uint32, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil, nil
+	}
+	var l jobPidList
+	if err := windows.QueryInformationJobObject(p.job, jobObjectBasicProcessIDList,
+		uintptr(unsafe.Pointer(&l)), uint32(unsafe.Sizeof(l)), nil); err != nil {
+		// ERROR_MORE_DATA: die Liste ist voll, die ersten Einträge gelten trotzdem.
+		if !errors.Is(err, windows.ERROR_MORE_DATA) {
+			return nil, err
+		}
+	}
+	ids := make([]uint32, 0, l.InList)
+	for _, id := range l.IDs[:l.InList] {
+		ids = append(ids, uint32(id))
+	}
+	return ids, nil
+}

@@ -98,6 +98,7 @@ type service struct {
 	cards    *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
 	display  *oled.Service                      // OLED-Statusdisplay
 	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
+	win      atomic.Pointer[window]             // Edge-Fenster (nur Windows), ab startEdge
 	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
 	certSrc  atomic.Pointer[web.CertSource]
 
@@ -402,10 +403,8 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 		close(done)
 		return done
 	}
-	if platformBrowserNote != "" {
-		log.Print(platformBrowserNote)
-		close(done)
-		return done
+	if onWindows {
+		return s.startEdge(ctx, startURL)
 	}
 	path, err := browser.FindChromium(nil)
 	if err != nil {

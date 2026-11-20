@@ -63,3 +63,23 @@ func TestWindowsJobSurvivesMainExit(t *testing.T) {
 		t.Errorf("Job leer nach Ende des Hauptprozesses: %d", n)
 	}
 }
+
+// TestWindowsProcessIDs: Die Kennungen des Jobs enthalten den Startprozess.
+func TestWindowsProcessIDs(t *testing.T) {
+	p, err := NewExecRunner().Start(Command{Path: "cmd.exe", Args: []string{"/c", "ping -n 60 127.0.0.1 > nul"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Stop(time.Second)
+	ids, err := p.(interface{ ProcessIDs() ([]uint32, error) }).ProcessIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, id := range ids {
+		found = found || int(id) == p.(interface{ Pid() int }).Pid()
+	}
+	if !found {
+		t.Errorf("Startprozess fehlt in %v", ids)
+	}
+}

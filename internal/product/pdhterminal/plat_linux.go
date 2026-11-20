@@ -34,8 +34,21 @@ func cardPlatformReason(config.CardCfg) string { return "" }
 // displayPlatformReason: Auf dem Raspberry Pi gibt es keine zusätzliche Einschränkung.
 func displayPlatformReason(config.StatusDisplayCfg) string { return "" }
 
-// platformBrowserNote ist leer: Chromium wird gestartet.
-const platformBrowserNote = ""
+// Unter Linux gibt es kein Fenster zu steuern (Chromium läuft im Kiosk): Platzhalter.
+type noWindow struct{}
+
+func (noWindow) Foreground() bool          { return true }
+func (noWindow) Raise() error              { return nil }
+func (noWindow) MinimizeNoActivate() error { return nil }
+
+// newWindow: pids liefert die Prozesse des Browsers (nur Windows nötig).
+func newWindow(func() ([]uint32, error)) window { return noWindow{} }
+
+// readRegistry gibt es nur unter Windows.
+func readRegistry(string) (string, error) { return "", errors.New("keine Registry") }
+
+// edgeProfileDir: Edge läuft nur unter Windows.
+func edgeProfileDir() string { return "" }
 
 // selftestSteps: Schutz von System und Funk, Kartenleser und Statusdisplay.
 func (s *service) selftestSteps(d *selftest.Deps) []selftest.Step {
