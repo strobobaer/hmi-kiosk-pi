@@ -188,6 +188,16 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 	if err != nil {
 		return err
 	}
+	if u, ok := r.(*usbReader); ok {
+		u.warn = func(msg string) {
+			if msg == "" {
+				s.setStatus(ctx, Status{Active: true, Detail: readyText(st, r), State: StateOK})
+				return
+			}
+			s.logf("kartenleser: %s", msg)
+			s.setStatus(ctx, Status{Active: true, Detail: msg, State: StateError})
+		}
+	}
 	s.mu.Lock()
 	s.rd = r
 	s.mu.Unlock()

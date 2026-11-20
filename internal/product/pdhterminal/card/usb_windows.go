@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -28,29 +29,31 @@ var (
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 	hidDLL   = windows.NewLazySystemDLL("hid.dll")
 
-	pRegisterClassExW        = user32.NewProc("RegisterClassExW")
-	pCreateWindowExW         = user32.NewProc("CreateWindowExW")
-	pDestroyWindow           = user32.NewProc("DestroyWindow")
-	pDefWindowProcW          = user32.NewProc("DefWindowProcW")
-	pRegisterRawInputDevices = user32.NewProc("RegisterRawInputDevices")
-	pGetRawInputData         = user32.NewProc("GetRawInputData")
-	pGetRawInputDeviceList   = user32.NewProc("GetRawInputDeviceList")
-	pGetRawInputDeviceInfoW  = user32.NewProc("GetRawInputDeviceInfoW")
-	pSetWindowsHookExW       = user32.NewProc("SetWindowsHookExW")
-	pCallNextHookEx          = user32.NewProc("CallNextHookEx")
-	pUnhookWindowsHookEx     = user32.NewProc("UnhookWindowsHookEx")
-	pGetMessageW             = user32.NewProc("GetMessageW")
-	pTranslateMessage        = user32.NewProc("TranslateMessage")
-	pDispatchMessageW        = user32.NewProc("DispatchMessageW")
-	pPostThreadMessageW      = user32.NewProc("PostThreadMessageW")
-	pPostMessageW            = user32.NewProc("PostMessageW")
-	pGetTickCount64          = kernel32.NewProc("GetTickCount64")
-	pSetTimer                = user32.NewProc("SetTimer")
-	pKillTimer               = user32.NewProc("KillTimer")
-	pSendInput               = user32.NewProc("SendInput")
-	pGetCurrentThreadID      = kernel32.NewProc("GetCurrentThreadId")
-	pGetModuleHandleW        = kernel32.NewProc("GetModuleHandleW")
-	pHidGetProductString     = hidDLL.NewProc("HidD_GetProductString")
+	pRegisterClassExW         = user32.NewProc("RegisterClassExW")
+	pCreateWindowExW          = user32.NewProc("CreateWindowExW")
+	pDestroyWindow            = user32.NewProc("DestroyWindow")
+	pDefWindowProcW           = user32.NewProc("DefWindowProcW")
+	pRegisterRawInputDevices  = user32.NewProc("RegisterRawInputDevices")
+	pGetRawInputData          = user32.NewProc("GetRawInputData")
+	pGetRawInputDeviceList    = user32.NewProc("GetRawInputDeviceList")
+	pGetRawInputDeviceInfoW   = user32.NewProc("GetRawInputDeviceInfoW")
+	pSetWindowsHookExW        = user32.NewProc("SetWindowsHookExW")
+	pCallNextHookEx           = user32.NewProc("CallNextHookEx")
+	pUnhookWindowsHookEx      = user32.NewProc("UnhookWindowsHookEx")
+	pGetMessageW              = user32.NewProc("GetMessageW")
+	pTranslateMessage         = user32.NewProc("TranslateMessage")
+	pDispatchMessageW         = user32.NewProc("DispatchMessageW")
+	pPostThreadMessageW       = user32.NewProc("PostThreadMessageW")
+	pPostMessageW             = user32.NewProc("PostMessageW")
+	pGetTickCount64           = kernel32.NewProc("GetTickCount64")
+	pGetForegroundWindow      = user32.NewProc("GetForegroundWindow")
+	pGetWindowThreadProcessID = user32.NewProc("GetWindowThreadProcessId")
+	pSetTimer                 = user32.NewProc("SetTimer")
+	pKillTimer                = user32.NewProc("KillTimer")
+	pSendInput                = user32.NewProc("SendInput")
+	pGetCurrentThreadID       = kernel32.NewProc("GetCurrentThreadId")
+	pGetModuleHandleW         = kernel32.NewProc("GetModuleHandleW")
+	pHidGetProductString      = hidDLL.NewProc("HidD_GetProductString")
 )
 
 const (
@@ -209,26 +212,39 @@ func productString(path string) string {
 	return strings.TrimSpace(windows.UTF16ToString(buf[:]))
 }
 
-// deviceFromPath baut das Gerät zum Pfad: Kennung vvvv:pppp aus VID_xxxx&PID_xxxx (klein), Name aus dem
-// Produktstring, sonst aus dem Pfad.
-func deviceFromPath(path string) InputDevice {
-	d := InputDevice{Path: path}
+// deviceID ist die Kennung vvvv:pppp aus VID_xxxx&PID_xxxx im Pfad (klein), sonst leer.
+func deviceID(path string) string {
 	if m := vidPid.FindStringSubmatch(path); m != nil {
-		d.ID = strings.ToLower(m[1] + ":" + m[2])
+		return strings.ToLower(m[1] + ":" + m[2])
 	}
-	d.Name = productString(path)
-	if d.Name == "" {
-		d.Name = "Tastatur"
-		if d.ID != "" {
-			d.Name += " " + d.ID
-		}
-	}
-	return d
+	return ""
 }
 
-// ListInputDevices listet die Tastaturen (Raw Input); dir wird ignoriert. Ein Leser mit mehreren
-// Tastaturknoten erscheint einmal.
-func ListInputDevices(dir string) []InputDevice {
+// deviceFromPath baut das Gerät zum Pfad mit Name aus dem Produktstring (CreateFile und HidD_*: darf nur
+// außerhalb von Haken und Fensterprozedur laufen). named sagt, ob der Name wirklich gelesen wurde; sonst
+// steht ein Ersatzname da, der nicht zwischengespeichert werden darf.
+func deviceFromPath(path string) (d InputDevice, named bool) {
+	d = InputDevice{Path: path, ID: deviceID(path)}
+	d.Name = productString(path)
+	if d.Name != "" {
+		return d, true
+	}
+	d.Name = "Tastatur"
+	if d.ID != "" {
+		d.Name += " " + d.ID
+	}
+	return d, false
+}
+
+// enumDev ist ein Gerät der Liste; Named sagt, ob der Name wirklich gelesen wurde.
+type enumDev struct {
+	InputDevice
+	Named bool
+}
+
+// enumDevices listet die Tastaturen (Raw Input) mit Namen (CreateFile und HidD_*: nie im Haken). Ein Leser
+// mit mehreren Tastaturknoten erscheint einmal.
+func enumDevices() []enumDev {
 	var n uint32
 	if r, _, _ := pGetRawInputDeviceList.Call(0, uintptr(unsafe.Pointer(&n)), unsafe.Sizeof(rawInputDeviceList{})); int32(r) < 0 || n == 0 {
 		return nil
@@ -238,7 +254,7 @@ func ListInputDevices(dir string) []InputDevice {
 	if int32(r) <= 0 {
 		return nil
 	}
-	var out []InputDevice
+	var out []enumDev
 	seen := map[string]bool{}
 	for _, e := range list[:r] {
 		if e.Type != rimTypeKeyboard {
@@ -248,15 +264,24 @@ func ListInputDevices(dir string) []InputDevice {
 		if path == "" {
 			continue
 		}
-		d := deviceFromPath(path)
+		d, named := deviceFromPath(path)
 		key := d.ID + "|" + d.Name
 		if d.ID != "" && seen[key] {
 			continue
 		}
 		seen[key] = true
-		out = append(out, d)
+		out = append(out, enumDev{d, named})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// ListInputDevices listet die Tastaturen (Raw Input); dir wird ignoriert.
+func ListInputDevices(dir string) []InputDevice {
+	var out []InputDevice
+	for _, d := range enumDevices() {
+		out = append(out, d.InputDevice)
+	}
 	return out
 }
 
@@ -266,7 +291,8 @@ type winSub struct {
 	match func(InputDevice) bool // Geräte, deren Kartentasten verschluckt werden
 	fn    func(dev InputDevice, code uint16, at time.Time)
 	learn func(dev InputDevice, text string)
-	lrn   learner // nur vom Hub-Thread benutzt
+	warn  func(msg string) // Meldung des Abfangens (leer: wieder in Ordnung)
+	lrn   learner          // nur vom Hub-Thread benutzt
 }
 
 // kbdHub besitzt den einen Thread je Prozess; er läuft, solange es Abnehmer gibt.
@@ -277,6 +303,13 @@ type kbdHub struct {
 	tid     uint32
 	hwnd    uintptr
 	done    chan struct{}
+
+	// Auflösen der Geräte (CreateFile, HidD_*) läuft in einem eigenen Goroutine, nie im Haken: Ein Haken,
+	// der LowLevelHooksTimeout überschreitet, wird von Windows stillschweigend entfernt.
+	req      chan struct{}
+	attached atomic.Bool // gewählter Leser ist angesteckt (Ergebnis des Auflösers)
+	nameMu   sync.Mutex
+	names    map[string]string // Pfad -> gelesener Produktname (nur Erfolge)
 }
 
 var hub kbdHub
@@ -308,7 +341,7 @@ func (h *kbdHub) subscribe(s *winSub) (func(), error) {
 		}
 		h.done = done
 	} else {
-		h.refresh()
+		h.request()
 	}
 	return func() {
 		h.startMu.Lock()
@@ -323,7 +356,7 @@ func (h *kbdHub) subscribe(s *winSub) (func(), error) {
 		last := len(h.subs) == 0
 		h.mu.Unlock()
 		if !last {
-			h.refresh()
+			h.request()
 		}
 		if last && h.done != nil {
 			pPostThreadMessageW.Call(uintptr(h.tid), wmQuit, 0, 0)
@@ -333,10 +366,66 @@ func (h *kbdHub) subscribe(s *winSub) (func(), error) {
 	}, nil
 }
 
-// refresh weist den Hub-Thread an, das Abfangen neu zu bewerten (Abnehmer oder Geräte geändert).
-func (h *kbdHub) refresh() {
-	if hw := h.hwnd; hw != 0 {
-		pPostMessageW.Call(hw, wmRefresh, 0, 0)
+// request fordert den Auflöser auf, die Geräteliste neu zu lesen (nicht blockierend, Anfragen verschmelzen).
+func (h *kbdHub) request() {
+	if h.req == nil {
+		return
+	}
+	select {
+	case h.req <- struct{}{}:
+	default:
+	}
+}
+
+// name ist der gelesene Produktname zum Pfad, leer wenn (noch) nicht bekannt.
+func (h *kbdHub) name(path string) string {
+	h.nameMu.Lock()
+	defer h.nameMu.Unlock()
+	return h.names[path]
+}
+
+// resolve läuft im Auflöser: liest die Geräteliste samt Namen, merkt sich nur gelungene Namen und
+// bestimmt, ob abgefangen wird; meldet das Ergebnis per wmRefresh an den Hub-Thread.
+func (h *kbdHub) resolve() bool {
+	var readers []*winSub
+	learning := false
+	for _, s := range h.snapshot() {
+		if s.learn != nil {
+			learning = true
+		}
+		if s.match != nil {
+			readers = append(readers, s)
+		}
+	}
+	names := map[string]string{}
+	attached := false
+	for _, d := range enumDevices() {
+		if d.Named {
+			names[d.Path] = d.Name
+		}
+		for _, s := range readers {
+			if s.match(d.InputDevice) {
+				attached = true
+			}
+		}
+	}
+	h.nameMu.Lock()
+	h.names = names
+	h.nameMu.Unlock()
+	return (attached || forceActive && len(readers) > 0) && !learning
+}
+
+// resolver ist der Goroutine, der Anfragen abarbeitet, bis stop geschlossen wird.
+func (h *kbdHub) resolver(hwnd uintptr, stop <-chan struct{}, finished chan<- struct{}) {
+	defer close(finished)
+	for {
+		select {
+		case <-h.req:
+		case <-stop:
+			return
+		}
+		h.attached.Store(h.resolve())
+		pPostMessageW.Call(hwnd, wmRefresh, 0, 0)
 	}
 }
 
@@ -363,34 +452,6 @@ func (h *kbdHub) classify(info InputDevice, dev uintptr) bool {
 	return false
 }
 
-// shouldIntercept: Es gibt einen Leser, sein Gerät ist angesteckt, und es wird nicht angelernt.
-// Beim Anlernen wird nichts verschluckt; die Folge wird an den Raw-Ereignissen erkannt.
-func (h *kbdHub) shouldIntercept() bool {
-	if forceActive {
-		return true
-	}
-	var readers []*winSub
-	for _, s := range h.snapshot() {
-		if s.learn != nil {
-			return false
-		}
-		if s.match != nil {
-			readers = append(readers, s)
-		}
-	}
-	if len(readers) == 0 {
-		return false
-	}
-	for _, d := range ListInputDevices("") {
-		for _, s := range readers {
-			if s.match(d) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // loopState gehört dem Hub-Thread; nur dieser Thread liest und schreibt ihn (Haken und
 // Fensterprozedur laufen in dessen Nachrichtenschleife).
 type loopState struct {
@@ -398,6 +459,10 @@ type loopState struct {
 	g     gate
 	hwnd  uintptr
 	cache map[uintptr]InputDevice
+
+	fg        uintptr // zuletzt gesehenes Vordergrundfenster
+	warned    bool
+	lastAsked time.Time
 }
 
 var cur *loopState
@@ -409,37 +474,109 @@ var injectedAsHardware bool
 // forceActive lässt die Prüfung das Abfangen auch ohne angestecktes Lesergerät einschalten.
 var forceActive bool
 
+// device liefert das Gerät zum Raw-Input-Handle ohne jede Geräte-E/A: Pfad und Kennung stammen aus
+// GetRawInputDeviceInfo, der Name aus dem Speicher des Auflösers. Fehlt er, wird er (höchstens alle 2 s)
+// angefordert; der Eintrag bleibt bis zur nächsten Aktualisierung unvollständig und wird nicht festgeschrieben.
 func (l *loopState) device(h uintptr) InputDevice {
 	if d, ok := l.cache[h]; ok {
 		return d
 	}
-	d := deviceFromPath(rawDeviceName(h))
+	path := rawDeviceName(h)
+	d := InputDevice{Path: path, ID: deviceID(path), Name: l.hub.name(path)}
+	if d.Name == "" {
+		if time.Since(l.lastAsked) > 2*time.Second {
+			l.lastAsked = time.Now()
+			l.hub.request()
+		}
+	}
 	l.cache[h] = d
 	return d
 }
 
-// apply führt die Folgen einer Entscheidung aus.
-// refresh bewertet neu, ob abgefangen wird (Leser angesteckt, nicht beim Anlernen).
+// refresh übernimmt das Ergebnis des Auflösers.
 func (l *loopState) refresh() {
-	l.apply(l.g.SetActive(l.hub.shouldIntercept()))
+	l.cache = map[uintptr]InputDevice{}
+	l.apply(l.g.SetActive(l.hub.attached.Load()))
 }
 
+// apply führt die Folgen einer Entscheidung aus. Scheitert das Wiederholen (SendInput wird von UIPI
+// abgewiesen, wenn das Vordergrundfenster höhere Rechte hat), wird nichts mehr gehalten, bis das
+// Vordergrundfenster wechselt, und es wird gemeldet.
 func (l *loopState) apply(acts []action) {
-	for _, a := range acts {
-		switch a.Kind {
-		case actDrop:
-			if code, ok := keyCode(a.Key); ok && !a.Key.Up {
-				var d InputDevice
-				if a.Dev != 0 {
-					d = l.device(a.Dev)
-				}
-				l.hub.dispatch(d, a.Dev != 0, code, a.At)
+	failed := l.g.Exec(acts, replay, func(a action) {
+		if code, ok := keyCode(a.Key); ok && !a.Key.Up {
+			var d InputDevice
+			if a.Dev != 0 {
+				d = l.device(a.Dev)
 			}
-		case actReplay:
-			replay(a.Key)
+			l.hub.dispatch(d, a.Dev != 0, code, a.At)
 		}
+	})
+	if failed && !l.warned {
+		l.warned = true
+		l.hub.warnAll("USB-Leser: Tasten können nicht an das Vordergrundfenster übergeben werden (Fenster mit höheren Rechten?). Dort wird der Leser nicht abgefangen.")
 	}
 	l.rearm()
+}
+
+// checkForeground prüft bei einem Wechsel des Vordergrundfensters, ob dorthin eingespielt werden darf;
+// sonst wird nichts gehalten (Bypass). Ein gemeldeter Fehler wird mit dem Wechsel zurückgenommen.
+func (l *loopState) checkForeground() {
+	if !l.g.Idle() {
+		return
+	}
+	fg, _, _ := pGetForegroundWindow.Call()
+	if fg == l.fg {
+		return
+	}
+	l.fg = fg
+	l.g.Bypass = !canInject(fg)
+	if !l.g.Bypass && l.warned {
+		l.warned = false
+		l.hub.warnAll("")
+	}
+}
+
+var (
+	selfElevatedOnce sync.Once
+	selfElevated     bool
+)
+
+// canInject: Darf SendInput in das Fenster schreiben? UIPI weist Eingaben an Fenster höherer Rechte ab. Sicher
+// ist, was gelesen werden kann und nicht erhöht ist; im Zweifel nein.
+func canInject(hwnd uintptr) bool {
+	if hwnd == 0 {
+		return true
+	}
+	selfElevatedOnce.Do(func() { selfElevated = windows.GetCurrentProcessToken().IsElevated() })
+	if selfElevated {
+		return true
+	}
+	var pid uint32
+	pGetWindowThreadProcessID.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	if pid == 0 {
+		return true
+	}
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	var tok windows.Token
+	if err := windows.OpenProcessToken(h, windows.TOKEN_QUERY, &tok); err != nil {
+		return false
+	}
+	defer tok.Close()
+	return !tok.IsElevated()
+}
+
+// warnAll reicht eine Meldung an alle Leser weiter.
+func (h *kbdHub) warnAll(msg string) {
+	for _, s := range h.snapshot() {
+		if s.warn != nil {
+			s.warn(msg)
+		}
+	}
 }
 
 // rearm stellt den Zeitgeber auf die nächste Frist.
@@ -457,7 +594,7 @@ func (l *loopState) rearm() {
 }
 
 // replay spielt die Taste mit Markierung neu ein (Scancode, so wie sie von der Tastatur kam).
-func replay(k keyEvent) {
+func replay(k keyEvent) bool {
 	fl := uint32(keyeventfScanCode)
 	if k.Up {
 		fl |= keyeventfKeyUp
@@ -466,7 +603,8 @@ func replay(k keyEvent) {
 		fl |= keyeventfExtendedKey
 	}
 	in := kbdInput{Type: inputKeyboard, Scan: k.Scan, Flags: fl, Extra: replayMarker}
-	pSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+	r, _, _ := pSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+	return r == 1
 }
 
 // hookTime ist der Zeitpunkt des Tastendrucks aus dem Zeitstempel des Hakens (Millisekunden der
@@ -484,6 +622,9 @@ func hookProc(code, wp, lp uintptr) uintptr {
 			keyEvent: keyEvent{Scan: uint16(k.ScanCode), Ext: k.Flags&llkhfExtended != 0, Up: k.Flags&llkhfUp != 0},
 			Marked:   k.DwExtraInfo == replayMarker,
 			Injected: !injectedAsHardware && k.Flags&(llkhfInjected|llkhfLowerILInjected) != 0,
+		}
+		if !h.Marked && !h.Injected && isCandidate(h.keyEvent) {
+			cur.checkForeground()
 		}
 		block, acts := cur.g.Hook(h, hookTime(k.Time))
 		cur.apply(acts)
@@ -508,7 +649,7 @@ func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
 			}
 		case wmInputDeviceChange:
 			l.cache = map[uintptr]InputDevice{}
-			l.refresh()
+			l.hub.request()
 		case wmRefresh:
 			l.refresh()
 		}
@@ -592,8 +733,14 @@ func runLoop(ready chan<- error, done chan<- struct{}, h *kbdHub) {
 		pRegisterRawInputDevices.Call(uintptr(unsafe.Pointer(&off)), 1, unsafe.Sizeof(off))
 	}()
 	cur = &loopState{hub: h, hwnd: hwnd, cache: map[uintptr]InputDevice{}}
-	cur.g.Active = h.shouldIntercept()
 	h.hwnd = hwnd
+	h.req = make(chan struct{}, 1)
+	h.attached.Store(false)
+	stopRes := make(chan struct{})
+	resDone := make(chan struct{})
+	go h.resolver(hwnd, stopRes, resDone)
+	defer func() { close(stopRes); <-resDone }()
+	h.request()
 	defer func() { h.hwnd, cur = 0, nil }()
 	hk, _, e := pSetWindowsHookExW.Call(whKeyboardLL, hookCb, hInst, 0)
 	if hk == 0 {
@@ -637,6 +784,7 @@ func (u *usbReader) readKeys(ctx context.Context, fn func(code uint16, at time.T
 	ch := make(chan keyIn, 256)
 	unsub, err := hub.subscribe(&winSub{
 		match: func(d InputDevice) bool { return deviceMatches(u.sel, d) },
+		warn:  u.warn,
 		fn: func(_ InputDevice, code uint16, at time.Time) {
 			select {
 			case ch <- keyIn{code, at}: // der Hub-Thread darf nie blockieren
@@ -688,6 +836,10 @@ func learnPlatform(ctx context.Context, d time.Duration) (InputDevice, string, e
 	case <-timer.C:
 		return InputDevice{}, "", errors.New("Keine Karte gelesen")
 	case f := <-ch:
-		return f.dev, f.text, nil
+		dev, _ := deviceFromPath(f.dev.Path) // Name lesen, hier ist es erlaubt (nicht im Haken)
+		if dev.Path == "" {
+			dev = f.dev
+		}
+		return dev, f.text, nil
 	}
 }

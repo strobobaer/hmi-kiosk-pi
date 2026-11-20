@@ -135,6 +135,7 @@ type usbReader struct {
 	sel    string
 	format string // was der Leser tippt, siehe normalizeUID; leer: unverändert
 	devs   []InputDevice
+	warn   func(msg string) // Meldung des Abfangens (Windows); leer: wieder in Ordnung
 }
 
 func (u *usbReader) Probe(ctx context.Context) (string, error) {

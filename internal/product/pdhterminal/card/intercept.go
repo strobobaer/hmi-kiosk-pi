@@ -23,11 +23,13 @@ import "time"
 
 const (
 	// gapMax ist der größte Abstand zweier Tastendrücke innerhalb einer Leserfolge.
-	gapMax = 20 * time.Millisecond
+	gapMax = 40 * time.Millisecond
 	// rawMax ist, wie lange ein vorgemerktes Raw-Ereignis auf seinen Haken wartet.
 	rawMax = 50 * time.Millisecond
-	// maxDowns begrenzt die Folge: 20 Hexzeichen und Enter.
+	// maxDowns begrenzt die Zeichen der Folge (ohne Umschalt): 20 Hexzeichen und Enter.
 	maxDowns = 21
+	// maxQueue begrenzt die gehaltenen Ereignisse: Je Zeichen Umschalt und Zeichen, jeweils Druck und Loslassen.
+	maxQueue = 4 * maxDowns
 	maxRaws  = 16
 )
 
@@ -86,6 +88,9 @@ type action struct {
 type gate struct {
 	// Active: Der gewählte Leser ist angesteckt und es wird nicht angelernt. Sonst läuft alles durch.
 	Active bool
+	// Bypass: Wiederholen geht nicht (Vordergrundfenster mit höheren Rechten, SendInput scheitert).
+	// Dann wird nichts gehalten, bis der Aufrufer es zurücknimmt (anderes Vordergrundfenster).
+	Bypass bool
 
 	queue    []heldKey
 	raws     []rawEvent
@@ -117,6 +122,34 @@ func isCandidate(k keyEvent) bool {
 }
 
 func isEnter(k keyEvent) bool { return k.Scan == scanEnter }
+
+func isShift(k keyEvent) bool { return !k.Ext && (k.Scan == 42 || k.Scan == 54) }
+
+// Idle: Nichts ist gehalten.
+func (g *gate) Idle() bool { return len(g.queue) == 0 }
+
+// Exec führt die Folgen einer Entscheidung aus. replay spielt eine Taste neu ein und meldet, ob das
+// gelang; drop reicht eine verschluckte Taste weiter. Scheitert ein Wiederholen (Vordergrundfenster mit
+// höheren Rechten), geht diese Taste verloren; damit nicht weitere folgen, wird nichts mehr gehalten
+// (Bypass) und der Rest der Warteschlange verworfen. failed meldet das; der Aufrufer nimmt Bypass zurück,
+// sobald das Vordergrundfenster wechselt.
+func (g *gate) Exec(acts []action, replay func(keyEvent) bool, drop func(action)) (failed bool) {
+	for _, a := range acts {
+		switch a.Kind {
+		case actDrop:
+			drop(a)
+		case actReplay:
+			if !replay(a.Key) {
+				failed = true
+			}
+		}
+	}
+	if failed {
+		g.Bypass = true
+		g.queue, g.chars, g.downs, g.ups = nil, nil, 0, nil
+	}
+	return failed
+}
 
 // keyCode bildet das Ereignis auf den Tastencode des keyBuffer ab: Hauptblock und Ziffernblock
 // haben unter Windows (Satz 1) dieselben Werte wie unter Linux; Ziffernblock-Enter wird 96.
@@ -169,7 +202,7 @@ func (g *gate) SetActive(a bool) []action {
 // Hook behandelt ein Ereignis des Tastaturhakens zum Zeitpunkt now. block ist die Antwort des
 // Hakens (true: nicht weiterreichen); acts sind Folgen daraus, vor der Antwort auszuführen.
 func (g *gate) Hook(h hookEvent, now time.Time) (block bool, acts []action) {
-	if h.Marked || h.Injected || !g.Active {
+	if h.Marked || h.Injected || !g.Active || g.Bypass {
 		return false, nil
 	}
 	if !isCandidate(h.keyEvent) {
@@ -183,7 +216,7 @@ func (g *gate) Hook(h hookEvent, now time.Time) (block bool, acts []action) {
 			delete(g.ups, down)
 			return true, nil // Loslassen einer verschluckten Taste
 		}
-	} else if len(g.queue) > 0 && (now.Sub(g.lastDown) > gapMax || g.downs >= maxDowns) {
+	} else if len(g.queue) > 0 && (now.Sub(g.lastDown) > gapMax || g.downs >= maxDowns || len(g.queue) >= maxQueue) {
 		acts = g.flush() // Pause oder zu lang: Die Folge war keine Karte
 	}
 
@@ -208,7 +241,9 @@ func (g *gate) Hook(h hookEvent, now time.Time) (block bool, acts []action) {
 	g.queue = append(g.queue, heldKey{keyEvent: h.keyEvent, Dev: dev, At: now, state: st})
 	if !h.Up {
 		g.lastDown = now
-		g.downs++
+		if !isShift(h.keyEvent) { // Umschalt zählt nicht als Zeichen, Leser setzen es um jeden Großbuchstaben
+			g.downs++
+		}
 		if c, ok := keyChars[mustCode(h.keyEvent)]; ok && !isEnter(h.keyEvent) {
 			g.chars = append(g.chars, c)
 		}

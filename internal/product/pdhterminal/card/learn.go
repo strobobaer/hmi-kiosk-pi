@@ -29,18 +29,16 @@ func SuggestFormat(typed string) string {
 }
 
 // UIDForms zeigt die getippte UID in den drei Schreibweisen. Zehn Ziffern gelten als dezimal
-// (Zahl als Bytefolge, höchstwertiges Byte zuerst, wie normalizeUID), sonst muss es eine gerade
-// Zahl Hexzeichen sein. dec ist bei Dezimaleingabe die getippte Zahl.
+// (Umkehrung von FormatUID "dec", siehe decBytes), sonst muss es eine gerade Zahl Hexzeichen sein.
+// dec ist bei Dezimaleingabe die getippte Zahl.
 func UIDForms(typed string) (hexForm, hexRev, dec string, ok bool) {
 	typed = strings.TrimSpace(typed)
 	var raw []byte
 	if SuggestFormat(typed) == "dec" {
-		n, _ := new(big.Int).SetString(typed, 10)
-		b := n.Bytes()
-		for len(b) < 4 {
-			b = append([]byte{0}, b...)
+		var ok bool
+		if raw, ok = decBytes(typed); !ok {
+			return "", "", "", false
 		}
-		raw = b // das Terminal liest Dezimalzahlen als Bytefolge, höchstwertiges Byte zuerst (normalizeUID)
 	} else {
 		if typed == "" || len(typed)%2 != 0 {
 			return "", "", "", false
@@ -59,8 +57,8 @@ func UIDForms(typed string) (hexForm, hexRev, dec string, ok bool) {
 
 // normalizeUID bringt die Eingabe eines USB-Lesers in die Form, die der PN532 liefert (Hex in
 // Großbuchstaben). format sagt, was der Leser tippt: "" lässt den Text unverändert (nur Großbuchstaben),
-// "hex" ist Hex wie es ist, "hex-rev" Hex mit umgekehrter Bytefolge, "dec" eine Dezimalzahl (4 Byte
-// bis 10 Ziffern, sonst 7 Byte, höchstwertiges Byte zuerst). Passt der Text nicht zum Format,
+// "hex" ist Hex wie es ist, "hex-rev" Hex mit umgekehrter Bytefolge, "dec" eine Dezimalzahl, genau die
+// Umkehrung von FormatUID "dec" (decBytes). Passt der Text nicht zum Format,
 // bleibt er unverändert.
 func normalizeUID(typed, format string) string {
 	up := strings.ToUpper(strings.TrimSpace(typed))
@@ -74,18 +72,31 @@ func normalizeUID(typed, format string) string {
 		}
 		return strings.ToUpper(hex.EncodeToString(reverse(b)))
 	case "dec":
-		n, ok := new(big.Int).SetString(up, 10)
-		if !ok || n.Sign() < 0 || strings.Trim(up, "0123456789") != "" {
-			return up
+		if raw, ok := decBytes(up); ok {
+			return strings.ToUpper(hex.EncodeToString(raw))
 		}
-		size := 7
-		if len(up) <= 10 {
-			size = 4
-		}
-		if len(n.Bytes()) > size {
-			return up
-		}
-		return strings.ToUpper(hex.EncodeToString(n.FillBytes(make([]byte, size))))
+		return up
 	}
 	return up
+}
+
+// decBytes ist die Umkehrung von FormatUID(raw, "dec"): Die Zahl, höchstwertiges Byte zuerst, ergibt die
+// UID-Bytes in umgekehrter Reihenfolge (so schreibt es der Pi seit jeher). Bis 10 Ziffern sind es 4 Byte,
+// sonst 7; passt die Zahl nicht hinein, scheitert es (die Eingabe bleibt dann unverändert).
+func decBytes(s string) ([]byte, bool) {
+	if s == "" || strings.Trim(s, "0123456789") != "" {
+		return nil, false
+	}
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		return nil, false
+	}
+	size := 7
+	if len(s) <= 10 {
+		size = 4
+	}
+	if len(n.Bytes()) > size {
+		return nil, false
+	}
+	return reverse(n.FillBytes(make([]byte, size))), true
 }

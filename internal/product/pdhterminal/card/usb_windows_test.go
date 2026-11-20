@@ -6,6 +6,7 @@ import (
 	"context"
 	"reflect"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -193,7 +194,7 @@ func TestInterceptHumanSpeedReplayed(t *testing.T) {
 	swallowed := make(chan uint16, 64)
 	defer startIntercept(t, func(_ InputDevice, c uint16, _ time.Time) { swallowed <- c })()
 
-	tapAll([]uint16{2, 3, 4}, 80*time.Millisecond)
+	tapAll([]uint16{2, 3, 4}, 150*time.Millisecond)
 	sendScan(0x64, false) // F13
 	sendScan(0x64, true)
 	got := collectObs(t, 8)
@@ -263,4 +264,21 @@ func TestInterceptOffWithoutReader(t *testing.T) {
 			t.Errorf("ohne Leser darf nichts gehalten und wiederholt werden: %+v", g)
 		}
 	}
+}
+
+// Ein nicht gelesener Name wird als solcher gekennzeichnet (und darf nicht zwischengespeichert werden).
+func TestEnumNamedFlag(t *testing.T) {
+	for _, d := range enumDevices() {
+		if !d.Named && !strings.HasPrefix(d.Name, "Tastatur") {
+			t.Errorf("Ersatzname erwartet: %+v", d)
+		}
+		if d.ID != deviceID(d.Path) {
+			t.Errorf("Kennung %q passt nicht zum Pfad %q", d.ID, d.Path)
+		}
+	}
+	if !canInject(0) {
+		t.Error("ohne Fenster gibt es nichts zu sperren")
+	}
+	fg, _, _ := pGetForegroundWindow.Call()
+	t.Logf("Vordergrundfenster %#x: Einspielen erlaubt=%v", fg, canInject(fg))
 }

@@ -131,9 +131,9 @@ func TestGateHumanSpeedReplayedInOrder(t *testing.T) {
 
 func TestGateMixedGapReplayed(t *testing.T) {
 	g := newG()
-	// 4 Zeichen schnell, dann 40 ms Pause, dann 4 Zeichen und Enter: keine Leserfolge.
+	// 4 Zeichen schnell, dann Pause über 40 ms, dann 4 Zeichen und Enter: keine Leserfolge.
 	r1 := typeStr(g, t0, "04A1", 8*time.Millisecond, false)
-	r2 := typeStr(g, r1.end.Add(32*time.Millisecond), "B2C3", 8*time.Millisecond, true)
+	r2 := typeStr(g, r1.end.Add(60*time.Millisecond), "B2C3", 8*time.Millisecond, true)
 	acts := append(r1.acts, r2.acts...)
 	if count(acts, actDrop) != 0 {
 		t.Fatalf("verschluckt trotz Pause: %+v", kinds(acts))
@@ -168,7 +168,7 @@ func TestGateTooLongReplayed(t *testing.T) {
 	if count(r.acts, actDrop) != 0 {
 		t.Fatalf("zu lange Folge verschluckt")
 	}
-	if len(g.queue) > maxDowns*2 {
+	if len(g.queue) > maxQueue {
 		t.Fatalf("Warteschlange unbegrenzt: %d", len(g.queue))
 	}
 }
@@ -242,7 +242,7 @@ func TestGateRawDeviceDecides(t *testing.T) {
 	if block, acts := g.Hook(hook(k1up), t0.Add(5*time.Millisecond)); !block || len(acts) != 0 {
 		t.Fatalf("Loslassen: block=%v acts=%+v", block, acts)
 	}
-	// andere Tastatur: sofort wiederholt, ohne die 20 ms abzuwarten
+	// andere Tastatur: sofort wiederholt, ohne gapMax abzuwarten
 	g = newG()
 	g.Hook(hook(kA), t0)
 	acts = g.Raw(raw(kA, 9, false, t0), t0.Add(time.Millisecond))
@@ -374,5 +374,97 @@ func TestDeviceMatchAfterReplug(t *testing.T) {
 	}
 	if deviceMatches("", old) {
 		t.Error("leere Auswahl passt zu nichts")
+	}
+}
+
+// typeShift tippt wie ein Leser, der jeden Buchstaben mit eigenem Umschalt-Druck setzt (Umschalt hinunter,
+// Zeichen hinunter, Zeichen hoch, Umschalt hoch); gap ist der Abstand zwischen den Drücken.
+func typeShift(g *gate, start time.Time, s string, gap time.Duration) run {
+	var r run
+	at := start
+	send := func(k keyEvent, when time.Time) {
+		b, a := g.Hook(hook(k), when)
+		r.block = append(r.block, b)
+		r.acts = append(r.acts, a...)
+	}
+	shift := keyEvent{Scan: 42}
+	var keys []keyEvent
+	for i := 0; i < len(s); i++ {
+		keys = append(keys, keyEvent{Scan: scanOf[s[i]]})
+	}
+	keys = append(keys, kEnt)
+	for _, k := range keys {
+		letter := k.Scan == 30 || k.Scan == 48 || k.Scan == 46 || k.Scan == 32 || k.Scan == 18 || k.Scan == 33
+		if letter {
+			send(shift, at)
+			at = at.Add(gap / 2)
+		}
+		send(k, at)
+		up := k
+		up.Up = true
+		send(up, at.Add(4*time.Millisecond))
+		if letter {
+			send(keyEvent{Scan: 42, Up: true}, at.Add(6*time.Millisecond))
+		}
+		at = at.Add(gap)
+	}
+	r.end = at
+	return r
+}
+
+// Ein Leser, der jeden Großbuchstaben mit eigenem Umschalt-Druck tippt, bleibt eine Leserfolge: Umschalt
+// zählt nicht gegen die Länge (sonst liefen 14 und 20 Zeichen über die Grenze und würden durchgereicht).
+func TestGateShiftWrappedBurstSwallowed(t *testing.T) {
+	for name, uid := range map[string]string{
+		"8 hex": "ABCDEF12", "14 hex": "ABCDEFABCDEF12", "20 hex": "ABCDEFABCDEFABCDEFAB",
+	} {
+		g := newG()
+		r := typeShift(g, t0, uid, 16*time.Millisecond)
+		for i, b := range r.block {
+			if !b {
+				t.Fatalf("%s: Ereignis %d nicht blockiert", name, i)
+			}
+		}
+		if count(r.acts, actReplay) != 0 {
+			t.Fatalf("%s: %d Ereignisse wiederholt, erwartet keines", name, count(r.acts, actReplay))
+		}
+		if count(r.acts, actDrop) == 0 || len(g.queue) != 0 {
+			t.Fatalf("%s: nicht verschluckt (%d verworfen, Warteschlange %d)", name, count(r.acts, actDrop), len(g.queue))
+		}
+	}
+}
+
+// Schlägt das Wiederholen fehl (Vordergrundfenster mit höheren Rechten), wird nichts mehr gehalten, bis der
+// Aufrufer Bypass zurücknimmt.
+func TestGateExecFailsOpen(t *testing.T) {
+	g := newG()
+	g.Hook(hook(k1), t0)
+	g.Hook(hook(kA), t0.Add(5*time.Millisecond))
+	acts := g.Tick(t0.Add(time.Second))
+	fail := func(keyEvent) bool { return false }
+	if !g.Exec(acts, fail, func(action) {}) {
+		t.Fatal("Fehlschlag wurde nicht gemeldet")
+	}
+	if !g.Bypass || len(g.queue) != 0 {
+		t.Fatalf("Bypass=%v Warteschlange=%d", g.Bypass, len(g.queue))
+	}
+	// jetzt läuft alles durch, auch eine schnelle UID-Folge
+	r := typeStr(g, t0.Add(2*time.Second), "04A1B2C3", 8*time.Millisecond, true)
+	for i, b := range r.block {
+		if b {
+			t.Fatalf("Ereignis %d blockiert trotz Bypass", i)
+		}
+	}
+	// anderes Vordergrundfenster: wieder wie vorher
+	g.Bypass = false
+	if b, _ := g.Hook(hook(k1), t0.Add(3*time.Second)); !b {
+		t.Fatal("nach Bypass-Ende muss wieder gehalten werden")
+	}
+	// gelingt das Wiederholen, bleibt alles wie es ist
+	g = newG()
+	g.Hook(hook(k1), t0)
+	ok := func(keyEvent) bool { return true }
+	if g.Exec(g.Tick(t0.Add(time.Second)), ok, func(action) {}) || g.Bypass {
+		t.Fatal("Bypass trotz erfolgreichem Wiederholen")
 	}
 }
