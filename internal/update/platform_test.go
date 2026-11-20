@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"io"
 	"os"
 	"path/filepath"
@@ -188,5 +189,71 @@ func TestPackRejectsBadPlatform(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "pdh-terminal"), []byte("x"), 0o755)
 	if _, err := PackFor(dir, "1.0.0", release.PDHTerminal, "plan9", 1, priv); err == nil {
 		t.Fatal("fremde Plattform gepackt")
+	}
+}
+
+func TestVerifyBinarySum(t *testing.T) {
+	pub, priv := winKeys(t)
+	p, err := Verify(platformBlob(t, priv, "1.2.3", release.PlatformWindowsAMD64), pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := sha256.Sum256([]byte("BIN windows-amd64")); p.BinarySum != want {
+		t.Errorf("BinarySum %x, erwartet %x", p.BinarySum, want)
+	}
+}
+
+// Unter Windows gibt es weder current noch previous: Prune kennte die laufende und die Rückfall-Version nicht und
+// löschte alle Versionsordner. Der Installer lässt sie deshalb stehen; der Starter räumt nach einem gesunden Start auf.
+func TestInstallWindowsKeepsOtherVersions(t *testing.T) {
+	pub, priv := winKeys(t)
+	root := t.TempDir()
+	for _, v := range []string{"1.0.0", "1.1.0"} {
+		mkVersion(t, root, v)
+	}
+	in := newInstaller(root, pub)
+	in.Product = release.PDHTerminal
+	in.Platform = release.PlatformWindowsAMD64
+	in.Activate = func(context.Context, string) error { return nil }
+	if _, err := in.Install(context.Background(), platformBlob(t, priv, "1.2.3", release.PlatformWindowsAMD64)); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"1.0.0", "1.1.0", "1.2.3"} {
+		if _, err := os.Stat(filepath.Join(appDir(root), v)); err != nil {
+			t.Errorf("Ordner %s fehlt: %v", v, err)
+		}
+	}
+}
+
+// Eine vorhandene Version (laufend oder Rückfall) wird nie überschrieben; nur eine als schlecht markierte wird ersetzt.
+func TestInstallWindowsExistingVersion(t *testing.T) {
+	pub, priv := winKeys(t)
+	root := t.TempDir()
+	in := newInstaller(root, pub)
+	in.Product = release.PDHTerminal
+	in.Platform = release.PlatformWindowsAMD64
+	in.Activate = func(context.Context, string) error { return nil }
+	blob := platformBlob(t, priv, "1.2.3", release.PlatformWindowsAMD64)
+	if _, err := in.Install(context.Background(), blob); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(appDir(root), "1.2.3")
+	marker := filepath.Join(dir, "marker")
+	os.WriteFile(marker, []byte("alt"), 0o644)
+	if _, err := in.Install(context.Background(), blob); err == nil || !strings.Contains(err.Error(), "bereits installiert") {
+		t.Fatalf("zweite Installation: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Error("vorhandene Version wurde angetastet")
+	}
+	os.WriteFile(filepath.Join(dir, BadMarker), nil, 0o644)
+	if _, err := in.Install(context.Background(), blob); err != nil {
+		t.Fatalf("schlechte Version ersetzen: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("schlechte Version wurde nicht ersetzt")
+	}
+	if _, err := os.Stat(filepath.Join(dir, BadMarker)); err == nil {
+		t.Error("bad-Markierung blieb")
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"hmikiosk/internal/winstart"
 )
 
 // fakeTray ersetzt das Symbol: Es merkt sich Zustand und Rückrufe.
@@ -115,6 +117,10 @@ func TestRequestExitFirstWins(t *testing.T) {
 func TestExitCodes(t *testing.T) {
 	if ExitQuit != 3 || ExitRestart != 4 {
 		t.Errorf("Rückgabewerte %d %d", ExitQuit, ExitRestart)
+	}
+	// Der Starter kennt dieselben Werte (er importiert dieses Paket nicht).
+	if winstart.ExitQuit != ExitQuit || winstart.ExitRestart != ExitRestart {
+		t.Errorf("Starter erwartet %d %d", winstart.ExitQuit, winstart.ExitRestart)
 	}
 }
 

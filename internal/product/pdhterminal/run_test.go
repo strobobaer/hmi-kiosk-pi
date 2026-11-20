@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -232,9 +233,14 @@ func TestNoHelperDeps(t *testing.T) {
 	}
 }
 
-// TestUpdateActivateWithoutHelper: Ohne Helfer gibt es noch keine Aktivierung (kommt mit dem Starter).
+// TestUpdateActivateWithoutHelper: Ohne Helfer (Windows) schreibt die Aktivierung nichts, sondern bittet verzögert
+// um einen Neustart (ErrRestart); der Starter wählt dann die neue Version.
 func TestUpdateActivateWithoutHelper(t *testing.T) {
-	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	old := restartDelay
+	restartDelay = 50 * time.Millisecond
+	t.Cleanup(func() { restartDelay = old })
+	dir := t.TempDir()
+	s, err := newService(Options{DataDir: dir, RunDir: t.TempDir(), HardwareID: func() string { return "" }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,9 +249,32 @@ func TestUpdateActivateWithoutHelper(t *testing.T) {
 	if !ok {
 		t.Fatalf("Update ist %T", s.adminDeps().Update)
 	}
-	err = inst.Activate(context.Background(), "1.2.3")
-	if err == nil || !strings.Contains(err.Error(), "noch nicht verfügbar") {
-		t.Errorf("Fehler: %v", err)
+	start := time.Now()
+	if err := inst.Activate(context.Background(), "1.2.3"); err != nil {
+		t.Fatalf("Aktivierung: %v", err)
+	}
+	select {
+	case <-s.exit:
+		t.Fatal("Neustart kam ohne Verzögerung: die Antwort der Admin-Seite ginge verloren")
+	default:
+	}
+	select {
+	case err := <-s.exit:
+		if !errors.Is(err, ErrRestart) {
+			t.Errorf("Ende mit %v, erwartet ErrRestart", err)
+		}
+		if time.Since(start) < 40*time.Millisecond {
+			t.Errorf("Neustart nach %v", time.Since(start))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("kein Neustart angefordert")
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		for _, e := range ents {
+			if e.Name() == "app" {
+				t.Errorf("Aktivierung hat in den Datenordner geschrieben: %s", e.Name())
+			}
+		}
 	}
 }
 

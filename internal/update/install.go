@@ -20,6 +20,10 @@ import (
 // packageFile ist der Name des Pakets neben dem Programm (nur Windows).
 const packageFile = "package.pkg"
 
+// BadMarker ist die Datei im Versionsordner (nur Windows), mit der der Starter eine Version
+// als schlecht kennzeichnet, die sich nicht gesund gemeldet hat. Ein neues Paket derselben Version ersetzt den Ordner.
+const BadMarker = "bad"
+
 // Install entpackt ein geprüftes Paket nach <root>/app/<version>. Es schaltet
 // nichts um. Der Entpackvorgang läuft in einem temporären Ordner und wird erst
 // am Ende umbenannt; bei einem Fehler bleibt nichts zurück.
@@ -76,7 +80,16 @@ func Install(root string, p *Package) (version string, err error) {
 		return "", err
 	}
 	dest := filepath.Join(app, p.Version)
-	if _, statErr := os.Lstat(dest); statErr == nil {
+	if _, statErr := os.Lstat(dest); statErr == nil && p.Platform != "" {
+		// Windows: Es gibt keine Verweise current/previous. Ein vorhandener Ordner bleibt (er kann
+		// die laufende oder die Rückfall-Version sein); nur eine als schlecht markierte Version wird ersetzt.
+		if _, err := os.Lstat(filepath.Join(dest, BadMarker)); err != nil {
+			return "", fmt.Errorf("Version %s ist bereits installiert", p.Version)
+		}
+		if err := os.RemoveAll(dest); err != nil {
+			return "", err
+		}
+	} else if statErr == nil {
 		cur, err := readLink(root, currentLink)
 		if err != nil {
 			return "", err
@@ -226,8 +239,12 @@ func (in *Installer) install(ctx context.Context, blob []byte, want string) (str
 	if free == nil {
 		free = FreeBytes
 	}
-	if err := Prune(in.Root); err != nil {
-		log.Printf("Aufräumen alter Versionen: %v", err)
+	// Unter Windows räumt der Starter nach einem gesunden Start auf; Prune kennt dort weder
+	// die laufende noch die Rückfall-Version und löschte beide.
+	if in.Platform == "" {
+		if err := Prune(in.Root); err != nil {
+			log.Printf("Aufräumen alter Versionen: %v", err)
+		}
 	}
 	avail, err := free(app)
 	if err != nil {

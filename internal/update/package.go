@@ -66,8 +66,10 @@ type Package struct {
 	Platform string
 	// Binary ist der Name der Programmdatei im Archiv (unter Windows mit .exe).
 	Binary string
-	sig    []byte
-	targz  []byte
+	// BinarySum ist der SHA-256 der Programmdatei im Archiv; der Windows-Starter vergleicht ihn mit der Exe im Versionsordner.
+	BinarySum [sha256.Size]byte
+	sig       []byte
+	targz     []byte
 }
 
 // binaryFor liefert den Programmnamen des Produkts mit der Kennung id ("" gilt als hmi-kiosk).
@@ -190,6 +192,7 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 	}
 	var version, binary, product, platform string
 	var level int
+	var binarySum [sha256.Size]byte
 	err := walk(targz, verifyBinaries(), func(h *tar.Header, r io.Reader) error {
 		if h.Name == versionName {
 			v, err := readVersion(r)
@@ -210,7 +213,9 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 		if !validPlatform(platform) {
 			return fmt.Errorf("Plattform im Paket unbekannt: %q", platform)
 		}
-		_, err = io.Copy(io.Discard, r)
+		hash := sha256.New()
+		_, err = io.Copy(hash, r)
+		hash.Sum(binarySum[:0])
 		return err
 	})
 	if err != nil {
@@ -227,7 +232,7 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 	if binary != want {
 		return nil, fmt.Errorf("Programmdatei %q passt nicht zum Produkt %s des Pakets", binary, product)
 	}
-	return &Package{Version: version, SystemLevel: level, Product: product, Platform: platform, Binary: binary, sig: sig, targz: targz}, nil
+	return &Package{Version: version, SystemLevel: level, Product: product, Platform: platform, Binary: binary, BinarySum: binarySum, sig: sig, targz: targz}, nil
 }
 
 // readSystemLevel liest den Systemstand aus dem PAX-Datensatz; Pakete bis 0.1.6 haben keinen.

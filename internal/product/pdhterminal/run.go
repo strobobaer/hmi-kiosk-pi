@@ -86,6 +86,9 @@ const (
 	devInput = "/dev/input"
 )
 
+// restartDelay ist die Frist zwischen Update-Aktivierung und Neustart (Windows); Tests verkürzen sie.
+var restartDelay = 2 * time.Second
+
 // localAdminOrigin ist der Ursprung der Admin-Seite am Terminal (für den Systemstand).
 var localAdminOrigin = strings.TrimSuffix(web.LocalAdminURL, "/admin/")
 
@@ -574,8 +577,11 @@ func (s *service) adminDeps() web.AdminDeps {
 	var helper web.HelperAPI
 	var backup web.BackupAPI
 	var netAPI web.NetAPI
+	// Windows: Es gibt keinen Verweis umzuschalten. Der Starter wählt beim Neustart die höchste gültige Version;
+	// die Aktivierung bittet nur darum, kurz verzögert, damit die Antwort der Admin-Seite noch den Browser erreicht.
 	activate := func(context.Context, string) error {
-		return errors.New("Die Aktivierung eines Updates ist unter Windows noch nicht verfügbar")
+		time.AfterFunc(restartDelay, func() { s.requestExit(ErrRestart) })
+		return nil
 	}
 	if s.helper != nil {
 		helper, backup, netAPI = s.helper, s.helper, s.helper
