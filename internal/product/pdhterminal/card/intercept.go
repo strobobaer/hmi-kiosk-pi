@@ -130,25 +130,30 @@ func (g *gate) Idle() bool { return len(g.queue) == 0 }
 
 // Exec führt die Folgen einer Entscheidung aus. replay spielt eine Taste neu ein und meldet, ob das
 // gelang; drop reicht eine verschluckte Taste weiter. Scheitert ein Wiederholen (Vordergrundfenster mit
-// höheren Rechten), geht diese Taste verloren; damit nicht weitere folgen, wird nichts mehr gehalten
-// (Bypass) und der Rest der Warteschlange verworfen. failed meldet das; der Aufrufer nimmt Bypass zurück,
-// sobald das Vordergrundfenster wechselt.
-func (g *gate) Exec(acts []action, replay func(keyEvent) bool, drop func(action)) (failed bool) {
+// höheren Rechten), lässt sich keine weitere Taste dieser Runde zustellen: Es wird nichts mehr wiederholt,
+// Bypass eingeschaltet (nichts wird mehr gehalten, bis der Aufrufer es zurücknimmt) und die Warteschlange
+// verworfen. lost zählt die dabei nicht zugestellten gehaltenen Tasten (die fehlgeschlagene, die übrigen
+// Wiederholungen der Runde und die verworfene Warteschlange); 0 heißt: alles zugestellt.
+func (g *gate) Exec(acts []action, replay func(keyEvent) bool, drop func(action)) (lost int) {
+	failed := false
 	for _, a := range acts {
 		switch a.Kind {
 		case actDrop:
 			drop(a)
 		case actReplay:
-			if !replay(a.Key) {
-				failed = true
+			if failed {
+				lost++
+			} else if !replay(a.Key) {
+				failed, lost = true, lost+1
 			}
 		}
 	}
 	if failed {
+		lost += len(g.queue)
 		g.Bypass = true
 		g.queue, g.chars, g.downs, g.ups = nil, nil, 0, nil
 	}
-	return failed
+	return lost
 }
 
 // keyCode bildet das Ereignis auf den Tastencode des keyBuffer ab: Hauptblock und Ziffernblock

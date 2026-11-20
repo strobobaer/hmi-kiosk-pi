@@ -306,6 +306,7 @@ type kbdHub struct {
 
 	// Auflösen der Geräte (CreateFile, HidD_*) läuft in einem eigenen Goroutine, nie im Haken: Ein Haken,
 	// der LowLevelHooksTimeout überschreitet, wird von Windows stillschweigend entfernt.
+	warnCh   chan string // Meldungen vom Hub-Thread an warner()
 	req      chan struct{}
 	attached atomic.Bool // gewählter Leser ist angesteckt (Ergebnis des Auflösers)
 	nameMu   sync.Mutex
@@ -503,7 +504,7 @@ func (l *loopState) refresh() {
 // abgewiesen, wenn das Vordergrundfenster höhere Rechte hat), wird nichts mehr gehalten, bis das
 // Vordergrundfenster wechselt, und es wird gemeldet.
 func (l *loopState) apply(acts []action) {
-	failed := l.g.Exec(acts, replay, func(a action) {
+	lost := l.g.Exec(acts, replay, func(a action) {
 		if code, ok := keyCode(a.Key); ok && !a.Key.Up {
 			var d InputDevice
 			if a.Dev != 0 {
@@ -512,9 +513,9 @@ func (l *loopState) apply(acts []action) {
 			l.hub.dispatch(d, a.Dev != 0, code, a.At)
 		}
 	})
-	if failed && !l.warned {
+	if lost > 0 {
 		l.warned = true
-		l.hub.warnAll("USB-Leser: Tasten können nicht an das Vordergrundfenster übergeben werden (Fenster mit höheren Rechten?). Dort wird der Leser nicht abgefangen.")
+		l.hub.warnAll(fmt.Sprintf("USB-Leser: %d Tasten konnten nicht an das Vordergrundfenster weitergegeben werden (Fenster mit höheren Rechten?). Dort wird der Leser nicht abgefangen.", lost))
 	}
 	l.rearm()
 }
@@ -571,10 +572,29 @@ func canInject(hwnd uintptr) bool {
 }
 
 // warnAll reicht eine Meldung an alle Leser weiter.
+//
+// Läuft im Haken oder in der Fensterprozedur und darf darum weder Sperren nehmen noch schreiben: Die Meldung
+// geht nicht blockierend in einen Puffer (voll: verworfen) und wird von warner() ausgeliefert.
 func (h *kbdHub) warnAll(msg string) {
-	for _, s := range h.snapshot() {
-		if s.warn != nil {
-			s.warn(msg)
+	select {
+	case h.warnCh <- msg:
+	default:
+	}
+}
+
+// warner liefert die Meldungen des Abfangens aus (Dienststatus, Protokoll), außerhalb des Hub-Threads.
+func (h *kbdHub) warner(stop <-chan struct{}, finished chan<- struct{}) {
+	defer close(finished)
+	for {
+		select {
+		case msg := <-h.warnCh:
+			for _, s := range h.snapshot() {
+				if s.warn != nil {
+					s.warn(msg)
+				}
+			}
+		case <-stop:
+			return
 		}
 	}
 }
@@ -735,6 +755,11 @@ func runLoop(ready chan<- error, done chan<- struct{}, h *kbdHub) {
 	cur = &loopState{hub: h, hwnd: hwnd, cache: map[uintptr]InputDevice{}}
 	h.hwnd = hwnd
 	h.req = make(chan struct{}, 1)
+	h.warnCh = make(chan string, 8)
+	stopWarn := make(chan struct{})
+	warnDone := make(chan struct{})
+	go h.warner(stopWarn, warnDone)
+	defer func() { close(stopWarn); <-warnDone }()
 	h.attached.Store(false)
 	stopRes := make(chan struct{})
 	resDone := make(chan struct{})

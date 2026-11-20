@@ -440,10 +440,15 @@ func TestGateExecFailsOpen(t *testing.T) {
 	g := newG()
 	g.Hook(hook(k1), t0)
 	g.Hook(hook(kA), t0.Add(5*time.Millisecond))
+	g.Hook(hook(keyEvent{Scan: 3}), t0.Add(10*time.Millisecond))
 	acts := g.Tick(t0.Add(time.Second))
-	fail := func(keyEvent) bool { return false }
-	if !g.Exec(acts, fail, func(action) {}) {
-		t.Fatal("Fehlschlag wurde nicht gemeldet")
+	calls := 0
+	fail := func(keyEvent) bool { calls++; return false }
+	if len(acts) != 3 {
+		t.Fatalf("%d gehaltene Tasten statt 3", len(acts))
+	}
+	if lost := g.Exec(acts, fail, func(action) {}); lost != 3 || calls != 1 {
+		t.Fatalf("verloren %d (erwartet 3), %d Wiederholungen (erwartet 1: danach nichts mehr versuchen)", lost, calls)
 	}
 	if !g.Bypass || len(g.queue) != 0 {
 		t.Fatalf("Bypass=%v Warteschlange=%d", g.Bypass, len(g.queue))
@@ -464,7 +469,7 @@ func TestGateExecFailsOpen(t *testing.T) {
 	g = newG()
 	g.Hook(hook(k1), t0)
 	ok := func(keyEvent) bool { return true }
-	if g.Exec(g.Tick(t0.Add(time.Second)), ok, func(action) {}) || g.Bypass {
+	if g.Exec(g.Tick(t0.Add(time.Second)), ok, func(action) {}) != 0 || g.Bypass {
 		t.Fatal("Bypass trotz erfolgreichem Wiederholen")
 	}
 }
