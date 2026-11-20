@@ -78,7 +78,7 @@
   </ul>{{end}}
   <p class="hint">Gerät und Schreibweise stehen oben im Formular, gespeichert ist noch nichts.</p>
   {{end}}
-  <form method="post" action="/admin/card/learn" class="stack">
+  <form method="post" action="/admin/card/learn" class="stack" data-once>
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <p class="hint">Die Karte innerhalb von 15 Sekunden an den Leser halten. Erkannt wird eine schnelle Zeichenfolge (Abstand höchstens 40 ms) aus Ziffern oder A–F mit Enter; das Gerät, von dem sie kommt, wird übernommen.</p>
     <div class="actions"><button type="submit" class="btn">Karte vorhalten</button></div>

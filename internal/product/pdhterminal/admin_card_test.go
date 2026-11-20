@@ -358,3 +358,45 @@ func TestCardSaveKeepsOtherPlatformFormat(t *testing.T) {
 		t.Fatalf("Konfiguration %+v, erwartet %+v", c.Card, want)
 	}
 }
+
+func TestCardLearnSecondSubmitUsesCachedResult(t *testing.T) {
+	windowsForm(t)
+	oldFn, oldNow := learnFn, learnNow
+	t.Cleanup(func() { learnFn, learnNow = oldFn, oldNow })
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	learnNow = func() time.Time { return now }
+	calls := 0
+	learnFn = func(context.Context, time.Duration) (card.InputDevice, string, error) {
+		calls++
+		return card.InputDevice{Name: "SYC Reader", ID: "1a2b:3c4d"}, "DEADBEEF", nil
+	}
+	e := newAdminEnv(t, newFakePDH(t).client())
+	for i := 1; i <= 2; i++ { // das zweite Absenden (Enter des Lesers) liefert dasselbe, ohne neu zu warten
+		r := e.post("/admin/card/learn", url.Values{})
+		if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "DEADBEEF") {
+			t.Fatalf("Anfrage %d: %d\n%s", i, r.Code, r.Body.String())
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("%d Lesevorgänge, erwartet 1", calls)
+	}
+	// Der Zwischenspeicher gilt nur einmal: die dritte Anfrage wartet wieder auf eine Karte.
+	e.post("/admin/card/learn", url.Values{})
+	if calls != 2 {
+		t.Fatalf("%d Lesevorgänge nach der dritten Anfrage, erwartet 2", calls)
+	}
+	// Nach Ablauf der Frist wird nicht mehr zwischengespeichert.
+	now = now.Add(learnCacheTTL + time.Second)
+	e.post("/admin/card/learn", url.Values{})
+	if calls != 3 {
+		t.Fatalf("%d Lesevorgänge nach Ablauf, erwartet 3", calls)
+	}
+}
+
+func TestCardLearnFormHasOnceGuard(t *testing.T) {
+	windowsForm(t)
+	e := newAdminEnv(t, newFakePDH(t).client())
+	if body := e.get("/admin/card").Body.String(); !strings.Contains(body, `action="/admin/card/learn" class="stack" data-once`) {
+		t.Fatalf("data-once fehlt am Anlernformular:\n%s", body)
+	}
+}

@@ -1,6 +1,7 @@
 package pdhterminal
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -168,7 +169,7 @@ func (p *adminProduct) cardLearn(f web.AdminFrame, w http.ResponseWriter, r *htt
 		p.renderCard(f, w, http.StatusBadRequest, "Karte anlernen gibt es nur unter Windows", "", nil)
 		return
 	}
-	dev, typed, err := learnFn(r.Context(), learnWait)
+	dev, typed, err := p.learnOnce(r.Context())
 	if err != nil {
 		msg := "Keine Karte gelesen: Bitte die Karte innerhalb von 15 Sekunden an den Leser halten"
 		if err.Error() != "Keine Karte gelesen" {
@@ -222,4 +223,36 @@ func formType(c config.CardCfg) string {
 		}
 	}
 	return c.Type
+}
+
+// learnCacheTTL: So lange gilt die Antwort einer erfolgreichen Anlernanfrage für ein zweites Absenden.
+const learnCacheTTL = 10 * time.Second
+
+// learnNow ist die Uhr des Zwischenspeichers (für Tests).
+var learnNow = time.Now
+
+type learnResult struct {
+	dev   card.InputDevice
+	typed string
+	at    time.Time
+}
+
+// learnOnce liest eine Karte. Direkt nach einer erfolgreichen Antwort liefert die nächste Anfrage dieselbe
+// Karte (einmalig) statt neu zu warten: Der Enter des Lesers löst auf dem fokussierten Knopf „Karte vorhalten“
+// ein zweites Absenden aus, das sonst das Ergebnis des ersten verwürfe und auf eine weitere Karte wartete.
+func (p *adminProduct) learnOnce(ctx context.Context) (card.InputDevice, string, error) {
+	p.learnMu.Lock()
+	c := p.learnCache
+	p.learnCache = nil
+	p.learnMu.Unlock()
+	if c != nil && learnNow().Sub(c.at) <= learnCacheTTL {
+		return c.dev, c.typed, nil
+	}
+	dev, typed, err := learnFn(ctx, learnWait)
+	if err == nil {
+		p.learnMu.Lock()
+		p.learnCache = &learnResult{dev: dev, typed: typed, at: learnNow()}
+		p.learnMu.Unlock()
+	}
+	return dev, typed, err
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"hmikiosk/internal/config"
@@ -43,6 +44,9 @@ type adminProduct struct {
 	display *oled.Service
 	// probe prüft das Statusdisplay (Variable für Tests).
 	probe func(bus string, addr int) error
+
+	learnMu    sync.Mutex
+	learnCache *learnResult // Antwort der letzten erfolgreichen Anlernanfrage, für ein zweites Absenden
 }
 
 func newAdminProduct(dataDir string, client Client, cards *card.Service, display *oled.Service) *adminProduct {
