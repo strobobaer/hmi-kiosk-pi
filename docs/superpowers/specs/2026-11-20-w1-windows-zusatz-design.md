@@ -201,6 +201,15 @@ Technische Festlegungen (Calls des Designers):
     kein anderes Programm vorne (Call des Designers).
   - PDH kennt Plattform und Betriebsart des Geräts nicht. Das Formular zeigt den Hinweis deshalb immer
     (Call des Designers).
+- **Karte am Bildschirmschoner (gefunden beim Planen):**
+  - Heute liest die PDH-Seite im Schoner (`/terminal`) keine Karten. Ein Fenster im Hintergrund steht
+    nach der Rückkehrzeit aber fast immer im Schoner.
+  - Deshalb liest der Schoner den Kartenstrom ebenfalls. Bei einer Karte wechselt er zu
+    `/terminal/info` und meldet die Karte dort an; die UID wird über `sessionStorage` übergeben und
+    sofort gelöscht.
+  - Das gilt auf allen Plattformen. Am Pi weckt eine Karte den Schoner damit auf und meldet an, statt
+    ignoriert zu werden. Das ist eine bewusste Änderung des Pi-Verhaltens, die der Nutzer beim Lesen
+    des Plans bestätigt.
 - **Das Terminalprogramm zeigt die Benachrichtigung, wenn:**
   - das Edge-Fenster nicht im Vordergrund oder geschlossen ist, und
   - `notify` nicht leer ist.
@@ -257,9 +266,9 @@ Technische Festlegungen (Calls des Designers):
     ebenfalls, bis zur nächsten Anmeldung.
 - **Gesundmeldung (Call des Designers):** Das Programm meldet sich gesund, sobald Startseite und
   Admin-Seite gebunden sind und die Konfiguration geladen ist.
-  - Signal: Es legt `app\<version>\healthy` an; für die Grundversion gilt dasselbe in
-    `%ProgramData%\PDH-Terminal\base-healthy-<version>`.
-  - Der Starter wartet höchstens 60 s darauf.
+  - Signal: die vorhandene Gesundmarke `appcore.WriteHealthy`, also die Datei `healthy` mit der
+    Version im Laufzeitordner, wie am Pi.
+  - Der Starter wartet höchstens 60 s darauf, dass sie die gestartete Version nennt.
 - **Prüfung bei jedem Start (Call des Designers):**
   - Im Versionsordner liegt das signierte Paket `.pkg` selbst.
   - Der Starter prüft vor jedem Start die Signatur des Pakets und den Hash der Exe gegen das Paket.
@@ -283,10 +292,11 @@ Technische Festlegungen (Calls des Designers):
   - Die Updateprüfung unter Windows sucht genau diesen Namen. Der Pi sucht weiter
     `pdh-terminal-<version>.pkg` und findet die Windows-Datei deshalb nicht.
   - **Altes Pi und manuell hochgeladenes Windows-Paket:**
-    - Ein altes Pi kennt `platform` nicht und würde ein von Hand hochgeladenes Windows-Paket
-      installieren.
-    - Das Programm startet dann nicht, und der Update-Wächter schaltet nach 60 s zurück.
-    - Das ist hinnehmbar und kommt in `docs/betrieb.md`.
+    - Im Archiv eines Windows-Pakets heißt die Programmdatei `pdh-terminal.exe`, und der
+      PAX-Datensatz `HMIKIOSK.platform` trägt `windows-amd64`.
+    - Alte Versionen lehnen das Paket ab („unzulässige Datei“), weil sie nur bekannte Dateinamen
+      annehmen.
+    - Linux-Pakete bleiben unverändert, ohne `platform`-Datensatz.
 - **Systemstand:** gilt unter Windows nicht. Ein Windows-Paket trägt keinen Systemstand.
 
 ### 6.6 Setup
