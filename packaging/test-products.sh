@@ -212,7 +212,10 @@ check "windows: Firewall-Regel wird bei der Deinstallation per Namen gelöscht" 
 check "windows: Datenordner users-modify" grep -qF 'users-modify' "$iss"
 check "windows: Datenordner wird nicht gelöscht (kein deleteafterinstall)" bash -c "! grep -qi 'deleteafterinstall' '$iss'"
 check "windows: Datenordner bleibt bei der Deinstallation (uninsneveruninstall)" grep -Eq 'commonappdata..PDH-Terminal".*uninsneveruninstall' "$iss"
-check "windows: Autostart und Startmenü starten nie pdh-terminal.exe direkt" bash -c "! grep -Eq '^(Name|Root):.*[{]app[}].pdh-terminal\.exe' '$iss'"
+check "windows: Autostart, Startmenü und [Run] starten nie pdh-terminal.exe direkt (nur [Files] darf es nennen)" bash -c "! grep -Eq '^(Name|Root|Filename):.*[{]app[}].pdh-terminal.exe' '$iss'"
+check "windows: Edge-Richtlinie HideFirstRunExperience unter HKLM, bei der Deinstallation entfernt" grep -Eq 'Root: HKLM; Subkey: "SOFTWARE.Policies.Microsoft.Edge";.*ValueName: "HideFirstRunExperience";.*ValueData: 1;.*uninsdeletevalue' "$iss"
+check "windows: keine Edge-Richtlinie unter HKCU und keine für lokale Netzzugriffe" bash -c "! grep -Eqi 'HKCU.*Policies|LocalNetworkAccess' '$iss'"
+check "windows: toast.ps1 wird in den Programmordner installiert" grep -Eq 'Source: "toast.ps1"; DestDir: "[{]app[}]"' "$iss"
 
 
 if [ "$fails" -gt 0 ]; then

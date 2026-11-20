@@ -43,12 +43,18 @@ Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 [Files]
 Source: "{#BinDir}\pdh-terminal.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\pdh-terminal-start.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Skript der Windows-Mitteilung (Toast): fest, ohne Text; das Programm startet es mit -File aus diesem Ordner.
+Source: "toast.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 ; Datenordner (Kopplung, Einstellungen, Updates unter app\): für alle Benutzer les- und schreibbar, bleibt beim Deinstallieren.
 Name: "{commonappdata}\PDH-Terminal"; Permissions: users-modify; Flags: uninsneveruninstall
 
 [Registry]
+; Edge ohne Erststart-Assistent (Edge-Richtlinie HideFirstRunExperience, nur dieser eine Wert). createvalueifdoesntexist:
+; Ein vorhandener Wert eines Administrators bleibt unberührt, und nur ein vom Setup angelegter Wert wird bei der
+; Deinstallation entfernt. Eine Richtlinie für lokale Netzzugriffe oder unter HKCU gibt es bewusst nicht.
+Root: HKLM; Subkey: "SOFTWARE\Policies\Microsoft\Edge"; ValueType: dword; ValueName: "HideFirstRunExperience"; ValueData: 1; Flags: uninsdeletevalue createvalueifdoesntexist
 ; Autostart für alle Benutzer: der Starter, nicht das Programm.
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PDH-Terminal"; ValueData: """{app}\pdh-terminal-start.exe"""; Flags: uninsdeletevalue
 

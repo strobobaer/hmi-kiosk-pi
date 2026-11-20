@@ -3,10 +3,10 @@
 package notify
 
 import (
-	"encoding/base64"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"unicode/utf16"
 )
 
 func TestToneColor(t *testing.T) {
@@ -23,21 +23,36 @@ func TestToneColor(t *testing.T) {
 	}
 }
 
-func TestEncodeScript(t *testing.T) {
-	raw, err := base64.StdEncoding.DecodeString(encodeScript(toastScript))
-	if err != nil || len(raw)%2 != 0 {
-		t.Fatalf("Base64: %v", err)
+func TestToastArgs(t *testing.T) {
+	got := strings.Join(toastArgs(`C:\Program Files\PDH-Terminal\toast.ps1`), " ")
+	for _, bad := range []string{"EncodedCommand", "Bypass", "-Command"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("Argumente enthalten %s: %s", bad, got)
+		}
 	}
-	u := make([]uint16, len(raw)/2)
-	for i := range u {
-		u[i] = uint16(raw[2*i]) | uint16(raw[2*i+1])<<8
+	for _, want := range []string{"-NoProfile", "-NonInteractive", "-File", "RemoteSigned", "toast.ps1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Argumente ohne %s: %s", want, got)
+		}
 	}
-	got := string(utf16.Decode(u))
-	if got != toastScript || !strings.Contains(got, "Terminal öffnen") || !strings.Contains(got, "'PDH.Terminal'") {
-		t.Errorf("Skript nicht unverändert: %q", got)
+}
+
+// Das ausgelieferte Skript ist fest: kein Platzhalter, der Text kommt nur über stdin.
+func TestToastScriptFile(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "packaging", "windows", ToastScriptName))
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Der Text aus dem Netz steht nie im Skript.
-	if strings.Contains(toastScript, "%s") || strings.Contains(toastScript, "{0}") {
-		t.Error("Skript darf keine Platzhalter haben")
+	s := string(b)
+	for _, want := range []string{"Terminal öffnen", "'PDH.Terminal'", "[Console]::In.ReadLine()", "InnerText"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("Skript ohne %q", want)
+		}
+	}
+	if strings.Contains(s, "%s") || strings.Contains(s, "{0}") || strings.Contains(s, "Invoke-Expression") {
+		t.Error("Skript darf keine Platzhalter oder Ausführung von Text haben")
+	}
+	if !strings.HasPrefix(s, "\xef\xbb\xbf") {
+		t.Error("Skript braucht die UTF-8-Marke, sonst liest Windows PowerShell 5.1 das ö falsch")
 	}
 }

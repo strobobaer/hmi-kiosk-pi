@@ -3,8 +3,10 @@
 package notify
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -87,4 +89,38 @@ func Clean(s string) string {
 		n++
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// ToastScriptName ist das feste Skript der Windows-Mitteilung; das Setup legt es in den Programmordner.
+const ToastScriptName = "toast.ps1"
+
+// ClockText ist die Uhrzeit in der Überlagerung (Name, Ergebnis, Uhrzeit).
+func ClockText(t time.Time) string { return t.Format("15:04:05") }
+
+// ToastScriptPath findet das Skript der Mitteilung. Gesucht wird nur im Programmordner (den der Starter in
+// PDH_TERMINAL_BASE mitgibt, sonst Program Files), nie neben einem Update unter ProgramData, das jeder Benutzer
+// beschreiben darf. Ohne Fund ist das Ergebnis leer: Es gibt dann keine Mitteilung.
+func ToastScriptPath(getenv func(string) string, exe string, exists func(string) bool) string {
+	var dirs []string
+	if b := getenv("PDH_TERMINAL_BASE"); b != "" {
+		dirs = append(dirs, b)
+	}
+	for _, v := range []string{"ProgramW6432", "ProgramFiles"} {
+		if p := getenv(v); p != "" {
+			dirs = append(dirs, filepath.Join(p, "PDH-Terminal"))
+		}
+	}
+	// Direkt gestartetes Programm (Entwicklung): sein eigener Ordner, außer er liegt unter ProgramData.
+	if exe != "" {
+		d := filepath.Dir(exe)
+		if pd := getenv("ProgramData"); pd == "" || !strings.HasPrefix(strings.ToLower(d), strings.ToLower(filepath.Clean(pd))+string(filepath.Separator)) {
+			dirs = append(dirs, d)
+		}
+	}
+	for _, d := range dirs {
+		if p := filepath.Join(d, ToastScriptName); exists(p) {
+			return p
+		}
+	}
+	return ""
 }

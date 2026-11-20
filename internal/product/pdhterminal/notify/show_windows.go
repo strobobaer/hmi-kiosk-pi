@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"slices"
@@ -22,9 +23,10 @@ import (
 // Benachrichtigung unter Windows.
 //
 // Toast (A): Windows-Runtime-Toast über AppUserModelID PDH.Terminal. Ohne CGO und ohne COM-Bindung
-// startet das Programm powershell.exe mit einem festen Skript (-EncodedCommand, nie zusammengesetzt);
-// der Text kommt Base64-kodiert über stdin und landet nur als InnerText im XML. Die Mitteilung erscheint
-// nur, wenn der Startmenü-Eintrag mit dieser Kennung besteht (legt das Setup an).
+// startet das Programm powershell.exe mit dem festen Skript toast.ps1 aus dem Programmordner (-File, kein
+// -EncodedCommand, kein Bypass); der Text kommt Base64-kodiert über stdin und landet nur als InnerText im XML.
+// Fehlt das Skript, gibt es keine Mitteilung (Protokoll). Die Mitteilung erscheint nur, wenn der Startmenü-Eintrag
+// mit dieser Kennung besteht (legt das Setup an).
 //
 // Überlagerung (B) und Banner (C): eigene Fenster (GDI), die auf einem eigenen Thread mit Nachrichtenschleife
 // leben. Der Thread entsteht beim ersten Gebrauch; Show reiht nur ein und weckt ihn per PostMessage, es blockiert
@@ -37,16 +39,8 @@ const (
 	overlayW     = 520
 	overlayH     = 120
 	toastTimeout = 20 * time.Second
-	maxQueue     = 8 // so viele offene Wünsche an den Fensterthread; weitere fallen weg
-	toastScript  = `$ErrorActionPreference='Stop'
-$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadLine()))
-[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]
-[void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]
-$x=New-Object Windows.Data.Xml.Dom.XmlDocument
-$x.LoadXml('<toast duration="short"><visual><binding template="ToastGeneric"><text>PDH-Terminal</text><text id="2"></text></binding></visual><actions><action content="Terminal öffnen" arguments="open" activationType="foreground"/></actions></toast>')
-$x.SelectSingleNode('//text[@id="2"]').InnerText=$t
-$n=New-Object Windows.UI.Notifications.ToastNotification $x
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('PDH.Terminal').Show($n)`
+	clockLineH   = 34 // Höhe der Zeile mit der Uhrzeit in der Überlagerung
+	maxQueue     = 8  // so viele offene Wünsche an den Fensterthread; weitere fallen weg
 )
 
 const (
@@ -150,9 +144,10 @@ type paintStruct struct {
 
 // popup ist ein offenes Fenster B oder C; nur der Fensterthread liest und schreibt popups.
 type popup struct {
-	text string
-	tone string
-	kind string
+	text  string
+	tone  string
+	kind  string
+	clock string // Uhrzeit, nur in der Überlagerung
 }
 
 // request ist ein Wunsch an den Fensterthread.
@@ -202,12 +197,18 @@ func (s *shower) Show(kinds []string, text, tone string) {
 	}
 }
 
-// toast startet das feste PowerShell-Skript; der Text geht Base64-kodiert über stdin.
+// toast startet das feste Skript toast.ps1; der Text geht Base64-kodiert über stdin.
 func toast(text string) {
+	exe, _ := os.Executable()
+	script := ToastScriptPath(os.Getenv, exe, func(p string) bool { fi, err := os.Stat(p); return err == nil && !fi.IsDir() })
+	if script == "" {
+		log.Printf("Toast nicht angezeigt: %s nicht im Programmordner gefunden", ToastScriptName)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), toastTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-		"-EncodedCommand", encodeScript(toastScript))
+	// RemoteSigned genügt für die lokale, nicht heruntergeladene Datei; Bypass braucht es nicht.
+	cmd := exec.CommandContext(ctx, "powershell.exe", toastArgs(script)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	cmd.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString([]byte(text)) + "\r\n")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -219,14 +220,9 @@ func toast(text string) {
 	}
 }
 
-// encodeScript: -EncodedCommand erwartet Base64 von UTF-16LE.
-func encodeScript(s string) string {
-	u := utf16.Encode([]rune(s))
-	b := make([]byte, 0, len(u)*2)
-	for _, c := range u {
-		b = append(b, byte(c), byte(c>>8))
-	}
-	return base64.StdEncoding.EncodeToString(b)
+// toastArgs sind die Argumente für powershell.exe: das Skript als Datei, ohne Profil und ohne Rückfragen.
+func toastArgs(script string) []string {
+	return []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned", "-File", script}
 }
 
 // enqueue reiht den Wunsch ein und weckt den Fensterthread; es blockiert nie.
@@ -356,7 +352,11 @@ func open(r request) {
 	if hwnd == 0 {
 		return
 	}
-	popups[hwnd] = &popup{text: r.text, tone: r.tone, kind: r.kind}
+	p := &popup{text: r.text, tone: r.tone, kind: r.kind}
+	if r.kind == KindOverlay {
+		p.clock = ClockText(time.Now())
+	}
+	popups[hwnd] = p
 	current[r.kind] = hwnd
 	pSetTimer.Call(hwnd, timerClose, uintptr(showDuration/time.Millisecond), 0)
 	pSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoActivate)
@@ -400,11 +400,30 @@ func paint(hwnd uintptr, p *popup) {
 	pSetTextColor.Call(hdc, 0xFFFFFF)
 	rc.Left += 16
 	rc.Right -= 16
-	txt := utf16.Encode([]rune(p.text))
-	if len(txt) > 0 {
-		pDrawTextW.Call(hdc, uintptr(unsafe.Pointer(&txt[0])), uintptr(len(txt)), uintptr(unsafe.Pointer(&rc)),
-			dtCenter|dtVCenter|dtSingleLine|dtEndEllipsis|dtNoPrefix)
+	drawLine := func(text string, r *rect) {
+		txt := utf16.Encode([]rune(text))
+		if len(txt) > 0 {
+			pDrawTextW.Call(hdc, uintptr(unsafe.Pointer(&txt[0])), uintptr(len(txt)), uintptr(unsafe.Pointer(r)),
+				dtCenter|dtVCenter|dtSingleLine|dtEndEllipsis|dtNoPrefix)
+		}
 	}
+	if p.clock == "" {
+		drawLine(p.text, &rc)
+		pSelectObject.Call(hdc, old)
+		pDeleteObject.Call(font)
+		return
+	}
+	// Überlagerung: oben Name und Ergebnis, unten die Uhrzeit in kleinerer Schrift.
+	clockRc := rc
+	rc.Bottom -= clockLineH
+	clockRc.Top = rc.Bottom
+	drawLine(p.text, &rc)
 	pSelectObject.Call(hdc, old)
 	pDeleteObject.Call(font)
+	small, _, _ := pCreateFontW.Call(^uintptr(17), 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0,
+		uintptr(unsafe.Pointer(windows.StringToUTF16Ptr("Segoe UI"))))
+	old, _, _ = pSelectObject.Call(hdc, small)
+	drawLine(p.clock, &clockRc)
+	pSelectObject.Call(hdc, old)
+	pDeleteObject.Call(small)
 }

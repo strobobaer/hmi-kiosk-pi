@@ -98,7 +98,7 @@ func Main(args []string, def Paths) int {
 		},
 		Start: func(c Candidate) (Proc, error) {
 			defer func() { closeLocks("") }() // läuft der Prozess, hält das Abbild die Datei fest
-			return startProc(c, pass)
+			return startProc(c, pass, paths.Base)
 		},
 		RunDir: paths.Run,
 		OnHealthy: func(c Candidate) {
@@ -133,8 +133,9 @@ func setupLog(data string) func() {
 }
 
 // startProc startet die Exe im Job-Objekt: Beendet der Starter den Prozess, endet der ganze Baum (Edge eingeschlossen).
-func startProc(c Candidate, args []string) (Proc, error) {
-	p, err := client.NewExecRunner().Start(client.Command{Path: c.Exe, Args: args})
+// base ist der Programmordner der Installation; das Programm sucht dort toast.ps1 (nie neben einem Update).
+func startProc(c Candidate, args []string, base string) (Proc, error) {
+	p, err := client.NewExecRunner().Start(client.Command{Path: c.Exe, Args: args, Env: []string{"PDH_TERMINAL_BASE=" + base}})
 	if err != nil {
 		return nil, err
 	}

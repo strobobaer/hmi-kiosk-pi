@@ -1,9 +1,11 @@
 package notify
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestKinds(t *testing.T) {
@@ -48,5 +50,47 @@ func TestClean(t *testing.T) {
 	}
 	if got := Clean(strings.Repeat("ä", 500)); len([]rune(got)) != MaxField {
 		t.Errorf("Länge %d", len([]rune(got)))
+	}
+}
+
+func TestClockText(t *testing.T) {
+	if got := ClockText(time.Date(2026, 1, 2, 9, 5, 7, 0, time.UTC)); got != "09:05:07" {
+		t.Errorf("ClockText = %q", got)
+	}
+}
+
+func TestToastScriptPath(t *testing.T) {
+	sep := string(filepath.Separator)
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	only := func(paths ...string) func(string) bool {
+		return func(p string) bool {
+			for _, q := range paths {
+				if p == q {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	base := filepath.Join("X", "Base", "toast.ps1")
+	pf := filepath.Join("X", "PF", "PDH-Terminal", "toast.ps1")
+	cases := []struct {
+		name   string
+		env    map[string]string
+		exe    string
+		exists func(string) bool
+		want   string
+	}{
+		{"Programmordner vom Starter", map[string]string{"PDH_TERMINAL_BASE": filepath.Join("X", "Base"), "ProgramFiles": filepath.Join("X", "PF")}, "", only(base, pf), base},
+		{"Program Files", map[string]string{"ProgramFiles": filepath.Join("X", "PF")}, "", only(pf), pf},
+		{"fehlt", map[string]string{"ProgramFiles": filepath.Join("X", "PF")}, "", only(), ""},
+		{"Update unter ProgramData zählt nie", map[string]string{"ProgramData": "Y" + sep + "PD"}, "Y" + sep + "PD" + sep + "PDH-Terminal" + sep + "app" + sep + "1.2.3" + sep + "pdh-terminal.exe",
+			only("Y" + sep + "PD" + sep + "PDH-Terminal" + sep + "app" + sep + "1.2.3" + sep + "toast.ps1"), ""},
+		{"eigener Ordner (Entwicklung)", map[string]string{}, filepath.Join("D", "pdh-terminal.exe"), only(filepath.Join("D", "toast.ps1")), filepath.Join("D", "toast.ps1")},
+	}
+	for _, c := range cases {
+		if got := ToastScriptPath(env(c.env), c.exe, c.exists); got != c.want {
+			t.Errorf("%s: %q, erwartet %q", c.name, got, c.want)
+		}
 	}
 }
