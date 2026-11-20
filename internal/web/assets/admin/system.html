@@ -114,6 +114,7 @@
       <input type="text" name="override_h" value="{{.Display.OverrideH}}" inputmode="numeric">
     </label>
   </div>
+  {{if $.NoHelper}}<input type="hidden" name="graphics" value="{{.Display.Graphics}}">{{else}}
   <label>Grafikprofil
     <select name="graphics">
       <option value="labwc"{{if eq .Display.Graphics "labwc"}} selected{{end}}>labwc (Wayland)</option>
@@ -121,6 +122,7 @@
     </select>
   </label>
   <p class="hint">Ein anderes Grafikprofil gilt erst nach einem Neustart des Geräts.</p>
+  {{end}}
   <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
 </form>
 
@@ -235,6 +237,7 @@
   <div class="actions"><button type="submit" class="btn">Passwort ändern</button></div>
 </form>
 
+{{if not $.NoHelper}}
 <section class="panel stack">
   <h2>Wartungsmodus</h2>
   <p class="hint">Öffnet die Einrichtung für ein Ersatzgerät oder ein neues Terminal, zum Beispiel nach dem Einspielen einer älteren SD-Sicherung. Bis dahin sind die Kacheln gesperrt, und das Terminal stimmt sich nicht mit anderen ab.</p>
@@ -244,6 +247,7 @@
     <div class="actions"><button type="submit" class="btn">Wartungsmodus starten</button></div>
   </form>
 </section>
+{{end}}
 
 {{if not $.NoHelper}}
 <section class="panel stack">
