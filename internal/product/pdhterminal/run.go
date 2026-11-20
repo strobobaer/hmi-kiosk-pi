@@ -21,7 +21,6 @@ import (
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/helperapi"
 	"hmikiosk/internal/keyboard"
-	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/oled"
@@ -39,7 +38,8 @@ const (
 	DefaultLocalAddr      = "127.0.0.1:8080"
 	DefaultAdminAddr      = ":8443"
 	DefaultLocalAdminAddr = appcore.DefaultLocalAdminAddr
-	DefaultHelperSocket   = "/run/hmi-kiosk-helper/helper.sock"
+	// DefaultHelperSocket gilt unter Linux; den Vorgabewert liefert der Aufrufer (cmd/pdh-terminal).
+	DefaultHelperSocket = "/run/hmi-kiosk-helper/helper.sock"
 
 	secretsFile   = "secrets.key"
 	logDirName    = "log"
@@ -55,6 +55,7 @@ type Options struct {
 	LocalAddr       string // Startseite, nur Loopback
 	AdminAddr       string // Admin-Seite über HTTPS
 	LocalAdminAddr  string // Admin-Seite am Terminal, nur Loopback
+	// HelperSocket ist der Socket des root-Helfers; leer heisst: kein Helfer (Windows).
 	HelperSocket    string
 	ChromiumEnabled bool
 	// HardwareID liest die Hardware-Kennung; nil heißt: aus dem Gerät lesen.
@@ -126,8 +127,10 @@ func newService(o Options) (*service, error) {
 	o.LocalAddr = orDefault(o.LocalAddr, DefaultLocalAddr)
 	o.AdminAddr = orDefault(o.AdminAddr, DefaultAdminAddr)
 	o.LocalAdminAddr = orDefault(o.LocalAdminAddr, DefaultLocalAdminAddr)
-	o.HelperSocket = orDefault(o.HelperSocket, DefaultHelperSocket)
-	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket)}
+	s := &service{o: o, store: config.Open(o.DataDir)}
+	if o.HelperSocket != "" {
+		s.helper = helperapi.New(o.HelperSocket)
+	}
 	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
 	s.display = oled.NewService(log.Printf)
 
@@ -142,7 +145,7 @@ func newService(o Options) (*service, error) {
 	}
 	call := o.HelperCall
 	if call == nil {
-		call = s.helper.Call
+		call = s.callHelper
 	}
 	s.origins = appcore.NewOriginSync(call)
 	// Das Produkt steht ausdrücklich da: Ein leeres Produkt hieße HMI-Kiosk.
@@ -153,13 +156,19 @@ func newService(o Options) (*service, error) {
 	s.claimHardware(loadFailed)
 	s.openBox(loadFailed)
 	if o.ChromiumEnabled {
-		s.kbd = clientrun.NewExec(func() (string, error) { return keyboard.Find(nil) }, func() int { _, h := s.screen(); return h })
-		// Die Bildschirmtastatur gibt es nur unter labwc (Wayland); unter X11 bleibt sie aus.
-		s.kbd.SetEnabled(s.sessionProfile() == "labwc")
+		s.initKeyboard()
 	}
 	// Die Richtlinie vom Helfer-Start gilt bis hierhin; abgeglichen wird trotzdem.
 	s.origins.Set(config.PDHOrigins(s.config().PDH))
 	return s, nil
+}
+
+// callHelper ruft den root-Helfer; ohne Helfer (Windows) gibt es nichts abzugleichen.
+func (s *service) callHelper(ctx context.Context, cmd, arg string) error {
+	if s.helper == nil {
+		return nil
+	}
+	return s.helper.Call(ctx, cmd, arg)
 }
 
 func orDefault(v, def string) string {
@@ -240,7 +249,7 @@ func (s *service) detectHardwareID() string {
 	if s.o.HardwareID != nil {
 		return s.o.HardwareID()
 	}
-	return platform.HardwareID(procRoot, sysRoot)
+	return platformHardwareID()
 }
 
 // claimHardware hält die Kennung des ersten Geräts fest (wie beim HMI-Kiosk); einen
@@ -393,6 +402,11 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 		close(done)
 		return done
 	}
+	if platformBrowserNote != "" {
+		log.Print(platformBrowserNote)
+		close(done)
+		return done
+	}
 	path, err := browser.FindChromium(nil)
 	if err != nil {
 		// Ohne Programm liefe ein Überwacher endlos in Neustarts: einmal melden, ohne Browser weiterlaufen.
@@ -418,7 +432,9 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 	}()
 	go func() {
 		defer wg.Done()
-		s.kbd.Run(ctx)
+		if s.kbd != nil {
+			s.kbd.Run(ctx)
+		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -540,13 +556,26 @@ func (s *service) adminDeps() web.AdminDeps {
 	if s.kbd != nil {
 		kbd = s.kbd
 	}
+	// Ohne Helfer (Windows) bleiben die Schnittstellen nil-Schnittstellen, nicht nil-Zeiger darin.
+	var helper web.HelperAPI
+	var backup web.BackupAPI
+	var netAPI web.NetAPI
+	activate := func(context.Context, string) error {
+		return errors.New("Die Aktivierung eines Updates ist unter Windows noch nicht verfügbar")
+	}
+	if s.helper != nil {
+		helper, backup, netAPI = s.helper, s.helper, s.helper
+		activate = func(ctx context.Context, version string) error {
+			return s.helper.Call(ctx, "update-activate", version)
+		}
+	}
 	return web.AdminDeps{
 		Keyboard:     kbd,
 		Store:        s.store,
 		Box:          s.box,
 		Apply:        s.apply,
 		ConfigMu:     &s.cfgMu,
-		Helper:       s.helper,
+		Helper:       helper,
 		Status:       s.status,
 		LogDir:       filepath.Join(s.o.DataDir, logDirName),
 		RemoteIsWifi: remoteIsWifi,
@@ -557,14 +586,12 @@ func (s *service) adminDeps() web.AdminDeps {
 			Product:     release.PDHTerminal,
 			Platform:    release.CurrentPlatform(),
 			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) },
-			Activate: func(ctx context.Context, version string) error {
-				return s.helper.Call(ctx, "update-activate", version)
-			},
+			Activate:    activate,
 		},
 		UpdateCheck:          s.updates,
 		Selftest:             s.adminSelftest,
-		Backup:               s.helper,
-		Net:                  s.helper,
+		Backup:               backup,
+		Net:                  netAPI,
 		HardwareID:           func() string { return s.hwID },
 		TLSDir:               filepath.Join(s.o.DataDir, tlsDirName),
 		TLSFingerprint:       s.tlsFingerprint,
@@ -586,27 +613,16 @@ func remoteIsWifi(r *http.Request) bool {
 	return wifi
 }
 
-// adminSelftest ist die Selbstprüfung für die Admin-Seite: nur die Schritte, die jedes
-// Produkt braucht (Schutz von System und Funk), plus der Kartenleser.
+// adminSelftest ist die Selbstprüfung für die Admin-Seite; die Schritte hängen von der
+// Plattform ab (selftestSteps).
 func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 	d := selftest.Deps{
-		Config:      s.config,
-		Mounts:      func() ([]byte, error) { return os.ReadFile(filepath.Join(procRoot, "mounts")) },
-		Exec:        runCommand,
-		BootConfig:  readBootConfig,
-		ImageMarker: func() bool { _, err := os.Stat(selftest.ImageMarkerFile); return err == nil },
+		Config: s.config,
 	}
 	if t := s.config().Card.Type; t != "" && t != "aus" {
 		d.CardReader = s.cards.Probe
 	}
-	if sd := s.config().StatusDisplay; sd.Type != "" {
-		if ok, reason := sd.Known(); ok {
-			d.StatusDisplay = func(_ context.Context, bus string, addr int) error { return oled.Probe(bus, addr) }
-		} else {
-			d.StatusDisplay = func(context.Context, string, int) error { return errors.New(reason) }
-		}
-	}
-	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep(), selftest.StatusDisplayStep()))
+	res := selftest.RunSteps(ctx, d, s.selftestSteps(&d))
 	out := make([]web.SelftestStep, len(res))
 	for i, r := range res {
 		out[i] = web.SelftestStep{Name: r.Name, OK: r.OK, Detail: r.Detail, NeedsHuman: r.NeedsHuman}

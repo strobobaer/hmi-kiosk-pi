@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 const (
@@ -55,6 +56,9 @@ func setLink(root, name, version string) error {
 }
 
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		return nil // Windows kennt kein fsync auf einem Ordner (Open+Sync: Zugriff verweigert); Rename ist dort dauerhaft
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return err

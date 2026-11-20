@@ -39,6 +39,9 @@ func (p *adminProduct) renderStatusDisplayTest(f web.AdminFrame, w http.Response
 	}
 	bus, addr := shown.Settings()
 	ok, reason := shown.Known()
+	if ok {
+		reason = displayPlatformReason(shown)
+	}
 	v := statusDisplayView{
 		Type: shown.Type, Bus: bus, Addr: fmt.Sprintf("%#x", addr), Unsupported: reason,
 		Notice: notice, TestMsg: testMsg, TestOK: testOK,

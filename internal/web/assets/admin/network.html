@@ -1,4 +1,10 @@
 {{define "content"}}
+{{if $.NoHelper}}
+<section class="panel stack">
+  <h2>Netzwerk und Zeit</h2>
+  <p>Unter Windows über die Windows-Einstellungen</p>
+</section>
+{{else}}
 {{with .Body}}
 {{with .Eth}}
 <section class="panel stack">
@@ -129,5 +135,6 @@
   </label>
   <div class="actions"><button type="submit" class="btn primary">Setzen</button></div>
 </form>
+{{end}}
 {{end}}
 {{end}}

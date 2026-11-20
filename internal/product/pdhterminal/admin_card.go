@@ -19,11 +19,18 @@ const inputDir = "/dev/input"
 // cardSettings übersetzt die Konfiguration in die Einstellungen des Kartendienstes.
 func cardSettings(c config.CardCfg) card.Settings {
 	bus, addr := c.Settings()
-	_, reason := c.Known()
 	return card.Settings{
 		Type: c.Type, I2CBus: bus, I2CAddr: addr, USBDevice: c.USBDevice, Format: c.Format,
-		Bus: c.PN532Bus, SPIDev: c.SPIDevice(), UARTDev: c.UARTDevice(), Unsupported: reason,
+		Bus: c.PN532Bus, SPIDev: c.SPIDevice(), UARTDev: c.UARTDevice(), Unsupported: cardReason(c),
 	}
+}
+
+// cardReason nennt, warum der Leser nicht läuft: unbekannter Typ oder Plattform.
+func cardReason(c config.CardCfg) string {
+	if _, reason := c.Known(); reason != "" {
+		return reason
+	}
+	return cardPlatformReason(c)
 }
 
 // cardView ist, was die Seite Kartenleser anzeigt.
@@ -51,10 +58,9 @@ func (p *adminProduct) renderCard(f web.AdminFrame, w http.ResponseWriter, statu
 	}
 	bus, addr := shown.Settings()
 	st := p.cards.Status()
-	_, reason := shown.Known()
 	v := cardView{
 		Type: formType(shown), Bus: bus, Addr: fmt.Sprintf("%#x", addr), USB: shown.USBDevice, Format: shown.Format,
-		SPIDev: shown.SPIDevice(), UARTDev: shown.UARTDevice(), Unsupported: reason,
+		SPIDev: shown.SPIDevice(), UARTDev: shown.UARTDevice(), Unsupported: cardReason(shown),
 		Devices: card.ListInputDevices(inputDir), Active: st.Active, Detail: st.Detail, Notice: notice,
 		Last: "Noch keine Karte gelesen",
 	}
@@ -124,8 +130,15 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 // statusDisplaySettings übersetzt die Konfiguration in die Einstellungen des Displaydienstes.
 func statusDisplaySettings(c config.StatusDisplayCfg) oled.Settings {
 	bus, addr := c.Settings()
-	_, reason := c.Known()
-	return oled.Settings{Type: c.Type, Bus: bus, Addr: addr, Unsupported: reason}
+	return oled.Settings{Type: c.Type, Bus: bus, Addr: addr, Unsupported: displayReason(c)}
+}
+
+// displayReason nennt, warum das Display nicht läuft: unbekannter Typ oder Plattform.
+func displayReason(c config.StatusDisplayCfg) string {
+	if _, reason := c.Known(); reason != "" {
+		return reason
+	}
+	return displayPlatformReason(c)
 }
 
 // formType ist der Wert der Auswahl „Leser“: pn532-spi und pn532-uart gibt es nur im Formular.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/update"
 )
 
 func freeAddr(t *testing.T) string {
@@ -162,4 +163,88 @@ func TestAdminSelftestUnknownDisplayTypeIsRed(t *testing.T) {
 		return
 	}
 	t.Fatal("Schritt statusdisplay fehlt")
+}
+
+// TestRunWithoutHelper: Ohne Helfer (HelperSocket "", wie unter Windows) läuft der Dienst,
+// und die Admin-Seite bietet keinen Netzwerk-Abschnitt an.
+func TestRunWithoutHelper(t *testing.T) {
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: t.TempDir(), RunDir: t.TempDir(),
+			LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0", LocalAdminAddr: freeAddr(t),
+			HelperSocket: "", ChromiumEnabled: false,
+			HardwareID: func() string { return "test-0002" },
+			Ready:      func(b Bound) { ready <- b },
+		})
+	}()
+	var b Bound
+	select {
+	case b = <-ready:
+	case err := <-done:
+		t.Fatalf("Dienst endete früh: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Dienst startet nicht")
+	}
+	c := &http.Client{Timeout: 5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec // Test mit selbst ausgestelltem Zertifikat
+	resp, err := c.Get("https://" + b.Admin + "/admin/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("/admin/: Status %d", resp.StatusCode)
+	}
+	if strings.Contains(string(body), `href="/admin/network"`) {
+		t.Errorf("Netzwerk-Abschnitt trotz fehlendem Helfer: %s", body)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Ende: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Dienst endet nicht")
+	}
+}
+
+// TestNoHelperDeps: Ohne Helfer sind die Schnittstellen der Admin-Seite wirklich leer
+// (keine Schnittstelle mit nil-Zeiger darin).
+func TestNoHelperDeps(t *testing.T) {
+	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if s.helper != nil {
+		t.Error("s.helper gesetzt")
+	}
+	d := s.adminDeps()
+	if d.Helper != nil || d.Backup != nil || d.Net != nil {
+		t.Errorf("Helfer-Schnittstellen nicht nil: %v %v %v", d.Helper, d.Backup, d.Net)
+	}
+}
+
+// TestUpdateActivateWithoutHelper: Ohne Helfer gibt es noch keine Aktivierung (kommt mit dem Starter).
+func TestUpdateActivateWithoutHelper(t *testing.T) {
+	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	inst, ok := s.adminDeps().Update.(*update.Installer)
+	if !ok {
+		t.Fatalf("Update ist %T", s.adminDeps().Update)
+	}
+	err = inst.Activate(context.Background(), "1.2.3")
+	if err == nil || !strings.Contains(err.Error(), "noch nicht verfügbar") {
+		t.Errorf("Fehler: %v", err)
+	}
 }

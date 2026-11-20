@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"hmikiosk/internal/config"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/web"
@@ -48,7 +49,7 @@ func (s *service) status() web.SystemStatus {
 	cfg := s.cfg
 	s.mu.RUnlock()
 
-	st := web.SystemStatus{Version: release.Version, OverlayActive: overlayActive(procRoot)}
+	st := web.SystemStatus{Version: release.Version, OverlayActive: !onWindows && overlayActive(procRoot)}
 	add := func(w string) {
 		if w != "" {
 			st.Warnings = append(st.Warnings, w)
@@ -60,30 +61,39 @@ func (s *service) status() web.SystemStatus {
 	}
 	st.Warnings = append(st.Warnings, warnings...)
 	add(s.journal.Warning())
-	if !st.OverlayActive {
+	if !onWindows && !st.OverlayActive {
 		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
 	}
-	if have := platform.InstalledSystemLevel(rootFS, localAdminOrigin); have < release.PDHTerminal.SystemLevel {
+	if have := platform.InstalledSystemLevel(rootFS, localAdminOrigin); !onWindows && have < release.PDHTerminal.SystemLevel {
 		add(fmt.Sprintf("Die Systemteile dieses Geräts (Stand %d) sind älter, als diese Programmversion braucht (Stand %d). "+
 			"Sie funktionieren erst nach einem neuen SD-Abbild oder erneutem install.sh aus dem Bundle dieser Version "+
 			"(vorher die Konfiguration sichern).", have, release.PDHTerminal.SystemLevel))
 	}
-	w, h, found := platform.DisplaySize(sysRoot)
-	rw, rh := platform.Resolve(cfg.Display.OverrideW, cfg.Display.OverrideH, w, h, found)
-	st.Display = fmt.Sprintf("%d×%d", rw, rh)
-	switch {
-	case cfg.Display.OverrideW > 0 && cfg.Display.OverrideH > 0:
-		st.Display += " (fest eingestellt)"
-	case !found:
-		st.Display += " (Standardwert)"
-		add(fmt.Sprintf("Kein Monitor erkannt, es gilt %d×%d.", rw, rh))
-	}
+	st.Display = s.displayText(cfg, add)
 	if free, total, err := diskUsage(s.o.DataDir); err == nil {
 		st.DataFreeBytes, st.DataTotalBytes = free, total
 	} else {
 		add(fmt.Sprintf("Datenpartition nicht verfügbar: %v", err))
 	}
 	return st
+}
+
+// displayText beschreibt die Bildschirmgröße; unter Windows bestimmt Windows sie.
+func (s *service) displayText(cfg config.Config, add func(string)) string {
+	if onWindows {
+		return "Windows"
+	}
+	w, h, found := platform.DisplaySize(sysRoot)
+	rw, rh := platform.Resolve(cfg.Display.OverrideW, cfg.Display.OverrideH, w, h, found)
+	text := fmt.Sprintf("%d×%d", rw, rh)
+	switch {
+	case cfg.Display.OverrideW > 0 && cfg.Display.OverrideH > 0:
+		text += " (fest eingestellt)"
+	case !found:
+		text += " (Standardwert)"
+		add(fmt.Sprintf("Kein Monitor erkannt, es gilt %d×%d.", rw, rh))
+	}
+	return text
 }
 
 // overlayActive wertet den letzten Eintrag für / aus: Er verdeckt die früheren.
