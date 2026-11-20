@@ -67,7 +67,7 @@ rm -rf "${win:?}"
 rm -f "$pkg" "$pkg.sha256" "$setup" "$setup.sha256"
 
 echo "== Programme (windows/amd64, Version $version)"
-ldflags="-X hmikiosk/internal/release.ReleasePublicKeyHex=$(tr -d '\r\n' <"$pub") -X hmikiosk/internal/release.Version=$version"
+ldflags="-H windowsgui -X hmikiosk/internal/release.ReleasePublicKeyHex=$(tr -d '\r\n' <"$pub") -X hmikiosk/internal/release.Version=$version"
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 scripts/dgo build -ldflags "$ldflags" -o "$win/" ./cmd/pdh-terminal ./cmd/pdh-terminal-start
 [ -s "$win/pdh-terminal.exe" ] && [ -s "$win/pdh-terminal-start.exe" ] || die "Die Programme wurden nicht gebaut."
 

@@ -121,7 +121,7 @@ func setupLog(data string) func() {
 	if err != nil {
 		return nil
 	}
-	log.SetOutput(io.MultiWriter(os.Stderr, f))
+	log.SetOutput(fileFirst{f: f, other: os.Stderr})
 	return func() { f.Close() }
 }
 
@@ -158,4 +158,17 @@ func (e *execProc) Kill() {
 	if err := e.p.Stop(5 * time.Second); err != nil {
 		log.Print(fmt.Errorf("Prozess nicht beendet: %w", err))
 	}
+}
+
+// fileFirst schreibt zuerst in die Datei und dann nach other. Ein Fehler von other (als GUI-Programm
+// ist stderr ungültig) bleibt folgenlos; io.MultiWriter bräche beim ersten Fehler ab.
+type fileFirst struct {
+	f     io.Writer
+	other io.Writer
+}
+
+func (w fileFirst) Write(p []byte) (int, error) {
+	n, err := w.f.Write(p)
+	_, _ = w.other.Write(p)
+	return n, err
 }
