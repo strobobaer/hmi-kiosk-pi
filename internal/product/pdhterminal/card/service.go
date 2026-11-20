@@ -189,15 +189,21 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 	if err != nil {
 		return err
 	}
-	if u, ok := r.(*usbReader); ok {
-		u.warn = func(msg string) {
-			if msg == "" {
-				s.setStatus(ctx, Status{Active: true, Detail: readyText(st, r), State: StateOK})
-				return
+	// Ein Leser, der das Gerät und das Abfangen überwacht (USB unter Windows), meldet sich über sig:
+	// Abgezogen heißt Fehler „Leser getrennt“, Anstecken macht es wieder gut, ohne Neustart.
+	sig := &readerSignals{}
+	if sr, ok := r.(signalReader); ok {
+		sr.SetSignals(func(msg string) {
+			if msg != "" {
+				s.logf("kartenleser: %s", msg)
 			}
-			s.logf("kartenleser: %s", msg)
-			s.setStatus(ctx, Status{Active: true, Detail: msg, State: StateError})
-		}
+			s.setStatus(ctx, sig.setWarn(msg, st, r))
+		}, func(attached bool) {
+			if !attached {
+				s.logf("kartenleser: %s", detachedText)
+			}
+			s.setStatus(ctx, sig.setAttached(attached, st, r))
+		})
 	}
 	s.mu.Lock()
 	s.rd = r
@@ -211,16 +217,53 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 	// Als aktiv gilt der Leser erst, wenn er stable lang ohne Fehler läuft; sonst würde
 	// ein sofort scheiternder Leser (z. B. Grab) zwischen "bereit" und Fehler flackern.
 	t := time.AfterFunc(s.stable, func() {
-		s.setStatus(ctx, Status{Active: true, Detail: readyText(st, r), State: StateOK})
+		s.setStatus(ctx, sig.current(st, r))
 	})
 	defer t.Stop()
 	return r.Run(ctx, s.hub.Publish)
 }
 
+// detachedText ist der Status, solange das gewählte Lesergerät fehlt.
+const detachedText = "Leser getrennt"
+
+// readerSignals führt den Status eines Lesers, der Abfangen und Gerät meldet.
+type readerSignals struct {
+	mu       sync.Mutex
+	detached bool
+	warn     string
+}
+
+func (g *readerSignals) setWarn(msg string, st Settings, r reader) Status {
+	g.mu.Lock()
+	g.warn = msg
+	g.mu.Unlock()
+	return g.current(st, r)
+}
+
+func (g *readerSignals) setAttached(attached bool, st Settings, r reader) Status {
+	g.mu.Lock()
+	g.detached = !attached
+	g.mu.Unlock()
+	return g.current(st, r)
+}
+
+// current: getrennt vor Warnung vor „bereit“.
+func (g *readerSignals) current(st Settings, r reader) Status {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch {
+	case g.detached:
+		return Status{Detail: detachedText, State: StateError}
+	case g.warn != "":
+		return Status{Active: true, Detail: g.warn, State: StateError}
+	}
+	return Status{Active: true, Detail: readyText(st, r), State: StateOK}
+}
+
 func readyText(st Settings, r reader) string {
 	if u, ok := r.(*usbReader); ok {
 		if len(u.devs) == 0 {
-			return fmt.Sprintf("USB-Leser %q: wartet auf das Gerät", u.sel)
+			return fmt.Sprintf("USB-Leser bereit: %s", u.sel)
 		}
 		return "USB-Leser bereit: " + usbNames(u.devs)
 	}

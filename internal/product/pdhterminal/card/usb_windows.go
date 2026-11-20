@@ -288,11 +288,13 @@ func ListInputDevices(dir string) []InputDevice {
 // winSub ist ein Abnehmer. Leser (match) bekommen die verschluckten Tasten ihres Geräts; wer anlernt (learn),
 // bekommt die erkannte Folge samt Gerät und löst kein Verschlucken aus.
 type winSub struct {
-	match func(InputDevice) bool // Geräte, deren Kartentasten verschluckt werden
-	fn    func(dev InputDevice, code uint16, at time.Time)
-	learn func(dev InputDevice, text string)
-	warn  func(msg string) // Meldung des Abfangens (leer: wieder in Ordnung)
-	lrn   learner          // nur vom Hub-Thread benutzt
+	match  func(InputDevice) bool // Geräte, deren Kartentasten verschluckt werden
+	fn     func(dev InputDevice, code uint16, at time.Time)
+	learn  func(dev InputDevice, text string)
+	warn   func(msg string)    // Meldung des Abfangens (leer: wieder in Ordnung)
+	attach func(attached bool) // Leser angesteckt oder abgezogen (vom Auflöser, nie im Haken)
+	att    attachTracker       // nur vom Auflöser benutzt
+	lrn    learner             // nur vom Hub-Thread benutzt
 }
 
 // kbdHub besitzt den einen Thread je Prozess; er läuft, solange es Abnehmer gibt.
@@ -400,6 +402,7 @@ func (h *kbdHub) resolve() bool {
 	}
 	names := map[string]string{}
 	attached := false
+	here := make(map[*winSub]bool, len(readers))
 	for _, d := range enumDevices() {
 		if d.Named {
 			names[d.Path] = d.Name
@@ -407,7 +410,14 @@ func (h *kbdHub) resolve() bool {
 		for _, s := range readers {
 			if s.match(d.InputDevice) {
 				attached = true
+				here[s] = true
 			}
+		}
+	}
+	// Jeder Leser erfährt, ob sein Gerät da ist (Anstecken und Abziehen ohne Neustart).
+	for _, s := range readers {
+		if s.att.set(here[s]) && s.attach != nil {
+			s.attach(here[s])
 		}
 	}
 	h.nameMu.Lock()
@@ -808,8 +818,9 @@ type keyIn struct {
 func (u *usbReader) readKeys(ctx context.Context, fn func(code uint16, at time.Time)) error {
 	ch := make(chan keyIn, 256)
 	unsub, err := hub.subscribe(&winSub{
-		match: func(d InputDevice) bool { return deviceMatches(u.sel, d) },
-		warn:  u.warn,
+		match:  func(d InputDevice) bool { return deviceMatches(u.sel, d) },
+		warn:   u.warn,
+		attach: u.attach,
 		fn: func(_ InputDevice, code uint16, at time.Time) {
 			select {
 			case ch <- keyIn{code, at}: // der Hub-Thread darf nie blockieren

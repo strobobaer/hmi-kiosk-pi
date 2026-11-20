@@ -135,7 +135,8 @@ type usbReader struct {
 	sel    string
 	format string // was der Leser tippt, siehe normalizeUID; leer: unverändert
 	devs   []InputDevice
-	warn   func(msg string) // Meldung des Abfangens (Windows); leer: wieder in Ordnung
+	warn   func(msg string)    // Meldung des Abfangens (Windows); leer: wieder in Ordnung
+	attach func(attached bool) // Gerät angesteckt oder abgezogen (Windows)
 }
 
 func (u *usbReader) Probe(ctx context.Context) (string, error) {
@@ -167,3 +168,29 @@ func (u *usbReader) Run(ctx context.Context, emit func(string)) error {
 func newUSBReader(st Settings, devs []InputDevice) *usbReader {
 	return &usbReader{sel: st.USBDevice, format: st.USBFormat, devs: devs}
 }
+
+// attachTracker merkt sich, ob der Leser zuletzt angesteckt war; set meldet, ob sich der Stand geändert hat
+// (der erste Stand zählt immer als Änderung).
+type attachTracker struct{ state int8 } // 0 unbekannt, 1 angesteckt, 2 abgezogen
+
+func (a *attachTracker) set(attached bool) (changed bool) {
+	v := int8(2)
+	if attached {
+		v = 1
+	}
+	if a.state == v {
+		return false
+	}
+	a.state = v
+	return true
+}
+
+// signalReader ist ein Leser, der dem Dienst melden kann, was das Abfangen und das Gerät tun.
+type signalReader interface {
+	reader
+	// SetSignals setzt vor Run die Rückrufe: warn (leer: wieder in Ordnung) und attach (Gerät da oder weg).
+	SetSignals(warn func(msg string), attach func(attached bool))
+}
+
+// SetSignals setzt die Rückrufe des Dienstes.
+func (u *usbReader) SetSignals(warn func(string), attach func(bool)) { u.warn, u.attach = warn, attach }
