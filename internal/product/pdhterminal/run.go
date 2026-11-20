@@ -59,6 +59,9 @@ type Options struct {
 	// HelperSocket ist der Socket des root-Helfers; leer heisst: kein Helfer (Windows).
 	HelperSocket    string
 	ChromiumEnabled bool
+	// TrayEnabled legt das Symbol im Infobereich an (nur Windows; sonst ohne Wirkung).
+	TrayEnabled bool
+	tray        tray // ersetzt das Symbol (für Tests)
 	// HardwareID liest die Hardware-Kennung; nil heißt: aus dem Gerät lesen.
 	HardwareID func() string
 	// HelperCall ersetzt den Aufruf des root-Helfers für den Ursprungsabgleich (für Tests).
@@ -102,6 +105,9 @@ type service struct {
 	win      atomic.Pointer[window]             // Edge-Fenster (nur Windows), ab startEdge
 	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
 	certSrc  atomic.Pointer[web.CertSource]
+	tray     atomic.Pointer[tray] // Symbol im Infobereich, solange es läuft
+	exit     chan error           // Bitte um ein Ende von serve (ErrQuit, ErrRestart)
+	problems map[string]string    // Gründe für die rote Färbung des Symbols (s.mu)
 
 	cfgMu    sync.Mutex // Laden, Ändern, Speichern der Konfiguration als Einheit (auch für die Admin-Seite)
 	mu       sync.RWMutex
@@ -129,7 +135,7 @@ func newService(o Options) (*service, error) {
 	o.LocalAddr = orDefault(o.LocalAddr, DefaultLocalAddr)
 	o.AdminAddr = orDefault(o.AdminAddr, DefaultAdminAddr)
 	o.LocalAdminAddr = orDefault(o.LocalAdminAddr, DefaultLocalAdminAddr)
-	s := &service{o: o, store: config.Open(o.DataDir)}
+	s := &service{o: o, store: config.Open(o.DataDir), exit: make(chan error, 1)}
 	if o.HelperSocket != "" {
 		s.helper = helperapi.New(o.HelperSocket)
 	}
@@ -335,10 +341,12 @@ func (s *service) serve(parent context.Context) error {
 	stopLocalAdmin, err := appcore.ServeLocalAdmin(ctx, s.o.LocalAdminAddr, onTerminal, &s.presence)
 	if err != nil {
 		s.warn(fmt.Sprintf("Admin-Seite am Terminal nicht verfügbar: %v", err))
+		s.setProblem(problemLocal, "Port belegt, Admin-Seite am Terminal nicht verfügbar")
 	} else {
 		bound.LocalAdmin = s.o.LocalAdminAddr
 	}
 
+	stopTray := s.startTray(ctx, bound, background)
 	browserDone := s.startBrowser(ctx, "http://"+bound.Local+startPath)
 	s.announce(ctx, bound, background)
 
@@ -346,8 +354,10 @@ func (s *service) serve(parent context.Context) error {
 	select {
 	case <-ctx.Done():
 	case err = <-localErr:
+	case err = <-s.exit:
 	}
 	cancel()
+	stopTray()
 	if serr := appcore.Notify("STOPPING=1"); serr != nil {
 		log.Printf("Abmeldung bei systemd: %v", serr)
 	}
@@ -499,6 +509,7 @@ func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, 
 	l, err := net.Listen("tcp", s.o.AdminAddr)
 	if err != nil {
 		s.warn(fmt.Sprintf("Admin-Seite nicht verfügbar: %v", err))
+		s.setProblem(problemAdmin, "Port belegt, Admin-Seite nicht verfügbar")
 		return nil, ""
 	}
 	src := web.NewCertSource(dir, cert)

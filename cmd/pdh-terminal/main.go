@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log"
 	"os"
@@ -33,8 +34,15 @@ func main() {
 		LocalAdminAddr:  *localAdmin,
 		HelperSocket:    *helperSocket,
 		ChromiumEnabled: !*noChromium,
+		TrayEnabled:     true,
 	})
-	if err != nil {
+	stop()
+	switch {
+	case errors.Is(err, pdhterminal.ErrQuit):
+		os.Exit(pdhterminal.ExitQuit)
+	case errors.Is(err, pdhterminal.ErrRestart):
+		os.Exit(pdhterminal.ExitRestart)
+	case err != nil:
 		log.Fatal(err)
 	}
 }

@@ -30,7 +30,13 @@ func (s *service) startEdge(ctx context.Context, startURL string) <-chan struct{
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		path, ok := waitForEdge(ctx, edgeRetry, readRegistry)
+		path, ok := waitForEdgeNotify(ctx, edgeRetry, readRegistry, func(missing bool) {
+			if missing {
+				s.setProblem(problemEdge, "Edge fehlt")
+			} else {
+				s.setProblem(problemEdge, "")
+			}
+		})
 		if !ok {
 			return
 		}
@@ -59,22 +65,7 @@ func (s *service) startEdge(ctx context.Context, startURL string) <-chan struct{
 
 // waitForEdge sucht Edge, bis es da ist oder ctx endet; die erste Meldung steht im Protokoll.
 func waitForEdge(ctx context.Context, every time.Duration, read func(string) (string, error)) (string, bool) {
-	warned := false
-	for {
-		p, err := browser.FindEdge(read)
-		if err == nil {
-			return p, true
-		}
-		if !warned {
-			log.Printf("Warnung: %v, das Terminal läuft ohne Anzeige, neuer Versuch alle %v", err, every)
-			warned = true
-		}
-		select {
-		case <-ctx.Done():
-			return "", false
-		case <-time.After(every):
-		}
-	}
+	return waitForEdgeNotify(ctx, every, read, func(bool) {})
 }
 
 // jobPIDs: Prozesskennungen des Edge-Jobs; ohne laufenden Prozess keine.
@@ -116,4 +107,28 @@ func (s *service) raiseWindow() error {
 		return (*w).Raise()
 	}
 	return nil
+}
+
+// waitForEdgeNotify wie waitForEdge; missing(true) meldet das erste Fehlen, missing(false) den Fund danach.
+func waitForEdgeNotify(ctx context.Context, every time.Duration, read func(string) (string, error), missing func(bool)) (string, bool) {
+	warned := false
+	for {
+		p, err := browser.FindEdge(read)
+		if err == nil {
+			if warned {
+				missing(false)
+			}
+			return p, true
+		}
+		if !warned {
+			log.Printf("Warnung: %v, das Terminal läuft ohne Anzeige, neuer Versuch alle %v", err, every)
+			missing(true)
+			warned = true
+		}
+		select {
+		case <-ctx.Done():
+			return "", false
+		case <-time.After(every):
+		}
+	}
 }
