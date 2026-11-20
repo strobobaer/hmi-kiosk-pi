@@ -46,14 +46,21 @@
       <input type="text" name="usbDevice" value="{{.USBFree}}" autocapitalize="off" spellcheck="false">
       <input type="hidden" name="usbPrev" value="{{.USBFree}}">
     </label>
-    <label class="{{if .Windows}}f-usb{{else}}f-pn532{{end}}">Schreibweise der Kartennummer{{if not .Windows}} (PN532){{end}}
+    {{if .Windows}}<label class="f-usb">Schreibweise der Kartennummer (was der Leser tippt)
+      <select name="usbFormat">
+        <option value=""{{if eq .USBFormat ""}} selected{{end}}>Unverändert</option>
+        <option value="hex"{{if eq .USBFormat "hex"}} selected{{end}}>hex</option>
+        <option value="hex-rev"{{if eq .USBFormat "hex-rev"}} selected{{end}}>hex, Bytes umgekehrt</option>
+        <option value="dec"{{if eq .USBFormat "dec"}} selected{{end}}>dezimal</option>
+      </select>
+    </label>{{else}}<label class="f-pn532">Schreibweise der Kartennummer (PN532)
       <select name="format">
         <option value=""{{if eq .Format ""}} selected{{end}}>Standard (hex)</option>
         <option value="hex"{{if eq .Format "hex"}} selected{{end}}>hex</option>
         <option value="hex-rev"{{if eq .Format "hex-rev"}} selected{{end}}>hex, Bytes umgekehrt</option>
         <option value="dec"{{if eq .Format "dec"}} selected{{end}}>dezimal</option>
       </select>
-    </label>
+    </label>{{end}}
     <p class="hint">Ein von Hand geändertes USB-Gerät hat Vorrang vor der Auswahl. Änderungen gelten sofort.</p>
     <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
   </form>

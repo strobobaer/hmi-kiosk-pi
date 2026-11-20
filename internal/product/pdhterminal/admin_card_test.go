@@ -99,6 +99,7 @@ func TestAdminCardUSBFreeFieldPrefill(t *testing.T) {
 }
 
 func TestCardSettingsMapping(t *testing.T) {
+	skipOnWindows(t)
 	got := cardSettings(config.CardCfg{Type: "pn532-i2c", PN532Bus: "spi"})
 	if got.Bus != "spi" || got.SPIDev != "/dev/spidev0.0" || got.Unsupported != "" {
 		t.Errorf("SPI: %+v", got)
@@ -114,6 +115,7 @@ func TestCardSettingsMapping(t *testing.T) {
 }
 
 func TestCardSaveSPI(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	r := e.post("/admin/card/settings", url.Values{"type": {"pn532-spi"}, "spiDev": {"/dev/spidev0.1"}, "uartDev": {"/dev/ttyS0"}})
 	if r.Code != http.StatusOK {
@@ -199,6 +201,7 @@ func TestCardSaveIgnoresI2CFieldsForOtherTypes(t *testing.T) {
 }
 
 func TestAdminCardFieldGroups(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	body := e.get("/admin/card").Body.String()
 	for _, cls := range []string{"f-i2c", "f-spi", "f-uart", "f-usb", "f-pn532"} {
@@ -239,6 +242,7 @@ func TestCardFormWindowsTypes(t *testing.T) {
 }
 
 func TestCardFormLinuxHasNoLearn(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	if body := e.get("/admin/card").Body.String(); strings.Contains(body, "Karte vorhalten") || !strings.Contains(body, "PN532 (SPI)") {
 		t.Errorf("Linux zeigt Anlernknopf oder keine PN532:\n%s", body)
@@ -304,5 +308,53 @@ func TestCardLearnTimeout(t *testing.T) {
 	r := e.post("/admin/card/learn", url.Values{})
 	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "Keine Karte gelesen") {
 		t.Fatalf("%d\n%s", r.Code, r.Body.String())
+	}
+}
+
+// skipOnWindows überspringt Tests, die das Linux-Formular oder den PN532 voraussetzen.
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if onWindows {
+		t.Skip("setzt das Linux-Formular voraus")
+	}
+}
+
+func TestCardSettingsUSBFormat(t *testing.T) {
+	// Altes Linux-Gerät: usb mit übrig gebliebenem format. Der USB-Leser bekommt kein Format.
+	got := cardSettings(config.CardCfg{Type: "usb", USBDevice: "ffff:0035", Format: "dec"})
+	if got.USBFormat != "" || got.Format != "dec" {
+		t.Errorf("Format dec: %+v", got)
+	}
+	got = cardSettings(config.CardCfg{Type: "usb", USBDevice: "ffff:0035", USBFormat: "dec"})
+	if got.USBFormat != "dec" {
+		t.Errorf("USBFormat dec: %+v", got)
+	}
+}
+
+func TestCardSaveKeepsOtherPlatformFormat(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	if err := e.store.Save(func() config.Config {
+		c, _, _ := e.store.Load()
+		c.Card = config.CardCfg{Type: "usb", USBDevice: "x", Format: "hex-rev", USBFormat: "dec"}
+		return c
+	}()); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"type": {"usb"}, "usbDevice": {"x"}}
+	if formWindows {
+		form.Set("usbFormat", "hex")
+	} else {
+		form.Set("format", "hex")
+	}
+	if r := e.post("/admin/card/settings", form); r.Code != http.StatusOK {
+		t.Fatalf("Speichern: %d\n%s", r.Code, r.Body.String())
+	}
+	c, _, _ := e.store.Load()
+	want := config.CardCfg{Type: "usb", USBDevice: "x", Format: "hex", USBFormat: "dec"}
+	if formWindows {
+		want = config.CardCfg{Type: "usb", USBDevice: "x", Format: "hex-rev", USBFormat: "hex"}
+	}
+	if c.Card != want {
+		t.Fatalf("Konfiguration %+v, erwartet %+v", c.Card, want)
 	}
 }

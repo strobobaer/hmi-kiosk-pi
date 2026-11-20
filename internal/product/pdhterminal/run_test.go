@@ -152,6 +152,7 @@ func TestOriginsSentAtStartAndOnApply(t *testing.T) {
 }
 
 func TestAdminSelftestUnknownDisplayTypeIsRed(t *testing.T) {
+	skipOnWindows(t)
 	s := &service{cfg: config.Config{StatusDisplay: config.StatusDisplayCfg{Type: "ssd1306"}}}
 	_, reason := s.cfg.StatusDisplay.Known()
 	for _, st := range s.adminSelftest(context.Background()) {

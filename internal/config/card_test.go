@@ -192,3 +192,31 @@ func TestOldCardConfigRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestUSBFormatValidationAndCompat(t *testing.T) {
+	for _, f := range []string{"", "hex", "hex-rev", "dec"} {
+		if err := ValidateCard(CardCfg{Type: "usb", USBDevice: "x", USBFormat: f}); err != nil {
+			t.Errorf("USBFormat %q: %v", f, err)
+		}
+	}
+	if err := ValidateCard(CardCfg{Type: "usb", USBDevice: "x", USBFormat: "bin"}); err == nil {
+		t.Error("USBFormat bin muss scheitern")
+	}
+	// Eine alte config.json ohne usbFormat lädt unverändert (Format bleibt, USBFormat leer).
+	dir := t.TempDir()
+	old := sample()
+	old.Card = CardCfg{Type: "usb", USBDevice: "ffff:0035", Format: "dec"}
+	if err := Open(dir).Save(old); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "config.json")); strings.Contains(string(b), "usbFormat") {
+		t.Fatalf("usbFormat ohne Wert gespeichert: %s", b)
+	}
+	c, _, err := Open(dir).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Card.Format != "dec" || c.Card.USBFormat != "" {
+		t.Fatalf("alte Konfiguration: %+v", c.Card)
+	}
+}

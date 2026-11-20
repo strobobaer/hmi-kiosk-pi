@@ -30,7 +30,7 @@ const learnWait = 15 * time.Second
 func cardSettings(c config.CardCfg) card.Settings {
 	bus, addr := c.Settings()
 	return card.Settings{
-		Type: c.Type, I2CBus: bus, I2CAddr: addr, USBDevice: c.USBDevice, Format: c.Format,
+		Type: c.Type, I2CBus: bus, I2CAddr: addr, USBDevice: c.USBDevice, Format: c.Format, USBFormat: c.USBFormat,
 		Bus: c.PN532Bus, SPIDev: c.SPIDevice(), UARTDev: c.UARTDevice(), Unsupported: cardReason(c),
 	}
 }
@@ -46,6 +46,7 @@ func cardReason(c config.CardCfg) string {
 // cardView ist, was die Seite Kartenleser anzeigt.
 type cardView struct {
 	Type, Bus, Addr, USB, Format string
+	USBFormat                    string // Schreibweise des USB-Lesers (nur Windows-Formular)
 	SPIDev, UARTDev              string
 	Unsupported                  string // Grund, wenn die gespeicherten Werte diese Version überfordern
 	USBFree                      string // Vorbelegung des Freitextfelds: leer, wenn die Auswahl das Gerät schon zeigt
@@ -82,7 +83,7 @@ func (p *adminProduct) renderCardLearned(f web.AdminFrame, w http.ResponseWriter
 	bus, addr := shown.Settings()
 	st := p.cards.Status()
 	v := cardView{
-		Type: formType(shown), Bus: bus, Addr: fmt.Sprintf("%#x", addr), USB: shown.USBDevice, Format: shown.Format,
+		Type: formType(shown), Bus: bus, Addr: fmt.Sprintf("%#x", addr), USB: shown.USBDevice, Format: shown.Format, USBFormat: shown.USBFormat,
 		SPIDev: shown.SPIDevice(), UARTDev: shown.UARTDevice(), Unsupported: cardReason(shown),
 		Devices: card.ListInputDevices(inputDir), Active: st.Active, Detail: st.Detail, Notice: notice,
 		Last: "Noch keine Karte gelesen", Windows: formWindows, Learned: learned,
@@ -111,6 +112,7 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 	in := config.CardCfg{
 		Type:      strings.TrimSpace(r.PostFormValue("type")),
 		Format:    strings.TrimSpace(r.PostFormValue("format")),
+		USBFormat: strings.TrimSpace(r.PostFormValue("usbFormat")),
 		USBDevice: strings.TrimSpace(r.PostFormValue("usbDevice")),
 	}
 	// Das Formular kennt pn532-spi und pn532-uart; gespeichert wird immer pn532-i2c mit PN532Bus.
@@ -143,7 +145,16 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 		p.renderCard(f, w, http.StatusBadRequest, err.Error(), "", &in)
 		return
 	}
-	if err := f.Update(func(c *config.Config) error { c.Card = in; return nil }); err != nil {
+	// Das Formular zeigt je Plattform nur eines der beiden Formate; das andere bleibt, wie es war.
+	if err := f.Update(func(c *config.Config) error {
+		if formWindows {
+			in.Format = c.Card.Format
+		} else {
+			in.USBFormat = c.Card.USBFormat
+		}
+		c.Card = in
+		return nil
+	}); err != nil {
 		p.renderCard(f, w, http.StatusBadRequest, err.Error(), "", &in)
 		return
 	}
@@ -172,12 +183,12 @@ func (p *adminProduct) cardLearn(f web.AdminFrame, w http.ResponseWriter, r *htt
 		return
 	}
 	in := cfg.Card
-	in.Type, in.Format = config.CardTypeUSB, card.SuggestFormat(typed)
+	in.Type, in.USBFormat = config.CardTypeUSB, card.SuggestFormat(typed)
 	in.USBDevice = dev.ID
 	if in.USBDevice == "" {
 		in.USBDevice = dev.Name
 	}
-	l := &learnedView{Device: dev.Name, Typed: typed, Format: in.Format}
+	l := &learnedView{Device: dev.Name, Typed: typed, Format: in.USBFormat}
 	l.Hex, l.HexRev, l.Dec, l.Forms = card.UIDForms(typed)
 	p.renderCardLearned(f, w, http.StatusOK, "", "Karte erkannt. Mit „Speichern“ übernehmen.", &in, l)
 }

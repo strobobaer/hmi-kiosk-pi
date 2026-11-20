@@ -161,3 +161,9 @@ func (u *usbReader) Run(ctx context.Context, emit func(string)) error {
 		}
 	})
 }
+
+// newUSBReader baut den Leser aus den Einstellungen. Umgerechnet wird nur mit USBFormat; Format gilt
+// allein für den PN532, damit Konfigurationen mit einem alten Format am USB-Leser unverändert bleiben.
+func newUSBReader(st Settings, devs []InputDevice) *usbReader {
+	return &usbReader{sel: st.USBDevice, format: st.USBFormat, devs: devs}
+}

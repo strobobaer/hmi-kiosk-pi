@@ -28,7 +28,8 @@ type Settings struct {
 	I2CBus    string // Nummer oder Gerätepfad, z. B. "1"
 	I2CAddr   int    // 0 = 0x24
 	USBDevice string // vvvv:pppp oder Namensteil
-	Format    string // PN532: Ausgabeform (FormatUID); USB: was der Leser tippt (normalizeUID)
+	Format    string // nur PN532: Ausgabeform (FormatUID)
+	USBFormat string // nur USB: was der Leser tippt (normalizeUID); leer: der Text bleibt unverändert
 
 	Bus         string // nur PN532: "" (I²C), BusSPI oder BusUART
 	SPIDev      string // Gerätepfad bei BusSPI
@@ -264,7 +265,7 @@ func openReader(st Settings) (reader, error) {
 		if len(devs) == 0 && !usbMayBeAbsent {
 			return nil, fmt.Errorf("USB-Leser %q nicht gefunden", st.USBDevice)
 		}
-		return &usbReader{sel: st.USBDevice, format: st.Format, devs: devs}, nil
+		return newUSBReader(st, devs), nil
 	}
 	return nil, fmt.Errorf("unbekannter Lesertyp %q", st.Type)
 }

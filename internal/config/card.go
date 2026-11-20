@@ -27,6 +27,9 @@ type CardCfg struct {
 	UARTDev string `json:"uartDev,omitempty"`
 	// Format bestimmt die Schreibweise der UID: hex, hex-rev oder dec (leer: hex).
 	Format string `json:"format,omitempty"`
+	// USBFormat sagt, was der USB-Leser tippt (hex, hex-rev oder dec); nur dann wird die UID umgerechnet.
+	// Leer: Der Text des Lesers gilt unverändert (wie bisher unter Linux). Format gilt nur für den PN532.
+	USBFormat string `json:"usbFormat,omitempty"`
 }
 
 // Erlaubte Lesertypen der Konfiguration.
@@ -116,6 +119,11 @@ func ValidateCard(c CardCfg) error {
 	case "", "hex", "hex-rev", "dec":
 	default:
 		return fmt.Errorf("Kartenleser: Format ungültig: %q (erlaubt hex, hex-rev, dec)", c.Format)
+	}
+	switch c.USBFormat {
+	case "", "hex", "hex-rev", "dec":
+	default:
+		return fmt.Errorf("Kartenleser: Format des USB-Lesers ungültig: %q (erlaubt hex, hex-rev, dec)", c.USBFormat)
 	}
 	return nil
 }
