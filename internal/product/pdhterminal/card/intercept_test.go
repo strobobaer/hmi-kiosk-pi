@@ -177,8 +177,94 @@ func TestGateNonCandidateInBetweenReplays(t *testing.T) {
 	g := newG()
 	g.Hook(hook(k1), t0)
 	block, acts := g.Hook(hook(kX), t0.Add(5*time.Millisecond))
-	if block || len(acts) != 1 || acts[0].Kind != actReplay || acts[0].Key != k1 {
-		t.Fatalf("andere Taste: block=%v acts=%+v, erwartet 1 zuerst wiederholt, dann X unberührt", block, acts)
+	// Die auslösende Taste wird mit gehalten und erst nach der gehaltenen eingespielt.
+	if !block || len(acts) != 2 || acts[0].Kind != actReplay || acts[0].Key != k1 || acts[1].Kind != actReplay || acts[1].Key != kX {
+		t.Fatalf("andere Taste: block=%v acts=%+v, erwartet beide blockiert und 1 vor X wiederholt", block, acts)
+	}
+}
+
+// delivered ergibt, was die Anwendung als Tastenfolge sieht: erst die Wiederholungen (acts), dann die Taste, wenn
+// der Haken sie nicht blockiert, oder umgekehrt (after). Beide Zustellordnungen müssen dasselbe ergeben.
+func delivered(t *testing.T, g *gate, at time.Time, step time.Duration, keys []keyEvent, after bool) []keyEvent {
+	t.Helper()
+	var out []keyEvent
+	for _, k := range keys {
+		block, acts := g.Hook(hook(k), at)
+		var rep []keyEvent
+		for _, a := range acts {
+			if a.Kind == actReplay {
+				rep = append(rep, a.Key)
+			}
+		}
+		switch {
+		case block:
+			out = append(out, rep...)
+		case after:
+			out = append(out, rep...)
+			out = append(out, k)
+		default:
+			out = append(out, k)
+			out = append(out, rep...)
+		}
+		at = at.Add(step)
+	}
+	return out
+}
+
+func down(scan uint16, ext bool) keyEvent { return keyEvent{Scan: scan, Ext: ext} }
+func up(scan uint16, ext bool) keyEvent   { return keyEvent{Scan: scan, Ext: ext, Up: true} }
+
+func TestGateModifierAndTriggerOrder(t *testing.T) {
+	const (
+		scShift, scT, scCtrl, scAlt, scSpace = 42, 20, 29, 56, 57
+	)
+	cases := []struct {
+		name string
+		keys []keyEvent // wie sie von der Tastatur kommen; Ergebnis muss gleich sein (nichts geht verloren, nichts dreht sich)
+	}{
+		{"Umschalt+T", []keyEvent{down(scShift, false), down(scT, false), up(scT, false), up(scShift, false)}},
+		{"Strg+C", []keyEvent{down(scCtrl, false), down(46, false), up(46, false), up(scCtrl, false)}},
+		{"AltGr+E", []keyEvent{down(scCtrl, false), down(scAlt, true), down(18, false), up(18, false), up(scAlt, true), up(scCtrl, false)}},
+		{"E und Leertaste", []keyEvent{down(18, false), down(scSpace, false), up(18, false), up(scSpace, false)}},
+		{"Strg+Umschalt+C", []keyEvent{down(scCtrl, false), down(scShift, false), down(46, false), up(46, false), up(scShift, false), up(scCtrl, false)}},
+	}
+	for _, c := range cases {
+		for _, after := range []bool{false, true} {
+			g := newG()
+			got := delivered(t, g, t0, 5*time.Millisecond, c.keys, after)
+			// Am Ende ist nichts mehr gehalten (Tick spielt Rest ein).
+			for _, a := range g.Tick(t0.Add(time.Second)) {
+				if a.Kind == actReplay {
+					got = append(got, a.Key)
+				}
+			}
+			if !reflect.DeepEqual(got, c.keys) {
+				t.Errorf("%s (Zustellung danach=%v):\n got  %v\n want %v", c.name, after, got, c.keys)
+			}
+			if !g.Idle() {
+				t.Errorf("%s: Warteschlange nicht leer", c.name)
+			}
+		}
+	}
+}
+
+func TestGateStuckUpExpires(t *testing.T) {
+	g := newG()
+	// Eine Leserfolge wird verschluckt; das Loslassen der letzten Taste geht verloren.
+	typeStr(g, t0, "04A1B2C3", 8*time.Millisecond, true)
+	g.ups = map[keyEvent]time.Time{kEnt: t0} // Enter ist noch als „Loslassen erwartet“ vermerkt
+	// Nach upsMax gilt der Eintrag nicht mehr: Das nächste Loslassen von Enter läuft durch.
+	block, _ := g.Hook(hook(up(28, false)), t0.Add(upsMax+time.Millisecond))
+	if block {
+		t.Fatal("verfallener Eintrag verschluckt das Loslassen")
+	}
+	if len(g.ups) != 0 {
+		t.Fatalf("ups nicht bereinigt: %v", g.ups)
+	}
+	// Vor Ablauf wird es verschluckt.
+	g.ups = map[keyEvent]time.Time{kEnt: t0}
+	if block, _ := g.Hook(hook(up(28, false)), t0.Add(500*time.Millisecond)); !block {
+		t.Fatal("Loslassen innerhalb der Frist muss verschluckt werden")
 	}
 }
 

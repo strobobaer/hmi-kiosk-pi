@@ -31,6 +31,8 @@ const (
 	// maxQueue begrenzt die gehaltenen Ereignisse: Je Zeichen Umschalt und Zeichen, jeweils Druck und Loslassen.
 	maxQueue = 4 * maxDowns
 	maxRaws  = 16
+	// upsMax ist, wie lange das Loslassen einer verschluckten Taste erwartet wird.
+	upsMax = time.Second
 )
 
 // keyEvent ist ein Tastenereignis: Scancode (Satz 1), E0-Erweiterung, Loslassen.
@@ -97,8 +99,10 @@ type gate struct {
 	lastDown time.Time
 	downs    int
 	chars    []byte
-	// ups sind verschluckte Tasten, deren Loslassen noch aussteht.
-	ups map[keyEvent]bool
+	// ups sind verschluckte Tasten, deren Loslassen noch aussteht, mit dem Zeitpunkt des Verschluckens.
+	// Nach upsMax verfällt der Eintrag: Ein verlorenes Loslassen darf keine Taste dauerhaft sperren.
+	ups map[keyEvent]time.Time
+	now time.Time // der zuletzt gesehene Zeitpunkt (für markUp)
 }
 
 // scanCandidates sind die Scancodes (ohne E0), die eine UID tippen: Ziffern, A-F, Enter,
@@ -207,17 +211,25 @@ func (g *gate) SetActive(a bool) []action {
 // Hook behandelt ein Ereignis des Tastaturhakens zum Zeitpunkt now. block ist die Antwort des
 // Hakens (true: nicht weiterreichen); acts sind Folgen daraus, vor der Antwort auszuführen.
 func (g *gate) Hook(h hookEvent, now time.Time) (block bool, acts []action) {
+	g.now = now
+	g.expireUps(now)
 	if h.Marked || h.Injected || !g.Active || g.Bypass {
 		return false, nil
 	}
 	if !isCandidate(h.keyEvent) {
-		// Eine andere Taste beendet jede Folge: Gehaltenes geht vor ihr hinaus.
-		return false, g.flush()
+		if len(g.queue) == 0 {
+			return false, nil
+		}
+		// Eine andere Taste beendet jede Folge: Gehaltenes geht vor ihr hinaus. Auch diese Taste wird gehalten und
+		// nach den anderen eingespielt; liefe sie sofort durch, könnte sie (Umschalt, Strg, AltGr als Auslöser) vor
+		// den wiederholten Tasten ankommen, und deren Zeichen verlören die Umschalttaste.
+		acts = g.flush()
+		return true, append(acts, action{Kind: actReplay, Key: h.keyEvent, At: now})
 	}
 	if h.Up {
 		down := h.keyEvent
 		down.Up = false
-		if g.ups[down] && !g.pendingDown(down) {
+		if _, ok := g.ups[down]; ok && !g.pendingDown(down) {
 			delete(g.ups, down)
 			return true, nil // Loslassen einer verschluckten Taste
 		}
@@ -290,6 +302,7 @@ func (g *gate) finish() []action {
 
 // Raw behandelt ein Raw-Input-Ereignis.
 func (g *gate) Raw(r rawEvent, now time.Time) []action {
+	g.now = now
 	if !g.Active || !isCandidate(r.keyEvent) {
 		return nil
 	}
@@ -317,6 +330,8 @@ func (g *gate) Raw(r rawEvent, now time.Time) []action {
 
 // Tick beendet eine Folge, die länger als gapMax still ist.
 func (g *gate) Tick(now time.Time) []action {
+	g.now = now
+	g.expireUps(now)
 	g.pruneRaws(now)
 	if len(g.queue) > 0 && now.Sub(g.lastDown) >= gapMax {
 		return g.flush()
@@ -375,9 +390,9 @@ func (g *gate) markUp(k keyEvent) {
 		return
 	}
 	if g.ups == nil {
-		g.ups = map[keyEvent]bool{}
+		g.ups = map[keyEvent]time.Time{}
 	}
-	g.ups[k] = true
+	g.ups[k] = g.now
 }
 
 func (g *gate) pendingDown(k keyEvent) bool {
@@ -445,4 +460,13 @@ func (l *learner) Key(dev uintptr, k keyEvent, at time.Time) (outDev uintptr, te
 		l.chars = append(l.chars, c)
 	}
 	return 0, "", false
+}
+
+// expireUps lässt erwartete Loslass-Ereignisse verfallen, die länger als upsMax ausbleiben.
+func (g *gate) expireUps(now time.Time) {
+	for k, at := range g.ups {
+		if now.Sub(at) > upsMax {
+			delete(g.ups, k)
+		}
+	}
 }

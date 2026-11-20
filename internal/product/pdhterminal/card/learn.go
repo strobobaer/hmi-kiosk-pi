@@ -13,8 +13,8 @@ import (
 var errNotSupported = errors.New("Leser anlernen wird auf dieser Plattform nicht unterstützt")
 
 // Learn wartet bis zu d auf die erste Tastenfolge, die mit Enter endet, und liefert das Gerät
-// und den getippten Text (Großbuchstaben). Während des Wartens werden Kartentasten aller Tastaturen
-// nicht an andere Programme weitergegeben.
+// und den getippten Text (Großbuchstaben). Während des Wartens wird nichts verschluckt: Die Tasten gehen
+// unverändert an das Vordergrundfenster, erkannt wird die Folge an den Raw-Ereignissen.
 func Learn(ctx context.Context, d time.Duration) (InputDevice, string, error) {
 	return learnPlatform(ctx, d)
 }
