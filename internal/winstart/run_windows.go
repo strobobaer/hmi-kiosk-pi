@@ -20,6 +20,7 @@ import (
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/update"
+	"hmikiosk/internal/winsignal"
 )
 
 // MutexName ist der systemweite Mutex: Es läuft höchstens ein Starter je PC.
@@ -37,7 +38,13 @@ func Main(args []string, def Paths) int {
 	switch {
 	case errors.Is(err, windows.ERROR_ALREADY_EXISTS), errors.Is(err, windows.ERROR_ACCESS_DENIED):
 		// Ein anderer Starter läuft (ERROR_ACCESS_DENIED: in einer anderen Sitzung unter anderem Konto).
-		log.Printf("Ein Starter läuft schon, dieser endet.")
+		// Startmenü und Benachrichtigung starten den Starter erneut: Das laufende Terminal derselben Sitzung
+		// zeigt dann sein Fenster. In einer anderen Sitzung findet sich niemand; dann endet es still.
+		if ok, err := winsignal.Notify(winsignal.OpenName); ok {
+			log.Printf("Ein Starter läuft schon, das Terminal öffnet sein Fenster.")
+		} else {
+			log.Printf("Ein Starter läuft schon, dieser endet (%v).", err)
+		}
 		if mu != 0 {
 			windows.CloseHandle(mu)
 		}

@@ -31,6 +31,7 @@ import (
 	"hmikiosk/internal/update"
 	"hmikiosk/internal/updatecheck"
 	"hmikiosk/internal/web"
+	"hmikiosk/internal/winsignal"
 )
 
 // Vorgaben der Adressen und Pfade; sie gelten wie beim HMI-Kiosk, damit Helfer,
@@ -66,6 +67,10 @@ type Options struct {
 	HardwareID func() string
 	// HelperCall ersetzt den Aufruf des root-Helfers für den Ursprungsabgleich (für Tests).
 	HelperCall func(ctx context.Context, cmd, arg string) error
+	// OpenSignal ist der Name des Ereignisses, mit dem ein zweiter Start das Fenster anfordert (leer: unter
+	// Windows winsignal.OpenName, sonst keines). OnOpen ersetzt „Terminal öffnen“ (für Tests).
+	OpenSignal string
+	OnOpen     func()
 	// Ready wird gerufen, wenn der Dienst läuft (für Tests).
 	Ready func(Bound)
 }
@@ -370,6 +375,20 @@ func (s *service) serve(parent context.Context) error {
 	}
 
 	stopTray := s.startTray(ctx, bound, background)
+	if name := s.openSignalName(); name != "" {
+		background(func() {
+			open := func() {
+				if s.o.OnOpen != nil {
+					s.o.OnOpen()
+					return
+				}
+				s.openTerminal(ctx)
+			}
+			if err := winsignal.Listen(ctx, name, open); err != nil {
+				log.Printf("Öffnen durch einen zweiten Start nicht möglich: %v", err)
+			}
+		})
+	}
 	// Browser und späte Startseite (nach belegtem Port) teilen sich late; closed verhindert Neues nach dem Ende.
 	var late struct {
 		mu      sync.Mutex
@@ -810,4 +829,15 @@ func shutdownServers(servers ...*http.Server) {
 		}()
 	}
 	wg.Wait()
+}
+
+// openSignalName: Das Ereignis, auf das ein zweiter Start (Startmenü, Benachrichtigung) das Fenster anfordert.
+func (s *service) openSignalName() string {
+	if s.o.OpenSignal != "" {
+		return s.o.OpenSignal
+	}
+	if onWindows && s.o.ChromiumEnabled {
+		return winsignal.OpenName
+	}
+	return ""
 }

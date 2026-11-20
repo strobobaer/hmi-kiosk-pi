@@ -16,6 +16,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/update"
+	"hmikiosk/internal/winsignal"
 )
 
 func freeAddr(t *testing.T) string {
@@ -418,5 +419,59 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 			t.Fatalf("Timeout: %s", what)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestSecondStartOpensWindow: Ein zweiter Start meldet sich über das Ereignis der Sitzung; das laufende Terminal
+// handelt wie bei „Terminal öffnen“.
+func TestSecondStartOpensWindow(t *testing.T) {
+	name := `Local\PDH-Terminal-Test-` + t.Name()
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	opened := make(chan struct{}, 4)
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: t.TempDir(), RunDir: t.TempDir(),
+			LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+			HelperSocket: filepath.Join(t.TempDir(), "kein.sock"), HardwareID: func() string { return "x" },
+			OpenSignal: name, OnOpen: func() { opened <- struct{}{} },
+			Ready: func(b Bound) { ready <- b },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Dienst endete früh: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Dienst startet nicht")
+	}
+	waitUntil(t, "Lauscher", func() bool {
+		ok, err := winsignal.Notify(name)
+		return err == nil && ok
+	})
+	select {
+	case <-opened:
+	case <-time.After(5 * time.Second):
+		t.Fatal("zweiter Start öffnet das Fenster nicht")
+	}
+	cancel()
+	<-done
+}
+
+func TestOpenSignalNameDefaults(t *testing.T) {
+	s := &service{}
+	if got := s.openSignalName(); got != "" {
+		t.Errorf("ohne Browser kein Lauscher: %q", got)
+	}
+	s.o.ChromiumEnabled = true
+	want := ""
+	if onWindows {
+		want = winsignal.OpenName
+	}
+	if got := s.openSignalName(); got != want {
+		t.Errorf("Standardname %q, erwartet %q", got, want)
 	}
 }
