@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -16,6 +17,9 @@ import (
 	"hmikiosk/internal/release"
 )
 
+// packageFile ist der Name des Pakets neben dem Programm (nur Windows).
+const packageFile = "package.pkg"
+
 // Install entpackt ein geprüftes Paket nach <root>/app/<version>. Es schaltet
 // nichts um. Der Entpackvorgang läuft in einem temporären Ordner und wird erst
 // am Ende umbenannt; bei einem Fehler bleibt nichts zurück.
@@ -26,6 +30,9 @@ func Install(root string, p *Package) (version string, err error) {
 	binary, ok := binaryFor(p.Product)
 	if !ok {
 		return "", errors.New("Paket ungültig")
+	}
+	if p.Platform != "" {
+		binary += ".exe"
 	}
 	app := appPath(root)
 	if err := os.MkdirAll(app, 0o755); err != nil {
@@ -57,6 +64,13 @@ func Install(root string, p *Package) (version string, err error) {
 	})
 	if err != nil {
 		return "", err
+	}
+	if p.Platform != "" {
+		// Windows: das Paket bleibt neben dem Programm, damit der Starter es später prüfen kann.
+		blob := append(append([]byte{}, p.sig...), p.targz...)
+		if err := writeNew(filepath.Join(tmp, packageFile), bytes.NewReader(blob), 0o644); err != nil {
+			return "", err
+		}
 	}
 	if err := syncDir(tmp); err != nil {
 		return "", err
@@ -154,6 +168,8 @@ type Installer struct {
 	SystemLevel func() int
 	// Product ist das Produkt dieses Geräts; leer gilt als HMI-Kiosk.
 	Product release.Product
+	// Platform ist die Plattform dieses Geräts (release.CurrentPlatform); leer ist Linux.
+	Platform string
 
 	mu sync.Mutex
 }
@@ -187,6 +203,9 @@ func (in *Installer) install(ctx context.Context, blob []byte, want string) (str
 		return "", fmt.Errorf("Das Paket enthält Version %s statt der angebotenen Version %s; es wurde nicht installiert.", p.Version, want)
 	}
 	if err := in.checkProduct(p); err != nil {
+		return "", err
+	}
+	if err := in.checkPlatform(p); err != nil {
 		return "", err
 	}
 	if err := in.checkSystemLevel(p); err != nil {
@@ -257,6 +276,14 @@ func (in *Installer) checkProduct(p *Package) error {
 		name = pp.Name
 	}
 	return fmt.Errorf("Paket gehört zu %s, dieses Gerät ist %s.", name, dev.Name)
+}
+
+// checkPlatform lehnt ein Paket für ein anderes Betriebssystem ab (leer ist Linux).
+func (in *Installer) checkPlatform(p *Package) error {
+	if p.Platform != in.Platform {
+		return errors.New("Paket ist für ein anderes Betriebssystem")
+	}
+	return nil
 }
 
 // checkSystemLevel lehnt ein Paket ab, das neuere Systemteile braucht, als das Gerät hat:

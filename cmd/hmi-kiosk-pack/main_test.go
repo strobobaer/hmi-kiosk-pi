@@ -139,3 +139,35 @@ func TestPackSystemLevelDefaultsToProduct(t *testing.T) {
 		}
 	}
 }
+
+func TestPackPlatformFlag(t *testing.T) {
+	keys := filepath.Join(t.TempDir(), "keys")
+	runCLI("keygen", "-out", keys)
+	key := filepath.Join(keys, "release.key")
+	pubHex, _ := os.ReadFile(filepath.Join(keys, "release.pub"))
+	pub, _ := hex.DecodeString(string(bytes.TrimSpace(pubHex)))
+	in := t.TempDir()
+	os.WriteFile(filepath.Join(in, "pdh-terminal.exe"), []byte("EXE"), 0o755)
+	out := filepath.Join(t.TempDir(), "p.pkg")
+	args := []string{"pack", "-key", key, "-version", "0.2.0", "-in", in, "-out", out, "-product", "pdh-terminal", "-platform", "windows-amd64"}
+	if code, o := runCLI(args...); code != 0 {
+		t.Fatalf("pack: %d %s", code, o)
+	}
+	blob, _ := os.ReadFile(out)
+	p, err := update.Verify(blob, pub)
+	if err != nil || p.Platform != "windows-amd64" || p.Binary != "pdh-terminal.exe" {
+		t.Fatalf("%+v %v", p, err)
+	}
+	// Ohne pdh-terminal.exe im Ordner scheitert das Packen.
+	args[6] = t.TempDir()
+	if code, _ := runCLI(args...); code == 0 {
+		t.Fatal("ohne exe gepackt")
+	}
+	// Unbekannte Plattform.
+	args[6] = in
+	args = append(args, "x")
+	args[len(args)-2], args[len(args)-1] = "-platform", "plan9"
+	if code, _ := runCLI(args...); code == 0 {
+		t.Fatal("fremde Plattform gepackt")
+	}
+}

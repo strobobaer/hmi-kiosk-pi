@@ -20,7 +20,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "Aufruf: hmi-kiosk-pack keygen -out <Ordner> | pack -key <Datei> -version <x.y.z> -in <Ordner> -out <Datei> [-product hmi-kiosk|pdh-terminal] [-system-level N]")
+		fmt.Fprintln(stderr, "Aufruf: hmi-kiosk-pack keygen -out <Ordner> | pack -key <Datei> -version <x.y.z> -in <Ordner> -out <Datei> [-product hmi-kiosk|pdh-terminal] [-platform windows-amd64] [-system-level N]")
 		return 2
 	}
 	var err error
@@ -89,6 +89,7 @@ func pack(args []string, stdout io.Writer) error {
 	version := fs.String("version", "", "Version x.y.z")
 	in := fs.String("in", "", "Ordner mit der Programmdatei des Produkts")
 	productID := fs.String("product", release.HMIKiosk.ID, "Produkt (hmi-kiosk oder pdh-terminal)")
+	platform := fs.String("platform", "", "Plattform (leer: Linux; windows-amd64 liest <in>/<Programmdatei>.exe)")
 	out := fs.String("out", "", "Ausgabedatei")
 	level := fs.Int("system-level", release.SystemLevel, "Stand der Systemteile, den das Programm braucht (Standard: der des Produkts)")
 	if err := fs.Parse(args); err != nil {
@@ -114,7 +115,7 @@ func pack(args []string, stdout io.Writer) error {
 	if err != nil || len(priv) != ed25519.PrivateKeySize {
 		return fmt.Errorf("Schlüsseldatei ungültig")
 	}
-	blob, err := update.Pack(*in, *version, prod, *level, ed25519.PrivateKey(priv))
+	blob, err := update.PackFor(*in, *version, prod, *platform, *level, ed25519.PrivateKey(priv))
 	if err != nil {
 		return err
 	}

@@ -48,3 +48,38 @@ func TestProducts(t *testing.T) {
 		t.Error("Paketname")
 	}
 }
+
+func TestPackageNameFor(t *testing.T) {
+	if got := PDHTerminal.PackageNameFor("1.2.3", ""); got != "pdh-terminal-1.2.3.pkg" {
+		t.Errorf("Linux: %q", got)
+	}
+	if got := PDHTerminal.PackageNameFor("1.2.3", PlatformWindowsAMD64); got != "pdh-terminal-1.2.3-windows-amd64.pkg" {
+		t.Errorf("Windows: %q", got)
+	}
+	if PDHTerminal.PackageName("1.2.3") != PDHTerminal.PackageNameFor("1.2.3", "") {
+		t.Error("PackageName weicht ab")
+	}
+}
+
+func TestPlatformFor(t *testing.T) {
+	for _, c := range []struct{ goos, goarch, want string }{
+		{"windows", "amd64", "windows-amd64"},
+		{"linux", "arm64", ""},
+		{"linux", "amd64", ""},
+		{"windows", "arm64", ""}, // kein Paket dafür
+	} {
+		if got := PlatformFor(c.goos, c.goarch); got != c.want {
+			t.Errorf("%s/%s: %q", c.goos, c.goarch, got)
+		}
+	}
+	if PlatformWindowsAMD64 != "windows-amd64" {
+		t.Error("Konstante")
+	}
+	_ = CurrentPlatform()
+}
+
+func TestBinaryFor(t *testing.T) {
+	if PDHTerminal.BinaryFor("") != "pdh-terminal" || PDHTerminal.BinaryFor(PlatformWindowsAMD64) != "pdh-terminal.exe" {
+		t.Error("Programmname je Plattform")
+	}
+}

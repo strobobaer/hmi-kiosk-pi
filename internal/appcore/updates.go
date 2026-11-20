@@ -25,6 +25,7 @@ func NewUpdateCheck(p release.Product, settings func() config.UpdateCfg, logf fu
 		Settings: settings,
 		Current:  release.Version,
 		Product:  p,
+		Platform: release.CurrentPlatform(),
 		Logf:     logf,
 	}
 }
