@@ -23,6 +23,7 @@ import (
 	"hmikiosk/internal/keyboard"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/product/pdhterminal/notify"
 	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/secrets"
@@ -316,8 +317,11 @@ func (s *service) serve(parent context.Context) error {
 		return fmt.Errorf("Startseite: %w", err)
 	}
 	bound := Bound{Local: l.Addr().String()}
-	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client,
-		card.EventsHandler(s.cards.Hub(), s.cards, func() string { return cardOrigin(s.config().PDH) })))
+	origin := func() string { return cardOrigin(s.config().PDH) }
+	cardAPI := http.NewServeMux()
+	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
+	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, notify.New(s.raiseWindow)))
+	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI))
 	localErr := make(chan error, 1)
 	background(func() {
 		if err := local.Serve(l); !errors.Is(err, http.ErrServerClosed) {

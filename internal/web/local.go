@@ -226,6 +226,11 @@ func onlyLocalHost(next http.Handler) http.Handler {
 	})
 }
 
+// LocalPeer lässt nur Anfragen vom Terminal selbst zu (Host und Loopback), prüft aber keinen Ursprung:
+// für Routen, die von der PDH-Seite aus (fremder Ursprung) erreichbar sein sollen und den Origin-Header
+// selbst streng prüfen (Kartenstrom und Rückmeldung).
+func LocalPeer(next http.Handler) http.Handler { return onlyLocalHost(next) }
+
 // KeyboardHandler bedient POST …/{action} mit show, hide oder toggle. Host und
 // Ursprung prüft der Aufrufer.
 func KeyboardHandler(kb KeyboardAPI) http.Handler {

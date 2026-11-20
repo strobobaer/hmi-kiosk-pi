@@ -34,8 +34,9 @@ const (
 // StartHandler ist die Startseite des PDH-Terminals: Sie prüft die Kopplung und
 // meldet das Gerät per Formular (POST mit dem Geheimnis) bei PDH an. Das Geheimnis
 // steht nur im Formularfeld der Antwort, nie in einer Adresse oder einem Header.
-// cards (darf nil sein) bedient /api/card/events; die Route liegt vor der GET/HEAD-Sperre
-// (Preflight braucht OPTIONS) und bleibt hinter der Host-Prüfung.
+// cards (darf nil sein) bedient /api/card/ (events und result); die Routen liegen vor der GET/HEAD-Sperre
+// (Preflight braucht OPTIONS, result ist ein POST) und bleiben hinter der Host-Prüfung. Unbekanntes
+// unter /api/card/ beantwortet cards selbst mit 404.
 func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
@@ -44,13 +45,16 @@ func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
 		serveStart(w, r, dataDir, cfg(), client)
 	})
-	if cards != nil {
-		mux.Handle("/api/card/events", cards)
-	}
 	secured := web.SecureLocal(mux)
+	// Die Kartenrouten werden von der PDH-Seite (fremder Ursprung) aufgerufen: Host und Loopback prüft
+	// LocalPeer, den Origin-Header prüft jede Route selbst (nur die PDH-Adresse).
+	var cardRoutes http.Handler
+	if cards != nil {
+		cardRoutes = web.LocalPeer(cards)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cards != nil && r.URL.Path == "/api/card/events" {
-			secured.ServeHTTP(w, r)
+		if cards != nil && strings.HasPrefix(r.URL.Path, "/api/card/") {
+			cardRoutes.ServeHTTP(w, r)
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

@@ -198,12 +198,16 @@ func TestStartCardRoute(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	h := StartHandler(t.TempDir(), func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), cards)
-	for _, m := range []string{"GET", "OPTIONS"} {
+	for _, c := range [][2]string{{"GET", "/api/card/events"}, {"OPTIONS", "/api/card/events"},
+		{"POST", "/api/card/result"}, {"OPTIONS", "/api/card/result"}} {
 		gotMethod = ""
-		w := startReq(t, h, m, "/api/card/events", "127.0.0.1:8080")
-		if w.Code != http.StatusNoContent || gotMethod != m {
-			t.Errorf("%s: Status %d, Methode %q", m, w.Code, gotMethod)
+		w := startReq(t, h, c[0], c[1], "127.0.0.1:8080")
+		if w.Code != http.StatusNoContent || gotMethod != c[0] {
+			t.Errorf("%s %s: Status %d, Methode %q", c[0], c[1], w.Code, gotMethod)
 		}
+	}
+	if w := startReq(t, h, "POST", "/api/card/result", "evil:8080"); w.Code != http.StatusForbidden {
+		t.Errorf("result fremder Host: Status %d", w.Code)
 	}
 	if w := startReq(t, h, "GET", "/api/card/events", "evil:8080"); w.Code != http.StatusForbidden {
 		t.Errorf("fremder Host: Status %d", w.Code)

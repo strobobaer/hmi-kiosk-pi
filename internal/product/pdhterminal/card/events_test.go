@@ -2,8 +2,10 @@ package card
 
 import (
 	"bufio"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -344,5 +346,136 @@ func TestEventsReaderUnsubscribeOnEnd(t *testing.T) {
 	}
 	if n := st.stops(); n != 1 {
 		t.Fatalf("Abmeldungen nach Stromende: %d, erwartet 1", n)
+	}
+}
+
+type fakeShower struct {
+	calls []showCall
+}
+
+type showCall struct {
+	kinds      []string
+	text, tone string
+}
+
+func (f *fakeShower) Show(kinds []string, text, tone string) {
+	f.calls = append(f.calls, showCall{kinds, text, tone})
+}
+
+func postResult(h http.Handler, origin, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, "/api/card/result", strings.NewReader(body))
+	if origin != "" {
+		r.Header.Set("Origin", origin)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+const resultBody = `{"ok":true,"name":"M. Muster","notify":["overlay"]}`
+
+func TestResultEndpoint(t *testing.T) {
+	fg := false
+	sh := &fakeShower{}
+	h := ResultHandler(func() string { return testOrigin }, func() bool { return fg }, sh)
+
+	if w := postResult(h, "http://evil.example", resultBody); w.Code != http.StatusForbidden {
+		t.Errorf("falscher Ursprung: %d", w.Code)
+	}
+	if w := postResult(h, "", resultBody); w.Code != http.StatusForbidden {
+		t.Errorf("ohne Ursprung: %d", w.Code)
+	}
+	if len(sh.calls) != 0 {
+		t.Fatalf("nichts darf erscheinen: %v", sh.calls)
+	}
+
+	w := postResult(h, testOrigin, resultBody)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("Status %d", w.Code)
+	}
+	if w.Header().Get("Access-Control-Allow-Origin") != testOrigin {
+		t.Errorf("Allow-Origin fehlt")
+	}
+	want := []showCall{{[]string{"overlay"}, "Angemeldet: M. Muster", "ok"}}
+	if !reflect.DeepEqual(sh.calls, want) {
+		t.Fatalf("Show = %v", sh.calls)
+	}
+
+	// Fenster vorn: nichts.
+	sh.calls, fg = nil, true
+	if w := postResult(h, testOrigin, resultBody); w.Code != http.StatusNoContent || len(sh.calls) != 0 {
+		t.Errorf("Vordergrund: %d, %v", w.Code, sh.calls)
+	}
+	fg = false
+
+	// Alter PDH-Stand ohne notify, off: nichts.
+	for _, b := range []string{`{"ok":true,"name":"A"}`, `{"ok":true,"name":"A","notify":["off","toast"]}`} {
+		if w := postResult(h, testOrigin, b); w.Code != http.StatusNoContent || len(sh.calls) != 0 {
+			t.Errorf("%s: %d, %v", b, w.Code, sh.calls)
+		}
+	}
+
+	// Bereinigt und gekürzt.
+	long := strings.Repeat("x", 300)
+	postResult(h, testOrigin, `{"ok":false,"message":"Kar\u0000te `+long+`","notify":["banner","toast"]}`)
+	if len(sh.calls) != 1 || sh.calls[0].tone != "error" || !strings.HasPrefix(sh.calls[0].text, "Karte xxx") ||
+		len([]rune(sh.calls[0].text)) != 120 || !reflect.DeepEqual(sh.calls[0].kinds, []string{"toast", "banner"}) {
+		t.Errorf("Show = %+v", sh.calls)
+	}
+
+	// Zu groß und kaputt.
+	big := `{"ok":true,"name":"` + strings.Repeat("a", 2100) + `","notify":["overlay"]}`
+	sh.calls = nil
+	if w := postResult(h, testOrigin, big); w.Code != http.StatusRequestEntityTooLarge || len(sh.calls) != 0 {
+		t.Errorf("zu groß: %d", w.Code)
+	}
+	if w := postResult(h, testOrigin, `{`); w.Code != http.StatusBadRequest {
+		t.Errorf("kaputt: %d", w.Code)
+	}
+	// Auch ohne Content-Length (chunked) bleibt die Grenze.
+	r := httptest.NewRequest(http.MethodPost, "/api/card/result", io.NopCloser(strings.NewReader(big)))
+	r.ContentLength = -1
+	r.Header.Set("Origin", testOrigin)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("chunked: %d", rec.Code)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/api/card/result", nil)
+	r.Header.Set("Origin", testOrigin)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET: %d", rec.Code)
+	}
+}
+
+func TestResultPreflight(t *testing.T) {
+	h := ResultHandler(func() string { return testOrigin }, func() bool { return false }, &fakeShower{})
+	r := httptest.NewRequest(http.MethodOptions, "/api/card/result", nil)
+	r.Header.Set("Origin", testOrigin)
+	r.Header.Set("Access-Control-Request-Private-Network", "true")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Private-Network") != "true" ||
+		w.Header().Get("Access-Control-Allow-Origin") != testOrigin || w.Header().Get("Access-Control-Allow-Methods") != "POST" {
+		t.Errorf("Vorabanfrage: %d %v", w.Code, w.Header())
+	}
+	r = httptest.NewRequest(http.MethodOptions, "/api/card/result", nil)
+	r.Header.Set("Origin", "http://evil.example")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("fremder Ursprung: %d", w.Code)
+	}
+}
+
+// Am Raspberry Pi liegt das Fenster immer vorn und der Platzhalter zeigt nichts: nur 204.
+func TestResultEndpointLinux(t *testing.T) {
+	sh := &fakeShower{}
+	h := ResultHandler(func() string { return testOrigin }, func() bool { return true }, sh)
+	if w := postResult(h, testOrigin, resultBody); w.Code != http.StatusNoContent || len(sh.calls) != 0 {
+		t.Errorf("Status %d, Show %v", w.Code, sh.calls)
 	}
 }

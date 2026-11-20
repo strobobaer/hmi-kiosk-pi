@@ -100,3 +100,20 @@ func minimizeWhenShown(ctx context.Context, w window) {
 	}
 	log.Print("Edge-Fenster nicht gefunden, bleibt sichtbar")
 }
+
+// windowForeground: Liegt das Browser-Fenster vorn? Ohne Edge-Fenster unter Windows nein (die Anmeldung
+// soll trotzdem gemeldet werden), ohne Fenster am Pi (Kiosk) immer ja.
+func (s *service) windowForeground() bool {
+	if w := s.win.Load(); w != nil {
+		return (*w).Foreground()
+	}
+	return !onWindows
+}
+
+// raiseWindow holt das Edge-Fenster nach vorn; ohne Fenster nichts.
+func (s *service) raiseWindow() error {
+	if w := s.win.Load(); w != nil {
+		return (*w).Raise()
+	}
+	return nil
+}
