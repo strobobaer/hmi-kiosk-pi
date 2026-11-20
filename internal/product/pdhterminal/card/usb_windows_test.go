@@ -4,6 +4,7 @@ package card
 
 import (
 	"context"
+	"reflect"
 	"runtime"
 	"syscall"
 	"testing"
@@ -79,7 +80,7 @@ var (
 	obsCb = syscall.NewCallback(func(code, wp, lp uintptr) uintptr {
 		if int32(code) >= 0 {
 			k := (*kbdLLHook)(*(*unsafe.Pointer)(unsafe.Pointer(&lp)))
-			if k.Flags&llkhfInjected != 0 && (k.ScanCode == 2 || k.ScanCode == 3 || k.ScanCode == 4 || k.ScanCode == 0x64) {
+			if k.Flags&llkhfInjected != 0 {
 				select {
 				case obsCh <- obsEvent{scan: k.ScanCode, up: k.Flags&llkhfUp != 0, marked: k.DwExtraInfo == replayMarker, at: time.Now()}:
 				default:
@@ -148,10 +149,102 @@ func drainObs() {
 	}
 }
 
-// Fremde (eingespielte) Tasten gehen nie verloren: Normalerweise laufen sie unberührt durch; behandelt
-// das Terminal sie wie Tasten einer Tastatur, werden sie gehalten und mit Markierung in derselben
-// Reihenfolge wiederholt, Nicht-Kartentasten laufen sofort durch.
-func TestReplayPathKeepsOrderAndMarks(t *testing.T) {
+func collectObs(t *testing.T, n int) []obsEvent {
+	t.Helper()
+	var got []obsEvent
+	deadline := time.After(2 * time.Second)
+	for len(got) < n {
+		select {
+		case e := <-obsCh:
+			got = append(got, e)
+		case <-deadline:
+			t.Fatalf("nur %d von %d Ereignissen angekommen: %+v", len(got), n, got)
+		}
+	}
+	return got
+}
+
+func tapAll(scans []uint16, gap time.Duration) {
+	for _, s := range scans {
+		sendScan(s, false)
+		time.Sleep(gap / 2)
+		sendScan(s, true)
+		time.Sleep(gap / 2)
+	}
+}
+
+func startIntercept(t *testing.T, fn func(InputDevice, uint16, time.Time)) (stop func()) {
+	t.Helper()
+	injectedAsHardware, forceActive = true, true
+	unsub, err := hub.subscribe(&winSub{match: func(InputDevice) bool { return true }, fn: fn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond) // wmRefresh beim Start abwarten
+	drainObs()
+	return func() { unsub(); injectedAsHardware, forceActive = false, false }
+}
+
+// Eine Folge in Menschengeschwindigkeit wird nie verschluckt: Sie wird gehalten und mit Markierung in der
+// Reihenfolge wiederholt; eine Nicht-Kartentaste läuft danach unberührt durch.
+func TestInterceptHumanSpeedReplayed(t *testing.T) {
+	stopObs := startObserver(t)
+	defer stopObs()
+	swallowed := make(chan uint16, 64)
+	defer startIntercept(t, func(_ InputDevice, c uint16, _ time.Time) { swallowed <- c })()
+
+	tapAll([]uint16{2, 3, 4}, 80*time.Millisecond)
+	sendScan(0x64, false) // F13
+	sendScan(0x64, true)
+	got := collectObs(t, 8)
+	want := []struct {
+		scan uint32
+		up   bool
+	}{{2, false}, {2, true}, {3, false}, {3, true}, {4, false}, {4, true}}
+	for i, w := range want {
+		if g := got[i]; g.scan != w.scan || g.up != w.up || g.marked == g.up { // Drücken markiert wiederholt, Loslassen kommt später unberührt
+			t.Errorf("Ereignis %d: %+v, erwartet Scancode %d up=%v (Drücken markiert, Loslassen unmarkiert)", i, g, w.scan, w.up)
+		}
+	}
+	if got[6].scan != 0x64 || got[6].marked {
+		t.Errorf("F13 muss danach unmarkiert ankommen: %+v", got[6])
+	}
+	if len(swallowed) != 0 {
+		t.Errorf("Menschentempo wurde als Leser verschluckt")
+	}
+}
+
+// Eine schnelle Folge mit UID-Länge und Enter wird verschluckt und dem Leser zugeführt, nichts kommt
+// bei anderen Programmen an (der Beobachter sieht nur F13 als Kontrolle).
+func TestInterceptBurstSwallowed(t *testing.T) {
+	stopObs := startObserver(t)
+	defer stopObs()
+	swallowed := make(chan uint16, 64)
+	defer startIntercept(t, func(_ InputDevice, c uint16, _ time.Time) { swallowed <- c })()
+
+	tapAll([]uint16{11, 5, 30, 2, 48, 3, 46, 4, 28}, 8*time.Millisecond) // 0 4 A 1 B 2 C 3 Enter
+	sendScan(0x64, false)
+	sendScan(0x64, true)
+	got := collectObs(t, 2)
+	if got[0].scan != 0x64 || got[0].marked {
+		t.Fatalf("es kam etwas anderes als F13 an: %+v", got)
+	}
+	select {
+	case e := <-obsCh:
+		t.Fatalf("zusätzliches Ereignis: %+v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+	var codes []uint16
+	for len(swallowed) > 0 {
+		codes = append(codes, <-swallowed)
+	}
+	if want := []uint16{11, 5, 30, 2, 48, 3, 46, 4, 28}; !reflect.DeepEqual(codes, want) {
+		t.Errorf("dem Leser zugeführt: %v, erwartet %v", codes, want)
+	}
+}
+
+// Ohne angestecktes Lesergerät wird nichts angefasst, auch keine schnelle Folge.
+func TestInterceptOffWithoutReader(t *testing.T) {
 	stopObs := startObserver(t)
 	defer stopObs()
 	injectedAsHardware = true
@@ -161,41 +254,13 @@ func TestReplayPathKeepsOrderAndMarks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unsub()
+	time.Sleep(100 * time.Millisecond)
 	drainObs()
-
-	start := time.Now()
-	for _, s := range []uint16{2, 3, 4} {
-		sendScan(s, false)
-		time.Sleep(3 * time.Millisecond)
-		sendScan(s, true)
-		time.Sleep(3 * time.Millisecond)
-	}
-	sendScan(0x64, false) // F13: keine Kartentaste, läuft sofort unberührt durch
-	sendScan(0x64, true)
-
-	var got []obsEvent
-	deadline := time.After(2 * time.Second)
-	for len(got) < 8 {
-		select {
-		case e := <-obsCh:
-			got = append(got, e)
-		case <-deadline:
-			t.Fatalf("nur %d von 8 Ereignissen angekommen: %+v", len(got), got)
+	tapAll([]uint16{2, 3}, 6*time.Millisecond)
+	got := collectObs(t, 4)
+	for _, g := range got {
+		if g.marked {
+			t.Errorf("ohne Leser darf nichts gehalten und wiederholt werden: %+v", g)
 		}
 	}
-	// F13 läuft sofort durch, also vor den gehaltenen Kartentasten.
-	if got[0].scan != 0x64 || got[0].marked {
-		t.Errorf("F13 muss zuerst, unmarkiert ankommen: %+v", got[0])
-	}
-	want := []struct {
-		scan uint32
-		up   bool
-	}{{2, false}, {2, true}, {3, false}, {3, true}, {4, false}, {4, true}}
-	for i, w := range want {
-		g := got[i+2]
-		if g.scan != w.scan || g.up != w.up || !g.marked {
-			t.Errorf("Ereignis %d: %+v, erwartet Scancode %d up=%v markiert", i, g, w.scan, w.up)
-		}
-	}
-	t.Logf("alle sechs Kartentasten nach %v in Reihenfolge wiederholt", got[7].at.Sub(start))
 }

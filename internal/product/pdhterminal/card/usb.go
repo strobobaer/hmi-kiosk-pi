@@ -132,8 +132,9 @@ func usbNames(devs []InputDevice) string {
 // usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter). sel ist die Auswahl
 // (vvvv:pppp oder Namensteil); devs sind die beim Öffnen gefundenen Geräte.
 type usbReader struct {
-	sel  string
-	devs []InputDevice
+	sel    string
+	format string // was der Leser tippt, siehe normalizeUID; leer: unverändert
+	devs   []InputDevice
 }
 
 func (u *usbReader) Probe(ctx context.Context) (string, error) {
@@ -155,7 +156,7 @@ func (u *usbReader) Run(ctx context.Context, emit func(string)) error {
 		uid, done := buf.Key(code, at)
 		mu.Unlock()
 		if done {
-			emit(strings.ToUpper(strings.TrimSpace(uid)))
+			emit(normalizeUID(uid, u.format))
 		}
 	})
 }

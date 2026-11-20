@@ -43,6 +43,8 @@ var (
 	pTranslateMessage        = user32.NewProc("TranslateMessage")
 	pDispatchMessageW        = user32.NewProc("DispatchMessageW")
 	pPostThreadMessageW      = user32.NewProc("PostThreadMessageW")
+	pPostMessageW            = user32.NewProc("PostMessageW")
+	pGetTickCount64          = kernel32.NewProc("GetTickCount64")
 	pSetTimer                = user32.NewProc("SetTimer")
 	pKillTimer               = user32.NewProc("KillTimer")
 	pSendInput               = user32.NewProc("SendInput")
@@ -55,6 +57,7 @@ const (
 	wmInput              = 0x00FF
 	wmInputDeviceChange  = 0x00FE
 	wmTimer              = 0x0113
+	wmRefresh            = 0x0401 // WM_USER+1: Abnehmer oder Geraete haben sich geaendert
 	wmQuit               = 0x0012
 	ridevRemove          = 0x00000001
 	ridevInputSink       = 0x00000100
@@ -257,11 +260,13 @@ func ListInputDevices(dir string) []InputDevice {
 	return out
 }
 
-// winSub ist ein Abnehmer der abgefangenen Tasten.
+// winSub ist ein Abnehmer. Leser (match) bekommen die verschluckten Tasten ihres Geräts; wer anlernt (learn),
+// bekommt die erkannte Folge samt Gerät und löst kein Verschlucken aus.
 type winSub struct {
 	match func(InputDevice) bool // Geräte, deren Kartentasten verschluckt werden
-	learn bool                   // alle Tastaturen anlernen: schluckt alle Kartentasten, nur dieser Abnehmer bekommt sie
 	fn    func(dev InputDevice, code uint16, at time.Time)
+	learn func(dev InputDevice, text string)
+	lrn   learner // nur vom Hub-Thread benutzt
 }
 
 // kbdHub besitzt den einen Thread je Prozess; er läuft, solange es Abnehmer gibt.
@@ -270,6 +275,7 @@ type kbdHub struct {
 	mu      sync.Mutex // subs
 	subs    []*winSub
 	tid     uint32
+	hwnd    uintptr
 	done    chan struct{}
 }
 
@@ -301,6 +307,8 @@ func (h *kbdHub) subscribe(s *winSub) (func(), error) {
 			return nil, err
 		}
 		h.done = done
+	} else {
+		h.refresh()
 	}
 	return func() {
 		h.startMu.Lock()
@@ -314,6 +322,9 @@ func (h *kbdHub) subscribe(s *winSub) (func(), error) {
 		}
 		last := len(h.subs) == 0
 		h.mu.Unlock()
+		if !last {
+			h.refresh()
+		}
 		if last && h.done != nil {
 			pPostThreadMessageW.Call(uintptr(h.tid), wmQuit, 0, 0)
 			<-h.done
@@ -322,17 +333,17 @@ func (h *kbdHub) subscribe(s *winSub) (func(), error) {
 	}, nil
 }
 
-// dispatch reicht eine verschluckte Taste an die Abnehmer: beim Anlernen nur an diesen.
-func (h *kbdHub) dispatch(dev InputDevice, code uint16, at time.Time) {
-	subs := h.snapshot()
-	for _, s := range subs {
-		if s.learn {
-			s.fn(dev, code, at)
-			return
-		}
+// refresh weist den Hub-Thread an, das Abfangen neu zu bewerten (Abnehmer oder Geräte geändert).
+func (h *kbdHub) refresh() {
+	if hw := h.hwnd; hw != 0 {
+		pPostMessageW.Call(hw, wmRefresh, 0, 0)
 	}
-	for _, s := range subs {
-		if s.match != nil && s.match(dev) {
+}
+
+// dispatch reicht eine verschluckte Taste an die Leser; ist das Gerät unbekannt (Zeitmuster), an alle.
+func (h *kbdHub) dispatch(dev InputDevice, known bool, code uint16, at time.Time) {
+	for _, s := range h.snapshot() {
+		if s.match != nil && (!known || s.match(dev)) {
 			s.fn(dev, code, at)
 		}
 	}
@@ -345,8 +356,36 @@ func (h *kbdHub) classify(info InputDevice, dev uintptr) bool {
 		return false
 	}
 	for _, s := range h.snapshot() {
-		if s.learn || (s.match != nil && s.match(info)) {
+		if s.match != nil && s.match(info) {
 			return true
+		}
+	}
+	return false
+}
+
+// shouldIntercept: Es gibt einen Leser, sein Gerät ist angesteckt, und es wird nicht angelernt.
+// Beim Anlernen wird nichts verschluckt; die Folge wird an den Raw-Ereignissen erkannt.
+func (h *kbdHub) shouldIntercept() bool {
+	if forceActive {
+		return true
+	}
+	var readers []*winSub
+	for _, s := range h.snapshot() {
+		if s.learn != nil {
+			return false
+		}
+		if s.match != nil {
+			readers = append(readers, s)
+		}
+	}
+	if len(readers) == 0 {
+		return false
+	}
+	for _, d := range ListInputDevices("") {
+		for _, s := range readers {
+			if s.match(d) {
+				return true
+			}
 		}
 	}
 	return false
@@ -367,6 +406,9 @@ var cur *loopState
 // sich der Weg „halten und wiederholen“ ohne zweite Tastatur ausführen lässt. Nur Tests setzen es.
 var injectedAsHardware bool
 
+// forceActive lässt die Prüfung das Abfangen auch ohne angestecktes Lesergerät einschalten.
+var forceActive bool
+
 func (l *loopState) device(h uintptr) InputDevice {
 	if d, ok := l.cache[h]; ok {
 		return d
@@ -377,12 +419,21 @@ func (l *loopState) device(h uintptr) InputDevice {
 }
 
 // apply führt die Folgen einer Entscheidung aus.
+// refresh bewertet neu, ob abgefangen wird (Leser angesteckt, nicht beim Anlernen).
+func (l *loopState) refresh() {
+	l.apply(l.g.SetActive(l.hub.shouldIntercept()))
+}
+
 func (l *loopState) apply(acts []action) {
 	for _, a := range acts {
 		switch a.Kind {
 		case actDrop:
 			if code, ok := keyCode(a.Key); ok && !a.Key.Up {
-				l.hub.dispatch(l.device(a.Dev), code, a.At)
+				var d InputDevice
+				if a.Dev != 0 {
+					d = l.device(a.Dev)
+				}
+				l.hub.dispatch(d, a.Dev != 0, code, a.At)
 			}
 		case actReplay:
 			replay(a.Key)
@@ -418,6 +469,13 @@ func replay(k keyEvent) {
 	pSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
 }
 
+// hookTime ist der Zeitpunkt des Tastendrucks aus dem Zeitstempel des Hakens (Millisekunden der
+// Systemuhr, 32 Bit), damit Verzögerungen des Hub-Threads die Abstände nicht verfälschen.
+func hookTime(ms uint32) time.Time {
+	now, _, _ := pGetTickCount64.Call()
+	return time.Now().Add(-time.Duration(uint32(now)-ms) * time.Millisecond)
+}
+
 // hookProc ist der Tastaturhaken. Er rührt nur Kartentasten an (siehe gate.Hook).
 func hookProc(code, wp, lp uintptr) uintptr {
 	if int32(code) >= 0 && cur != nil {
@@ -427,7 +485,7 @@ func hookProc(code, wp, lp uintptr) uintptr {
 			Marked:   k.DwExtraInfo == replayMarker,
 			Injected: !injectedAsHardware && k.Flags&(llkhfInjected|llkhfLowerILInjected) != 0,
 		}
-		block, acts := cur.g.Hook(h, time.Now())
+		block, acts := cur.g.Hook(h, hookTime(k.Time))
 		cur.apply(acts)
 		if block {
 			return 1
@@ -450,6 +508,9 @@ func wndProc(hwnd, msg, wp, lp uintptr) uintptr {
 			}
 		case wmInputDeviceChange:
 			l.cache = map[uintptr]InputDevice{}
+			l.refresh()
+		case wmRefresh:
+			l.refresh()
 		}
 	}
 	r, _, _ := pDefWindowProcW.Call(hwnd, msg, wp, lp)
@@ -473,7 +534,15 @@ func (l *loopState) onRawInput(lp uintptr) {
 	k := keyEvent{Scan: ri.Kbd.MakeCode, Ext: ri.Kbd.Flags&riKeyE0 != 0, Up: ri.Kbd.Flags&riKeyBreak != 0}
 	re := rawEvent{keyEvent: k, Dev: ri.Header.Device, At: time.Now()}
 	if isCandidate(k) {
-		re.Reader = l.hub.classify(l.device(re.Dev), re.Dev)
+		info := l.device(re.Dev)
+		re.Reader = l.hub.classify(info, re.Dev)
+		for _, s := range l.hub.snapshot() {
+			if s.learn != nil {
+				if _, text, done := s.lrn.Key(re.Dev, k, re.At); done {
+					s.learn(info, text)
+				}
+			}
+		}
 	}
 	l.apply(l.g.Raw(re, re.At))
 }
@@ -523,7 +592,9 @@ func runLoop(ready chan<- error, done chan<- struct{}, h *kbdHub) {
 		pRegisterRawInputDevices.Call(uintptr(unsafe.Pointer(&off)), 1, unsafe.Sizeof(off))
 	}()
 	cur = &loopState{hub: h, hwnd: hwnd, cache: map[uintptr]InputDevice{}}
-	defer func() { cur = nil }()
+	cur.g.Active = h.shouldIntercept()
+	h.hwnd = hwnd
+	defer func() { h.hwnd, cur = 0, nil }()
 	hk, _, e := pSetWindowsHookExW.Call(whKeyboardLL, hookCb, hInst, 0)
 	if hk == 0 {
 		fail(fmt.Errorf("Tastaturhaken: %w", e))
@@ -547,7 +618,7 @@ func runLoop(ready chan<- error, done chan<- struct{}, h *kbdHub) {
 	}
 	// Noch gehaltene Tasten gehen nicht verloren: Sie werden wiederholt.
 	if cur != nil {
-		for _, a := range cur.g.Tick(time.Now().Add(holdMax)) {
+		for _, a := range cur.g.SetActive(false) {
 			if a.Kind == actReplay {
 				replay(a.Key)
 			}
@@ -591,18 +662,17 @@ func (u *usbReader) readKeys(ctx context.Context, fn func(code uint16, at time.T
 // von selbst (Auswahl per Kennung oder Name, nicht per Handle); unter Linux scheitert das Öffnen.
 const usbMayBeAbsent = true
 
-// learnPlatform: Alle Kartentasten werden bis zum ersten Enter von allen Tastaturen verschluckt und
-// dem Anlernen zugeführt; das Gerät der Eingabe ist das gesuchte.
+// learnPlatform: Nichts wird verschluckt. Die Folge (Abstand höchstens gapMax, Länge einer UID, Enter) wird
+// an den Raw-Ereignissen erkannt, das Gerät dieser Ereignisse ist das gesuchte.
 func learnPlatform(ctx context.Context, d time.Duration) (InputDevice, string, error) {
-	type learnKey struct {
+	type found struct {
 		dev  InputDevice
-		code uint16
-		at   time.Time
+		text string
 	}
-	ch := make(chan learnKey, 256)
-	unsub, err := hub.subscribe(&winSub{learn: true, fn: func(dev InputDevice, code uint16, at time.Time) {
+	ch := make(chan found, 1)
+	unsub, err := hub.subscribe(&winSub{learn: func(dev InputDevice, text string) {
 		select {
-		case ch <- learnKey{dev, code, at}:
+		case ch <- found{dev, text}:
 		default:
 		}
 	}})
@@ -612,17 +682,12 @@ func learnPlatform(ctx context.Context, d time.Duration) (InputDevice, string, e
 	defer unsub()
 	timer := time.NewTimer(d)
 	defer timer.Stop()
-	var buf keyBuffer
-	for {
-		select {
-		case <-ctx.Done():
-			return InputDevice{}, "", ctx.Err()
-		case <-timer.C:
-			return InputDevice{}, "", errors.New("Keine Karte gelesen")
-		case k := <-ch:
-			if uid, done := buf.Key(k.code, k.at); done {
-				return k.dev, strings.ToUpper(strings.TrimSpace(uid)), nil
-			}
-		}
+	select {
+	case <-ctx.Done():
+		return InputDevice{}, "", ctx.Err()
+	case <-timer.C:
+		return InputDevice{}, "", errors.New("Keine Karte gelesen")
+	case f := <-ch:
+		return f.dev, f.text, nil
 	}
 }
