@@ -569,25 +569,28 @@ func (s *service) adminDeps() web.AdminDeps {
 			return s.helper.Call(ctx, "update-activate", version)
 		}
 	}
+	installer := &update.Installer{
+		Root:      s.o.DataDir,
+		PublicKey: release.PublicKey(),
+		Product:   release.PDHTerminal,
+		Platform:  release.CurrentPlatform(),
+		Activate:  activate,
+	}
+	if s.helper != nil { // der Systemstand ist ein Linux-Begriff; ohne Helfer (Windows) gibt es keine Prüfung
+		installer.SystemLevel = func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) }
+	}
 	return web.AdminDeps{
-		Keyboard:     kbd,
-		Store:        s.store,
-		Box:          s.box,
-		Apply:        s.apply,
-		ConfigMu:     &s.cfgMu,
-		Helper:       helper,
-		Status:       s.status,
-		LogDir:       filepath.Join(s.o.DataDir, logDirName),
-		RemoteIsWifi: remoteIsWifi,
-		EthernetLink: func() bool { return platform.EthernetHasLink(sysRoot) },
-		Update: &update.Installer{
-			Root:        s.o.DataDir,
-			PublicKey:   release.PublicKey(),
-			Product:     release.PDHTerminal,
-			Platform:    release.CurrentPlatform(),
-			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) },
-			Activate:    activate,
-		},
+		Keyboard:             kbd,
+		Store:                s.store,
+		Box:                  s.box,
+		Apply:                s.apply,
+		ConfigMu:             &s.cfgMu,
+		Helper:               helper,
+		Status:               s.status,
+		LogDir:               filepath.Join(s.o.DataDir, logDirName),
+		RemoteIsWifi:         remoteIsWifi,
+		EthernetLink:         func() bool { return platform.EthernetHasLink(sysRoot) },
+		Update:               installer,
 		UpdateCheck:          s.updates,
 		Selftest:             s.adminSelftest,
 		Backup:               backup,

@@ -248,3 +248,22 @@ func TestUpdateActivateWithoutHelper(t *testing.T) {
 		t.Errorf("Fehler: %v", err)
 	}
 }
+
+// TestSystemLevelOnlyWithHelper: Ohne Helfer (Windows) gibt es keine Systemstand-Prüfung,
+// sonst lehnte jedes Update mit "braucht neuere Systemteile" ab.
+func TestSystemLevelOnlyWithHelper(t *testing.T) {
+	for _, tc := range []struct {
+		socket string
+		want   bool
+	}{{"", false}, {filepath.Join(t.TempDir(), "h.sock"), true}} {
+		s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HelperSocket: tc.socket, HardwareID: func() string { return "" }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst := s.adminDeps().Update.(*update.Installer)
+		if got := inst.SystemLevel != nil; got != tc.want {
+			t.Errorf("Socket %q: SystemLevel gesetzt = %v, erwartet %v", tc.socket, got, tc.want)
+		}
+		s.close()
+	}
+}
