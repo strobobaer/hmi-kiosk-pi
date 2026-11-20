@@ -7,7 +7,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung, da
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen (je Produkt)
 3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
-4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser, Kartenleser und Statusdisplay)
+4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser, Kartenleser und Statusdisplay, Windows)
 5. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -61,8 +61,30 @@ gh release upload v1.0.1 dist/hmi-kiosk-1.0.1.pkg
 |---|---|---|
 | HMI-Kiosk | `v<version>` (weiterhin so taggen, solange ältere Geräte im Einsatz sind) | `hmi-kiosk-<version>.pkg` |
 | PDH-Terminal | `pdh-terminal-v<version>` | `pdh-terminal-<version>.pkg` |
+| PDH-Terminal (Windows) | `pdh-terminal-v<version>` (derselbe Tag) | `pdh-terminal-<version>-windows-amd64.pkg` |
 
 Der Tag legt das Produkt fest: Ein Terminal sieht nur Releases seines eigenen Produkts.
+
+#### Release-Ablauf PDH-Terminal: beide Plattformen am selben Tag
+
+Raspberry Pi und Windows erscheinen mit **derselben Version** am **selben Tag** `pdh-terminal-v<version>`. Ein Terminal wählt aus den Dateien des Releases die seiner Plattform (Pi: `pdh-terminal-<version>.pkg`, Windows: `pdh-terminal-<version>-windows-amd64.pkg`); der Name der anderen Plattform stört nicht.
+
+1. Pi wie oben: `make release PRODUCT=pdh-terminal VERSION=x.y.z`, Paket signieren, Abbild und Bundle bauen.
+2. Windows (am Entwicklungsrechner, Docker nötig, nur `x.y.z`):
+
+   ```
+   packaging/windows/build-setup.sh --version x.y.z
+   ```
+
+   Das Skript baut `pdh-terminal.exe` und `pdh-terminal-start.exe` mit **derselben** Version und demselben öffentlichen Schlüssel (`.secrets/release.pub`, oder `HMI_RELEASE_PUB`), erzeugt mit Inno Setup (Docker-Abbild mit festem Digest, siehe Skript) das Setup und signiert das Windows-Paket. Der private Schlüssel kommt aus `HMI_RELEASE_KEY_DIR` (Standard `.secrets`) und wird nur lesend in den Container eingebunden. Ergebnis in `dist/`: `PDH-Terminal-Setup-<version>.exe`, `pdh-terminal-<version>-windows-amd64.pkg` und je eine `.sha256`.
+3. Alles an dasselbe Release hängen:
+
+   ```
+   gh release create pdh-terminal-vX.Y.Z --notes "…"   # falls es noch nicht besteht
+   gh release upload pdh-terminal-vX.Y.Z dist/pdh-terminal-X.Y.Z.pkg dist/pdh-terminal-X.Y.Z-windows-amd64.pkg dist/pdh-terminal-X.Y.Z-windows-amd64.pkg.sha256 dist/PDH-Terminal-Setup-X.Y.Z.exe dist/PDH-Terminal-Setup-X.Y.Z.exe.sha256
+   ```
+
+   (zusammen mit Abbild, Bundle und deren `.sha256`). Das Setup ist für Neuinstallationen, das `.pkg` für die Updates der laufenden Windows-Terminals.
 
 **Wichtig für HMI-Kiosk:** Alle Versionen vor dieser erkennen nur Tags der Form `v<version>` (oder `<version>`). Ein Release mit dem Tag `hmi-kiosk-v<version>` bleibt für sie unsichtbar. Das Tag `hmi-kiosk-v<version>` wird erst ab dieser Version erkannt; HMI-Kiosk-Releases deshalb weiter als `v<version>` anlegen. PDH-Terminal gibt es erst ab dieser Version und nutzt `pdh-terminal-v<version>`.
 
@@ -543,6 +565,56 @@ sudo systemctl restart hmi-kiosk.service
 | PN532 über SPI antwortet nicht | Schalter nicht SEL0 aus/SEL1 an, SS nicht an Pin 24 (CE0), Dienstbenutzer nicht in der Gruppe `spi`. |
 | Display bleibt dunkel, Selbstprüfung „statusdisplay“ rot | Falsche Adresse oder falscher Bus, SDA/SCL vertauscht, I²C-Bus aus; bei I²C-Leser: Y-Verbinder prüfen. |
 | Nach Zurückrollen auf 0.2.x meldet der Leser einen Fehler | Gewollt: das alte Programm kennt SPI/UART nicht; das Terminal startet, die Anmeldung per Tastatur bleibt nutzbar. |
+
+### Windows
+
+Das PDH-Terminal läuft auch auf Windows 11 (Betriebsart „Zusatz“: ein normaler PC, auf dem das Terminal neben anderen Programmen läuft und die Karte anmeldet). Es startet beim Anmelden, zeigt PDH in einem eigenen Edge-Fenster und liest die Karte des USB-Lesers. Kopplung, Admin-Seite und Zustände wie oben; Besonderheiten:
+
+#### Installation
+
+1. `PDH-Terminal-Setup-<Version>.exe` und `PDH-Terminal-Setup-<Version>.exe.sha256` von der Release-Seite laden, Prüfsumme mit `Get-FileHash` vergleichen.
+2. Setup starten und die einmalige Abfrage der Benutzerkontensteuerung bestätigen (Administratorrechte). **SmartScreen:** Das Setup ist nicht mit einem Zertifikat signiert, Windows meldet „Unbekannter Herausgeber“: „Weitere Informationen“ → „Trotzdem ausführen“. Die Echtheit sichert die Prüfsumme; Updates sind davon unabhängig und werden vom Terminal selbst per Signatur geprüft.
+3. Das Setup installiert für alle Benutzer nach `C:\Program Files\PDH-Terminal`, legt den Datenordner `C:\ProgramData\PDH-Terminal` an (Kopplung, Einstellungen, geladene Updates), trägt den Autostart ein (Registrierung `HKLM\...\Run`, startet `pdh-terminal-start.exe`), legt im Startmenü „PDH-Terminal“ und „PDH-Terminal Admin“ an und öffnet in der Windows-Firewall TCP 8443 (Regel „PDH-Terminal Admin“, nur Profile Domäne und Privat, nicht Öffentlich) für die Admin-Seite aus dem Netz. Danach startet das Terminal.
+4. Die Admin-Seite öffnet „PDH-Terminal Admin“ im Startmenü (`https://127.0.0.1:8443/admin/`) oder das Tray-Symbol; aus dem Netz `https://<PC>:8443`. Kopplung wie in der README, „PDH-Terminal einrichten“, Schritte 4 bis 6.
+
+Autostart und Startmenü starten immer den **Starter** `pdh-terminal-start.exe`, nie `pdh-terminal.exe`: Nach einem Update beendet sich das Programm mit Code 4, und nur der Starter startet es in der neuen Version neu.
+
+**Stille Verteilung** (Software-Verteilung, Skript): `PDH-Terminal-Setup-<Version>.exe /VERYSILENT /SUPPRESSMSGBOXES` als Administrator. Es erscheint kein Fenster, und das Terminal startet nicht sofort, sondern bei der nächsten Anmeldung (Autostart). Mit `/SILENT` bleibt der Fortschritt sichtbar und das Terminal startet danach.
+
+**Update per Setup:** Ein Setup mit derselben oder einer höheren Version über eine vorhandene Installation ist ein Update: Es beendet das laufende Terminal, ersetzt Programm und Starter und lässt Datenordner und Kopplung unberührt. Ein Setup mit einer niedrigeren Version als der installierten bricht mit einer Meldung ab. Programm-Updates (Abschnitt 2, signiertes Windows-Paket) legen die neue Version unter `C:\ProgramData\PDH-Terminal\app\<Version>\` ab; der Starter nimmt die höchste gültige.
+
+**Deinstallieren** (Einstellungen → Apps oder `unins000.exe`): Das Setup beendet zuerst `pdh-terminal-start.exe` und `pdh-terminal.exe` samt zugehörigem Edge und entfernt Programm, Autostart, Firewall-Regel „PDH-Terminal Admin“ und Startmenü. Der Datenordner bleibt, damit eine Neuinstallation die Kopplung behält (Hinweis „Kopplung und Einstellungen bleiben in C:\ProgramData\PDH-Terminal“). Ganz entfernen: den Ordner danach von Hand löschen; das Gerät in PDH zusätzlich sperren (siehe „Kopplung und Zustand“).
+
+#### Leser einrichten
+
+1. USB-Leser anstecken. Es muss ein Leser für **13,56 MHz** sein (Mifare/NFC-Karten), der sich als **Tastatur** meldet (Tastaturmodus, Ausgabe der Nummer mit Enter am Ende).
+2. Admin-Seite → **Kartenleser** → Typ „USB-Leser“. Das Gerät aus der Liste wählen (Name und VID:PID) oder: **„Karte vorhalten“** drücken und eine Karte an den Leser halten. Das Terminal erkennt das Gerät, das zuletzt eine schnelle Ziffernfolge mit Enter geschickt hat, trägt es ein und schlägt das Format vor (genau 8 oder 14 Hexzeichen: `hex`; nur 10 Ziffern: `dec`; im Zweifel `hex`).
+3. Die Seite zeigt die erkannte Nummer in allen drei Schreibweisen (hex, hex-rev, dec). Wer die Karte vom Pi kennt, sieht so, welche passt. Die Nummer in PDH beim Benutzer eintragen, Format wie dort.
+
+Wie Tasten des Lesers abgefangen werden, einschließlich Fenstern mit höheren Rechten: Absatz „USB-Leser unter Windows (Hinweis)“ im Abschnitt „Kartenleser“.
+
+#### Benachrichtigung bei der Anmeldung
+
+Meldet eine Karte an, während das Terminal-Fenster nicht vorne ist (ein anderes Programm ist aktiv oder das Fenster ist geschlossen), zeigt das Terminal das Ergebnis selbst an. Die Art stellt man **in PDH** ein, je Terminal beim Terminal-Benutzer neben der Anmeldeart (Hinweis dort: „Wirkt nur an Windows-Terminals in der Betriebsart Zusatz“):
+
+| Wert | Anzeige |
+|---|---|
+| Windows-Mitteilung (`toast`) | Mitteilung von Windows über die Verknüpfung „PDH-Terminal“ im Startmenü (App-Kennung `PDH.Terminal`). Der Knopf „Terminal öffnen“ hat keine Wirkung. Ohne diese Verknüpfung (zum Beispiel nach einem Kopieren des Programms ohne Setup) erscheint keine Mitteilung. |
+| Fenster in der Mitte (`overlay`, Vorgabe bei leerer Auswahl) | Eigenes Fenster immer obenauf ohne Fokus mit Name, Ergebnis und Uhrzeit; schließt nach 4 Sekunden oder per Klick. |
+| Leiste oben (`banner`) | 48 Pixel hohe Leiste über die volle Breite des Hauptbildschirms, schließt nach 4 Sekunden. |
+| Terminal nach vorn (`front`) | Das Edge-Fenster wird geholt; wo Windows das nicht erlaubt, blinkt die Taskleiste. |
+| Keine Benachrichtigung (`off`) | Nichts. |
+
+Erfolg grün, Fehler rot, Abmeldung grau; Texte „Angemeldet: <Name>“, „Abgemeldet: <Name>“, bei einem Fehler die Meldung von PDH. Ist das Terminal-Fenster vorne, zeigt die PDH-Seite das Ergebnis selbst. Mehrere Werte lassen sich kombinieren. Ein PDH ohne diese Einstellung oder ein Terminal ohne den Endpunkt `/api/card/result` läuft ohne Fehler weiter, nur ohne Benachrichtigung.
+
+#### Grenzen unter Windows
+
+- **Ein Terminal je PC.** Es gehört der zuerst angemeldeten Sitzung. Ein zweiter Benutzer (schneller Benutzerwechsel) bekommt keine zweite Instanz; sein Starter endet still ohne Tray-Symbol.
+- **Der Datenordner ist für alle Benutzer des PCs lesbar** (die Gruppe „Benutzer“ hat „Ändern“, weil das Programm als angemeldeter Benutzer läuft), also auch das Gerätegeheimnis der Kopplung. In der Betriebsart Zusatz gelten die Benutzer des PCs als vertrauenswürdig. Auf gemeinsam genutzten PCs mit fremden Benutzern ist das Terminal deshalb nicht geeignet.
+- **Setup ohne Code-Signatur:** SmartScreen zeigt „Unbekannter Herausgeber“ (siehe Installation).
+- **Fenster mit höheren Rechten:** Karten des Lesers landen dort im Fenster (Absatz „USB-Leser unter Windows (Hinweis)“).
+- Abschnitte der Admin-Seite, die den Helfer brauchen (Netzwerk, Zeit, Sicherung, Abbild), fehlen unter Windows.
+- Läuft Edge nicht oder ist Port 8080 oder 8443 belegt, zeigt das Tray-Symbol rot und die Selbstprüfung den Grund; Edge wird alle 30 Sekunden neu versucht.
 
 ### Bekannte Einschränkungen
 

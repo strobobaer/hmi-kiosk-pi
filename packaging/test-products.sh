@@ -201,6 +201,19 @@ for s in build-image.sh "bundle.sh --version 1.0.0"; do
 	# shellcheck disable=SC2086  # Skriptname und Option sind gewollt getrennt
 	if out=$(VERSION=1.0.0 bash packaging/$s --product nope 2>&1); then bad "$s --product nope: kein Fehler"; elif echo "$out" | grep -q 'Unbekanntes Produkt'; then ok "$s --product nope: Abbruch mit klarer Meldung"; else bad "$s --product nope: $out"; fi
 done
+# Windows-Setup: Pflichtteile des Inno-Setup-Skripts (kein Docker nötig). "." steht für den Rückwärtsschrägstrich.
+iss=packaging/windows/pdh-terminal.iss
+check "windows: .iss vorhanden" test -s "$iss"
+check "windows: Startmenü-Eintrag mit AppUserModelID PDH.Terminal (Toasts)" grep -qF 'AppUserModelID: "PDH.Terminal"' "$iss"
+check "windows: Autostart-Eintrag HKLM Run startet den Starter" grep -Eq 'Root: HKLM; Subkey: "Software.Microsoft.Windows.CurrentVersion.Run";.*ValueName: "PDH-Terminal";.*pdh-terminal-start\.exe' "$iss"
+check "windows: Firewall-Regel TCP 8443" grep -qF 'localport=8443' "$iss"
+check "windows: Firewall-Regel nur Domäne und Privat" grep -qF 'profile=domain,private' "$iss"
+check "windows: Firewall-Regel wird bei der Deinstallation per Namen gelöscht" bash -c "grep -A3 -F '[UninstallRun]' '$iss' | grep -qF 'delete rule name='"
+check "windows: Datenordner users-modify" grep -qF 'users-modify' "$iss"
+check "windows: Datenordner wird nicht gelöscht (kein deleteafterinstall)" bash -c "! grep -qi 'deleteafterinstall' '$iss'"
+check "windows: Datenordner bleibt bei der Deinstallation (uninsneveruninstall)" grep -Eq 'commonappdata..PDH-Terminal".*uninsneveruninstall' "$iss"
+check "windows: Autostart und Startmenü starten nie pdh-terminal.exe direkt" bash -c "! grep -Eq '^(Name|Root):.*[{]app[}].pdh-terminal\.exe' '$iss'"
+
 
 if [ "$fails" -gt 0 ]; then
 	echo "$fails Prüfung(en) fehlgeschlagen"
