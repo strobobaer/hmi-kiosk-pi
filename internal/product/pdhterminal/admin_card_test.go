@@ -14,6 +14,7 @@ import (
 )
 
 func TestAdminCardSave(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	r := e.post("/admin/card/settings", url.Values{"type": {"pn532-i2c"}, "i2cBus": {"/dev/i2c-1"}, "i2cAddr": {"0x24"}, "format": {"hex-rev"}})
 	if r.Code != http.StatusOK {
