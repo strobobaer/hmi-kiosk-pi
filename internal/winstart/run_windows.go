@@ -75,10 +75,10 @@ func Main(args []string, def Paths) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = Supervise(ctx, Config{
-		Choose: func() (Candidate, error) {
+		Choose: func(isBad func(string) bool) (Candidate, error) {
 			closeLocks("")
 			// Die Prüfung hält die Exe jedes geprüften Kandidaten geöffnet, bis der Prozess läuft.
-			c, err := Choose(Discover(paths.Base, baseVersion, app), func(c Candidate) error {
+			c, err := Choose(MarkKnownBad(Discover(paths.Base, baseVersion, app), isBad), func(c Candidate) error {
 				l, err := LockCandidate(c, pub)
 				if err != nil {
 					return err

@@ -128,6 +128,9 @@ type harness struct {
 	procs  []*fakeProc
 	healed []Candidate
 
+	// markBadFn ersetzt MarkBad (nil: MarkBad).
+	markBadFn func(Candidate) error
+
 	// prog erzeugt je Start den Prozess (n zählt ab 1); nil: stirbt sofort mit Code 1 ohne Gesundmeldung.
 	prog func(h *harness, n int, c Candidate) *fakeProc
 
@@ -143,6 +146,13 @@ func newHarness(t *testing.T, folders ...string) *harness {
 		os.MkdirAll(filepath.Join(h.app, v), 0o755)
 	}
 	return h
+}
+
+func (h *harness) markBad(c Candidate) error {
+	if h.markBadFn != nil {
+		return h.markBadFn(c)
+	}
+	return MarkBad(c)
 }
 
 func (h *harness) healthy(version string) {
@@ -178,8 +188,8 @@ func (h *harness) proc(i int) *fakeProc {
 
 func (h *harness) run() {
 	cfg := Config{
-		Choose: func() (Candidate, error) {
-			cands := append(Discover(filepath.Dir(h.base.Exe), "0.0.1", h.app), h.base)
+		Choose: func(isBad func(string) bool) (Candidate, error) {
+			cands := MarkKnownBad(append(Discover(filepath.Dir(h.base.Exe), "0.0.1", h.app), h.base), isBad)
 			// Discover findet die Exe der Grundversion nicht (Datei fehlt); h.base ist gesetzt.
 			return Choose(dedupe(cands), func(Candidate) error { return nil })
 		},
@@ -202,7 +212,7 @@ func (h *harness) run() {
 		},
 		RunDir:    h.runDir,
 		Clock:     h.clk,
-		MarkBad:   MarkBad,
+		MarkBad:   h.markBad,
 		OnHealthy: func(c Candidate) { h.mu.Lock(); h.healed = append(h.healed, c); h.mu.Unlock() },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -464,7 +474,12 @@ func TestSuperviseNoCandidateWaits(t *testing.T) {
 	calls := 0
 	var mu sync.Mutex
 	cfg := Config{
-		Choose: func() (Candidate, error) { mu.Lock(); calls++; mu.Unlock(); return Candidate{}, os.ErrNotExist },
+		Choose: func(func(string) bool) (Candidate, error) {
+			mu.Lock()
+			calls++
+			mu.Unlock()
+			return Candidate{}, os.ErrNotExist
+		},
 		Start:  func(Candidate) (Proc, error) { t.Error("Start ohne Kandidat"); return nil, nil },
 		RunDir: h.runDir, Clock: h.clk,
 	}
@@ -477,5 +492,31 @@ func TestSuperviseNoCandidateWaits(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Lässt sich die bad-Markierung nicht schreiben, gibt es keine Dauerschleife: Die Version gilt im Speicher als schlecht,
+// es wird nicht sofort neu gewählt (Pause), danach startet die nächstniedrigere.
+func TestSuperviseMarkBadFailureNoLoop(t *testing.T) {
+	h := newHarness(t, "0.0.2")
+	h.markBadFn = func(Candidate) error { return os.ErrPermission }
+	h.prog = func(h *harness, n int, c Candidate) *fakeProc {
+		if c.Base {
+			h.healthy(c.Version)
+		}
+		return newFakeProc()
+	}
+	h.run()
+	waitFor(t, "Start", func() bool { return h.startCount() == 1 && h.clk.pending() >= 2 })
+	h.clk.Advance(DefaultHealthTimeout)
+	waitFor(t, "Pause", func() bool { return len(h.clk.pauses()) == 1 })
+	time.Sleep(20 * time.Millisecond)
+	if h.startCount() != 1 {
+		t.Fatalf("sofort neu gestartet trotz Schreibfehler: %v", h.startedVersions())
+	}
+	h.clk.Advance(5 * time.Second)
+	waitFor(t, "zweiter Start", func() bool { return h.startCount() == 2 })
+	if got := h.startedVersions(); got[1] != "0.0.1" {
+		t.Errorf("zweiter Start %v, erwartet Grundversion (0.0.2 gilt im Speicher als schlecht)", got)
 	}
 }

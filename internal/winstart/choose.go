@@ -122,6 +122,19 @@ func Discover(base, baseVersion, app string) []Candidate {
 	return out
 }
 
+// MarkKnownBad setzt Bad bei den Ordnerkandidaten, die isBad kennt (nil: keine).
+func MarkKnownBad(cands []Candidate, isBad func(version string) bool) []Candidate {
+	if isBad == nil {
+		return cands
+	}
+	for i := range cands {
+		if !cands[i].Base && isBad(cands[i].Version) {
+			cands[i].Bad = true
+		}
+	}
+	return cands
+}
+
 // Lock hält die Exe eines geprüften Kandidaten ohne Schreibfreigabe geöffnet, bis der Prozess läuft.
 type Lock struct{ f *os.File }
 

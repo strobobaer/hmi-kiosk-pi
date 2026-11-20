@@ -53,7 +53,9 @@ type Proc interface {
 // Config beschreibt, was Supervise wählt, startet und beobachtet.
 type Config struct {
 	// Choose wählt die zu startende Version (vor jedem Start neu: Ordner und Markierungen ändern sich).
-	Choose func() (Candidate, error)
+	// isBad meldet Versionen, die dieser Starter als schlecht kennt, auch wenn die Markierung nicht schreibbar war;
+	// Choose muss sie überspringen (MarkKnownBad).
+	Choose func(isBad func(version string) bool) (Candidate, error)
 	// Start startet die gewählte Version.
 	Start func(Candidate) (Proc, error)
 	// RunDir ist der Laufzeitordner mit der Gesundmarke (appcore.HealthyFile).
@@ -74,7 +76,8 @@ type Config struct {
 //     kann nicht markiert werden; für sie gilt die Pause wie nach einem Absturz).
 //   - ExitQuit beendet den Starter, ExitRestart startet sofort neu (nach einem gesunden Lauf).
 //   - Andere Enden führen zu Pausen von 5 s, 30 s, dann 5 min. Ein Lauf über 10 min setzt sie zurück.
-//   - Eine Version, die dreimal in Folge endet, ohne je gesund gewesen zu sein, gilt als schlecht.
+//   - Eine Version, die dreimal in Folge endet, ohne je gesund gewesen zu sein, gilt als schlecht: Ein Absturz vor der
+//     ersten Gesundmeldung zählt als „nicht innerhalb von 60 s gesund“.
 //
 // Bei ctx.Done wird der Prozessbaum beendet; Supervise liefert dann nil.
 func Supervise(ctx context.Context, cfg Config) error {
@@ -90,7 +93,7 @@ func Supervise(ctx context.Context, cfg Config) error {
 	if cfg.Poll == 0 {
 		cfg.Poll = DefaultPoll
 	}
-	s := &supervisor{cfg: cfg, strikes: map[string]int{}}
+	s := &supervisor{cfg: cfg, strikes: map[string]int{}, badMem: map[string]bool{}}
 	for ctx.Err() == nil {
 		if quit := s.cycle(ctx); quit {
 			return nil
@@ -101,9 +104,12 @@ func Supervise(ctx context.Context, cfg Config) error {
 
 type supervisor struct {
 	cfg     Config
-	idx     int            // nächste Pause in backoff
-	strikes map[string]int // Fehlstarts in Folge je Version
+	idx     int             // nächste Pause in backoff
+	strikes map[string]int  // Fehlstarts in Folge je Version
+	badMem  map[string]bool // als schlecht erkannt, auch wenn die Markierung nicht schreibbar war
 }
+
+func (s *supervisor) isBad(v string) bool { return s.badMem[v] }
 
 // pause wartet die nächste Neustartpause ab; false, wenn ctx vorher endete.
 func (s *supervisor) pause(ctx context.Context) bool {
@@ -118,14 +124,18 @@ func (s *supervisor) pause(ctx context.Context) bool {
 }
 
 // bad markiert c als schlecht (die Grundversion nie) und meldet, ob sofort neu gewählt werden kann.
+// Lässt sich die Markierung nicht schreiben, gilt die Version bis zum Ende des Starters trotzdem als schlecht,
+// aber es wird nicht sofort neu gewählt: Es gilt die Pause wie nach einem Fehlstart.
 func (s *supervisor) bad(c Candidate) bool {
 	if c.Base {
 		return false
 	}
-	if err := s.cfg.MarkBad(c); err != nil {
-		log.Printf("Version %s nicht als schlecht markiert: %v", c.Version, err)
-	}
 	delete(s.strikes, c.Version)
+	s.badMem[c.Version] = true
+	if err := s.cfg.MarkBad(c); err != nil {
+		log.Printf("Version %s nicht als schlecht markiert (gilt bis zum Ende des Starters): %v", c.Version, err)
+		return false
+	}
 	return true
 }
 
@@ -142,7 +152,7 @@ func (s *supervisor) failed(ctx context.Context, c Candidate) {
 // cycle wählt und startet einmal und wartet auf das Ende; true heißt: Supervise endet.
 func (s *supervisor) cycle(ctx context.Context) (quit bool) {
 	cfg := s.cfg
-	c, err := cfg.Choose()
+	c, err := cfg.Choose(s.isBad)
 	if err != nil {
 		log.Printf("Keine Version startbar: %v", err)
 		s.pause(ctx)
