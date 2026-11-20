@@ -208,6 +208,9 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 
 func readyText(st Settings, r reader) string {
 	if u, ok := r.(*usbReader); ok {
+		if len(u.devs) == 0 {
+			return fmt.Sprintf("USB-Leser %q: wartet auf das Gerät", u.sel)
+		}
 		return "USB-Leser bereit: " + usbNames(u.devs)
 	}
 	if st.Type == TypePN532I2C {
@@ -248,10 +251,10 @@ func openReader(st Settings) (reader, error) {
 		return openPN532(st)
 	case TypeUSB:
 		devs := matchDevices(ListInputDevices("/dev/input"), st.USBDevice)
-		if len(devs) == 0 {
+		if len(devs) == 0 && !usbMayBeAbsent {
 			return nil, fmt.Errorf("USB-Leser %q nicht gefunden", st.USBDevice)
 		}
-		return &usbReader{devs: devs}, nil
+		return &usbReader{sel: st.USBDevice, devs: devs}, nil
 	}
 	return nil, fmt.Errorf("unbekannter Lesertyp %q", st.Type)
 }

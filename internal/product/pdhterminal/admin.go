@@ -76,6 +76,7 @@ func (p *adminProduct) product() *web.AdminProduct {
 				p.renderCard(f, w, http.StatusOK, "", "", nil)
 			}},
 			{Method: http.MethodPost, Path: "/admin/card/settings", Handle: p.cardSave},
+			{Method: http.MethodPost, Path: "/admin/card/learn", Handle: p.cardLearn},
 			{Method: http.MethodGet, Path: "/admin/statusdisplay", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
 				p.renderStatusDisplay(f, w, http.StatusOK, "", "", nil)
 			}},

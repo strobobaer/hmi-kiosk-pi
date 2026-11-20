@@ -2,13 +2,12 @@ package card
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"hmikiosk/internal/platform"
 )
 
 const (
@@ -130,32 +129,30 @@ func usbNames(devs []InputDevice) string {
 	return strings.Join(names, ", ")
 }
 
-// usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter) über alle Knoten der Auswahl.
+// usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter). sel ist die Auswahl
+// (vvvv:pppp oder Namensteil); devs sind die beim Öffnen gefundenen Geräte.
 type usbReader struct {
+	sel  string
 	devs []InputDevice
 }
 
 func (u *usbReader) Probe(ctx context.Context) (string, error) {
+	if len(u.devs) == 0 {
+		return "", fmt.Errorf("USB-Leser %q nicht gefunden", u.sel)
+	}
 	return "USB: " + usbNames(u.devs), nil
 }
 
-// Run übernimmt alle Knoten exklusiv (sonst landet die UID als Tastatureingabe im Browser)
-// und liest erst danach. Die Ereignisse aller Knoten laufen in einen gemeinsamen Puffer.
+// Run sammelt die Tasten aller Knoten des Lesers in einem gemeinsamen Puffer; readKeys liefert
+// sie plattformabhängig (Linux: exklusiv gegriffene evdev-Knoten, Windows: Raw Input mit Abfangen).
 func (u *usbReader) Run(ctx context.Context, emit func(string)) error {
-	paths := make([]string, len(u.devs))
-	for i, d := range u.devs {
-		paths[i] = d.Path
-	}
 	var (
 		mu  sync.Mutex
 		buf keyBuffer
 	)
-	return readExclusive(ctx, paths, func(ev platform.InputEvent) {
-		if ev.Type != evKey || ev.Value != 1 {
-			return
-		}
+	return u.readKeys(ctx, func(code uint16, at time.Time) {
 		mu.Lock()
-		uid, done := buf.Key(ev.Code, time.Now())
+		uid, done := buf.Key(code, at)
 		mu.Unlock()
 		if done {
 			emit(strings.ToUpper(strings.TrimSpace(uid)))

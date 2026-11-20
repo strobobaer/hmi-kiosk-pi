@@ -16,6 +16,16 @@ import (
 // inputDir ist der Ordner der Eingabegeräte, aus dem die USB-Leser zur Auswahl stammen.
 const inputDir = "/dev/input"
 
+// formWindows: Unter Windows bietet das Formular nur „kein Leser“ und den USB-Tastaturleser an und
+// hat den Knopf „Karte vorhalten“; die Prüfung setzt es, um beides ohne Windows zu zeigen.
+var formWindows = onWindows
+
+// learnFn liest die Karte beim Anlernen; die Prüfung ersetzt sie.
+var learnFn = card.Learn
+
+// learnWait ist die Wartezeit beim Anlernen.
+const learnWait = 15 * time.Second
+
 // cardSettings übersetzt die Konfiguration in die Einstellungen des Kartendienstes.
 func cardSettings(c config.CardCfg) card.Settings {
 	bus, addr := c.Settings()
@@ -44,9 +54,22 @@ type cardView struct {
 	Detail                       string
 	Last                         string // fertiger Satz zur letzten Karte
 	Notice                       string
+	Windows                      bool         // Formular nur mit „kein Leser“ und USB-Leser, mit Anlernknopf
+	Learned                      *learnedView // Ergebnis von „Karte vorhalten“
+}
+
+// learnedView ist, was das Anlernen ergab: Gerät, getippter Text und die UID in allen Schreibweisen.
+type learnedView struct {
+	Device, Typed, Format string
+	Hex, HexRev, Dec      string
+	Forms                 bool // Hex, HexRev und Dec sind belegt
 }
 
 func (p *adminProduct) renderCard(f web.AdminFrame, w http.ResponseWriter, status int, errMsg, notice string, form *config.CardCfg) {
+	p.renderCardLearned(f, w, status, errMsg, notice, form, nil)
+}
+
+func (p *adminProduct) renderCardLearned(f web.AdminFrame, w http.ResponseWriter, status int, errMsg, notice string, form *config.CardCfg, learned *learnedView) {
 	cfg, err := f.Load()
 	if err != nil {
 		f.Render(w, http.StatusInternalServerError, "card", "card", "Kartenleser", err.Error(), cardView{})
@@ -62,7 +85,7 @@ func (p *adminProduct) renderCard(f web.AdminFrame, w http.ResponseWriter, statu
 		Type: formType(shown), Bus: bus, Addr: fmt.Sprintf("%#x", addr), USB: shown.USBDevice, Format: shown.Format,
 		SPIDev: shown.SPIDevice(), UARTDev: shown.UARTDevice(), Unsupported: cardReason(shown),
 		Devices: card.ListInputDevices(inputDir), Active: st.Active, Detail: st.Detail, Notice: notice,
-		Last: "Noch keine Karte gelesen",
+		Last: "Noch keine Karte gelesen", Windows: formWindows, Learned: learned,
 	}
 	v.USBFree = shown.USBDevice
 	for _, d := range v.Devices {
@@ -125,6 +148,38 @@ func (p *adminProduct) cardSave(f web.AdminFrame, w http.ResponseWriter, r *http
 		return
 	}
 	p.renderCard(f, w, http.StatusOK, "", "Einstellungen gespeichert.", nil)
+}
+
+// cardLearn wartet auf eine Karte am Leser (Tastatur), trägt Gerät und Formatvorschlag ins Formular
+// ein und zeigt die UID in allen Schreibweisen. Gespeichert wird erst mit „Speichern“.
+func (p *adminProduct) cardLearn(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
+	if !formWindows {
+		p.renderCard(f, w, http.StatusBadRequest, "Karte anlernen gibt es nur unter Windows", "", nil)
+		return
+	}
+	dev, typed, err := learnFn(r.Context(), learnWait)
+	if err != nil {
+		msg := "Keine Karte gelesen: Bitte die Karte innerhalb von 15 Sekunden an den Leser halten"
+		if err.Error() != "Keine Karte gelesen" {
+			msg = "Karte anlernen nicht möglich: " + err.Error()
+		}
+		p.renderCard(f, w, http.StatusOK, msg, "", nil)
+		return
+	}
+	cfg, err := f.Load()
+	if err != nil {
+		p.renderCard(f, w, http.StatusInternalServerError, err.Error(), "", nil)
+		return
+	}
+	in := cfg.Card
+	in.Type, in.Format = config.CardTypeUSB, card.SuggestFormat(typed)
+	in.USBDevice = dev.ID
+	if in.USBDevice == "" {
+		in.USBDevice = dev.Name
+	}
+	l := &learnedView{Device: dev.Name, Typed: typed, Format: in.Format}
+	l.Hex, l.HexRev, l.Dec, l.Forms = card.UIDForms(typed)
+	p.renderCardLearned(f, w, http.StatusOK, "", "Karte erkannt. Mit „Speichern“ übernehmen.", &in, l)
 }
 
 // statusDisplaySettings übersetzt die Konfiguration in die Einstellungen des Displaydienstes.

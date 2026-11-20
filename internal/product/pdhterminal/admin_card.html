@@ -14,14 +14,16 @@
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <label>Leser
       <select name="type">
-        <option value=""{{if eq .Type ""}} selected{{end}}>Aus</option>
+        {{if .Windows}}<option value=""{{if eq .Type ""}} selected{{end}}>Kein Leser</option>
+        <option value="usb"{{if eq .Type "usb"}} selected{{end}}>USB-Leser (Tastatur)</option>
+        {{else}}<option value=""{{if eq .Type ""}} selected{{end}}>Aus</option>
         <option value="pn532-i2c"{{if eq .Type "pn532-i2c"}} selected{{end}}>PN532 (I²C)</option>
         <option value="pn532-spi"{{if eq .Type "pn532-spi"}} selected{{end}}>PN532 (SPI)</option>
         <option value="pn532-uart"{{if eq .Type "pn532-uart"}} selected{{end}}>PN532 (UART)</option>
-        <option value="usb"{{if eq .Type "usb"}} selected{{end}}>USB-Leser</option>
+        <option value="usb"{{if eq .Type "usb"}} selected{{end}}>USB-Leser</option>{{end}}
       </select>
     </label>
-    <p class="hint f-pn532">Schalter am PN532-Modul: I²C „SEL0 an, SEL1 aus“, SPI „SEL0 aus, SEL1 an“, UART „beide Schalter aus“.</p>
+    {{if not .Windows}}<p class="hint f-pn532">Schalter am PN532-Modul: I²C „SEL0 an, SEL1 aus“, SPI „SEL0 aus, SEL1 an“, UART „beide Schalter aus“.</p>{{end}}
     <label class="f-i2c">I²C-Bus (PN532)
       <input type="text" name="i2cBus" value="{{.Bus}}" autocapitalize="off" spellcheck="false" placeholder="/dev/i2c-1">
     </label>
@@ -44,7 +46,7 @@
       <input type="text" name="usbDevice" value="{{.USBFree}}" autocapitalize="off" spellcheck="false">
       <input type="hidden" name="usbPrev" value="{{.USBFree}}">
     </label>
-    <label class="f-pn532">Schreibweise der Kartennummer (PN532)
+    <label class="{{if .Windows}}f-usb{{else}}f-pn532{{end}}">Schreibweise der Kartennummer{{if not .Windows}} (PN532){{end}}
       <select name="format">
         <option value=""{{if eq .Format ""}} selected{{end}}>Standard (hex)</option>
         <option value="hex"{{if eq .Format "hex"}} selected{{end}}>hex</option>
@@ -56,5 +58,25 @@
     <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
   </form>
 </section>
+
+{{if .Windows}}
+<section class="panel stack">
+  <h2>Karte anlernen</h2>
+  {{with .Learned}}
+  <p class="msg ok" role="status">Gerät: {{.Device}}. Getippt: <code>{{.Typed}}</code>, Vorschlag: {{.Format}}.</p>
+  {{if .Forms}}<ul>
+    <li>hex: <code>{{.Hex}}</code></li>
+    <li>hex-rev: <code>{{.HexRev}}</code></li>
+    <li>dec: <code>{{.Dec}}</code></li>
+  </ul>{{end}}
+  <p class="hint">Gerät und Schreibweise stehen oben im Formular, gespeichert ist noch nichts.</p>
+  {{end}}
+  <form method="post" action="/admin/card/learn" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <p class="hint">Die Karte innerhalb von 15 Sekunden an den Leser halten. In dieser Zeit werden Ziffern, A–F und Enter von allen Tastaturen nicht an andere Programme weitergegeben.</p>
+    <div class="actions"><button type="submit" class="btn">Karte vorhalten</button></div>
+  </form>
+</section>
+{{end}}
 {{end}}
 {{end}}
