@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -94,37 +95,54 @@ func windowPID(h uintptr) uint32 {
 	return pid
 }
 
+// enumState ist der Zustand der laufenden Aufzählung. Der Rückruf entsteht nur einmal je
+// Prozess (syscall.NewCallback gibt nie frei, die Laufzeit erlaubt rund 2000), EnumWindows
+// arbeitet synchron: enumMu schützt den Zustand.
+var (
+	enumMu   sync.Mutex
+	enumSet  map[uint32]bool
+	enumHit  uintptr
+	enumOnce sync.Once
+	enumCB   uintptr
+)
+
+func enumProc(h uintptr, _ uintptr) uintptr {
+	if !enumSet[windowPID(h)] {
+		return 1
+	}
+	var name [64]uint16
+	n, _, _ := pGetClassNameW.Call(h, uintptr(unsafe.Pointer(&name[0])), uintptr(len(name)))
+	if windows.UTF16ToString(name[:n]) != edgeWindowClass {
+		return 1
+	}
+	if v, _, _ := pIsWindowVisible.Call(h); v == 0 {
+		return 1
+	}
+	if o, _, _ := pGetWindow.Call(h, gwOwner); o != 0 {
+		return 1
+	}
+	idx := int32(gwlExStyle)
+	ex, _, _ := pGetWindowLongW.Call(h, uintptr(idx))
+	if ex&wsExToolWindow != 0 {
+		return 1
+	}
+	enumHit = h
+	return 0
+}
+
 // find: erstes sichtbares Fenster ohne Besitzer (kein Tooltip, kein Menü) der Job-Prozesse.
 func (w *EdgeWindow) find() (uintptr, bool) {
 	set := w.pidSet()
 	if set == nil {
 		return 0, false
 	}
-	var found uintptr
-	cb := syscall.NewCallback(func(h uintptr, _ uintptr) uintptr {
-		if !set[windowPID(h)] {
-			return 1
-		}
-		var name [64]uint16
-		n, _, _ := pGetClassNameW.Call(h, uintptr(unsafe.Pointer(&name[0])), uintptr(len(name)))
-		if windows.UTF16ToString(name[:n]) != edgeWindowClass {
-			return 1
-		}
-		if v, _, _ := pIsWindowVisible.Call(h); v == 0 {
-			return 1
-		}
-		if o, _, _ := pGetWindow.Call(h, gwOwner); o != 0 {
-			return 1
-		}
-		idx := int32(gwlExStyle)
-		ex, _, _ := pGetWindowLongW.Call(h, uintptr(idx))
-		if ex&wsExToolWindow != 0 {
-			return 1
-		}
-		found = h
-		return 0
-	})
-	pEnumWindows.Call(cb, 0)
+	enumOnce.Do(func() { enumCB = syscall.NewCallback(enumProc) })
+	enumMu.Lock()
+	defer enumMu.Unlock()
+	enumSet, enumHit = set, 0
+	pEnumWindows.Call(enumCB, 0)
+	found := enumHit
+	enumSet = nil
 	return found, found != 0
 }
 

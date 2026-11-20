@@ -2,7 +2,10 @@
 
 package browser
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestEdgeWindowWithoutJob(t *testing.T) {
 	w := NewEdgeWindow(func() ([]uint32, error) { return nil, nil })
@@ -25,4 +28,14 @@ func TestReadRegistryAppPaths(t *testing.T) {
 	if err != nil || p == "" {
 		t.Errorf("%q %v", p, err)
 	}
+}
+
+// Regression: syscall.NewCallback gibt nie frei (Grenze rund 2000); find darf je Aufruf keinen
+// neuen Rückruf anlegen. Mit der eigenen PID läuft die Aufzählung wirklich.
+func TestEdgeWindowFindManyTimesNoCallbackLeak(t *testing.T) {
+	w := NewEdgeWindow(func() ([]uint32, error) { return []uint32{uint32(os.Getpid())}, nil })
+	for i := 0; i < 2500; i++ {
+		w.find()
+	}
+	_ = w.Foreground()
 }
