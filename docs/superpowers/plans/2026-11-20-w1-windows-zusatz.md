@@ -178,7 +178,7 @@ Ein Starter `pdh-terminal-start.exe` wählt die höchste gültig signierte Versi
   - `browser.Supervisor` bekommt die Option `OnRestart func(n int)`. `n` ist die Zahl der Neustarts, ab 1. Unter Windows ruft sie `MinimizeNoActivate` am neuen Fenster auf. Der erste Start bleibt normal sichtbar.
 - **Fenster finden:** sichtbares Fenster der Klasse `Chrome_WidgetWin_1` eines Prozesses im Job-Objekt aus Task 3.
 - **Risiko:** `msedge.exe` reicht den Start an einen schon laufenden Prozess desselben Profils weiter und endet dann sofort. Der Supervisor erkennt das am Job-Objekt: Er wartet, bis der Job leer ist, statt nur auf den Startprozess.
-- **Lokales Netz:** Reichen die Schalter nicht (Probe in Step 4), schreibt das Programm `HKCU\SOFTWARE\Policies\Microsoft\Edge\LocalNetworkAccessAllowedForUrls` mit dem PDH-Ursprung. Das ist ein Ruling für das Ledger.
+- **Lokales Netz:** Reichen die Schalter nicht (Probe in Step 4), ist das ein Befund für den Nutzer (Ruling R15): Es gibt keinen HKCU-Rückfall (`HKCU\Software\Policies` ist für Benutzer nicht beschreibbar) und keine maschinenweite Richtlinie für lokale Netzzugriffe. Das Setup schreibt nur HKLM `SOFTWARE\Policies\Microsoft\Edge` `HideFirstRunExperience` = 1.
 
 - [ ] **Step 1: Tests schreiben**
   - `TestEdgeArgs`: Die Liste enthält genau die Schalter oben, in fester Reihenfolge.

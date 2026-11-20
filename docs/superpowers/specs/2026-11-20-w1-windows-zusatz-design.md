@@ -134,9 +134,10 @@ Technische Festlegungen (Calls des Designers):
   - Unter Windows erlaubt der Supervisor das nur für die eigene Edge-Instanz, über Startschalter, die
     die Prüfung für lokale Netzzugriffe abschalten. So ändert sich das normale Edge des Benutzers
     nicht.
-  - Reichen Schalter in der vorhandenen Edge-Version nicht, schreibt das Programm dieselbe Richtlinie
-    unter HKCU. HKLM geht nicht, weil das Programm ohne Adminrechte läuft und die PDH-Adresse erst nach
-    der Installation feststeht.
+  - Reichen die Schalter in der vorhandenen Edge-Version nicht, ist das ein Befund für den Nutzer
+    (Geräteprobe, Checkliste Punkt 2 mit frischem Profil), der entscheidet. Es gibt keinen Rückfall über
+    HKCU: `HKCU\Software\Policies` ist für Benutzer nicht beschreibbar, Edge liest die Richtlinie dort nicht.
+    Eine maschinenweite Richtlinie, die das lokale Netz für das ganze Edge freigibt, setzt das Setup nicht.
 - **Nur Edge (Call des Designers):** Fehlt Edge oder ist es per Richtlinie gesperrt, bleibt das
   Terminal rot mit Grund (6.8). Einen Ersatzbrowser gibt es nicht.
 - **Schließt der Benutzer das Fenster (Entscheidung des Nutzers: „Schließen wirkt wie Minimieren“):**
@@ -315,8 +316,10 @@ Technische Festlegungen (Calls des Designers):
     die App-Kennung `PDH.Terminal` für Mitteilungen.
   - **Firewall:** eingehende Regel für TCP 8443 (Admin-Seite aus dem Netz) im Profil Domäne/Privat,
     nicht Öffentlich.
-  - **Edge-Richtlinien:** nur das Nötigste unter HKLM (kein Erststart-Assistent). Nichts, was das
-    normale Edge des Benutzers verändert.
+  - **Edge-Richtlinien:** nur das Nötigste unter HKLM: `SOFTWARE\Policies\Microsoft\Edge`, Wert
+    `HideFirstRunExperience` (DWORD 1, kein Erststart-Assistent). Das Setup legt ihn nur an, wenn er fehlt,
+    und entfernt ihn bei der Deinstallation nur dann (`uninsdeletevalue` mit `createvalueifdoesntexist`).
+    Nichts, was das normale Edge des Benutzers verändert, keine Richtlinie für lokale Netzzugriffe.
   - **Deinstallation:**
     - Entfernt Programm, Autostart, Firewall-Regel und Verknüpfungen.
     - Der Datenordner bleibt, mit Hinweis; die Kopplung bleibt so bei einer Neuinstallation erhalten.

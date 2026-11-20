@@ -113,3 +113,10 @@ Diese Liste hält alle Entscheidungen fest, die während der Umsetzung ohne Rüc
 ## Update-Prüfung: Umfang der Release-Liste
 
 - Die Update-Prüfung liest nur die ersten 100 Releases des Repositorys. Beide Produkte teilen sich ein Repository; hat eines sehr viele Releases, können Releases des anderen Produkts oder ältere Versionen aus dem Blick geraten. Bei Bedarf später blättern (Seiten der GitHub-API).
+
+## W1 Windows (Betriebsart Zusatz): Nachträge der Abschlussprüfung
+
+- Neues optionales Feld `usbFormat` in `config.json` (nur USB-Leser); `format` bleibt Sache des PN532 — Grund: Mit einem Format am USB-Leser änderte sich auf bestehenden Linux-Geräten die UID — Kosten: Das Windows-Formular schreibt `usbFormat`, das Linux-Formular zeigt es nicht (es bleibt beim Speichern erhalten).
+- Belegter Port 8080 oder 8443 unter Windows: Das Terminal bleibt rot oben und bindet alle 30 s neu; unter Linux endet der Dienst wie bisher (systemd startet ihn neu) — Grund: Ein Prozessende zählt der Starter als Fehlstart der Version — Kosten: Ohne Startseite läuft kein Edge, bis der Port frei ist.
+- Keine Edge-Richtlinie für lokale Netzzugriffe und kein HKCU-Rückfall (`HKCU\Software\Policies` ist für Benutzer nicht beschreibbar); das Setup schreibt nur `HideFirstRunExperience` unter HKLM — Kosten: Reichen die Startschalter für lokale Netzzugriffe nicht, entscheidet der Nutzer nach der Geräteprobe.
+- Die Windows-Mitteilung läuft über das feste Skript `toast.ps1` im Programmordner (`-File`, `RemoteSigned`) statt über `-EncodedCommand` und `Bypass` — Grund: Virenscanner bewerten die Kombination aus verstecktem PowerShell mit Bypass und einem Tastaturhaken in einem unsignierten Programm als verdächtig — Kosten: Ohne die Datei keine Mitteilung.

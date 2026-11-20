@@ -474,7 +474,7 @@ Einstellen unter Admin-Seite (5 Sekunden oben rechts drücken) → **Kartenleser
 |---|---|---|
 | **aus** (Standard) | – | Keine Karte wird gelesen. |
 | **PN532 über I²C** | NFC-Modul PN532 am I²C-Bus, Bus `/dev/i2c-1`, Adresse `0x24` | Bus und Adresse nur ändern, wenn das Modul anders angeschlossen ist. Die Adresse als Hex-Zahl eintragen (`0x24`). |
-| **USB-Leser** | Leser, der sich wie eine Tastatur meldet | Das Gerät aus der Liste wählen oder von Hand eintragen: Kennung `vvvv:pppp`, Namensteil oder genauer Pfad (`/dev/input/event…`). Meldet sich ein Leser mit mehreren Eingabeknoten (gleiche Kennung oder gleicher Namensteil), übernimmt das Terminal alle allein; ein von Hand geändertes Feld hat Vorrang vor der Liste. Das Terminal belegt die Geräte allein; die Nummer landet nie in einem Eingabefeld. Text wird gekürzt und in Großbuchstaben gewandelt. Das Format sagt, was der Leser tippt, und das Terminal wandelt es in die Schreibweise des PN532 (Hex, Großbuchstaben): hex bleibt, hex-rev dreht die Bytes um, dec ist die Umkehrung des PN532-Formats dec (bis 10 Ziffern 4 Byte, sonst 7). Leer lässt den Text unverändert. |
+| **USB-Leser** | Leser, der sich wie eine Tastatur meldet | Das Gerät aus der Liste wählen oder von Hand eintragen: Kennung `vvvv:pppp`, Namensteil oder genauer Pfad (`/dev/input/event…`). Meldet sich ein Leser mit mehreren Eingabeknoten (gleiche Kennung oder gleicher Namensteil), übernimmt das Terminal alle allein; ein von Hand geändertes Feld hat Vorrang vor der Liste. Das Terminal belegt die Geräte allein; die Nummer landet nie in einem Eingabefeld. Text wird gekürzt und in Großbuchstaben gewandelt; das Format (Feld `format`) gilt hier nicht, es ist Sache des PN532. Wer einen Leser mit anderer Ausgabe braucht, setzt in `config.json` das Feld `usbFormat` (unter Windows stellt es die Admin-Seite ein): Es sagt, was der Leser tippt, und das Terminal wandelt es in die Schreibweise des PN532 (Hex, Großbuchstaben): hex bleibt, hex-rev dreht die Bytes um, dec ist die Umkehrung des PN532-Formats dec (bis 10 Ziffern 4 Byte, sonst 7). Ohne `usbFormat` bleibt der Text unverändert. |
 
 **Anschluss des PN532** (Raspberry Pi, 3,3 V):
 
@@ -574,7 +574,7 @@ Das PDH-Terminal läuft auch auf Windows 11 (Betriebsart „Zusatz“: ein norma
 
 1. `PDH-Terminal-Setup-<Version>.exe` und `PDH-Terminal-Setup-<Version>.exe.sha256` von der Release-Seite laden, Prüfsumme mit `Get-FileHash` vergleichen.
 2. Setup starten und die einmalige Abfrage der Benutzerkontensteuerung bestätigen (Administratorrechte). **SmartScreen:** Das Setup ist nicht mit einem Zertifikat signiert, Windows meldet „Unbekannter Herausgeber“: „Weitere Informationen“ → „Trotzdem ausführen“. Die Echtheit sichert die Prüfsumme; Updates sind davon unabhängig und werden vom Terminal selbst per Signatur geprüft.
-3. Das Setup installiert für alle Benutzer nach `C:\Program Files\PDH-Terminal`, legt den Datenordner `C:\ProgramData\PDH-Terminal` an (Kopplung, Einstellungen, geladene Updates), trägt den Autostart ein (Registrierung `HKLM\...\Run`, startet `pdh-terminal-start.exe`), legt im Startmenü „PDH-Terminal“ und „PDH-Terminal Admin“ an und öffnet in der Windows-Firewall TCP 8443 (Regel „PDH-Terminal Admin“, nur Profile Domäne und Privat, nicht Öffentlich) für die Admin-Seite aus dem Netz. Danach startet das Terminal.
+3. Das Setup installiert für alle Benutzer nach `C:\Program Files\PDH-Terminal`, legt den Datenordner `C:\ProgramData\PDH-Terminal` an (Kopplung, Einstellungen, geladene Updates), trägt den Autostart ein (Registrierung `HKLM\...\Run`, startet `pdh-terminal-start.exe`), legt im Startmenü „PDH-Terminal“ und „PDH-Terminal Admin“ an, installiert das feste Skript `toast.ps1` für die Windows-Mitteilung in den Programmordner, setzt die Edge-Richtlinie `HideFirstRunExperience` unter HKLM (kein Erststart-Assistent im Terminal-Fenster; sie wird bei der Deinstallation nur entfernt, wenn das Setup sie angelegt hat; weitere Edge-Richtlinien, auch für lokale Netzzugriffe, setzt das Setup nicht) und öffnet in der Windows-Firewall TCP 8443 (Regel „PDH-Terminal Admin“, nur Profile Domäne und Privat, nicht Öffentlich) für die Admin-Seite aus dem Netz. Danach startet das Terminal.
 4. Die Admin-Seite öffnet „PDH-Terminal Admin“ im Startmenü (`https://127.0.0.1:8443/admin/`) oder das Tray-Symbol; aus dem Netz `https://<PC>:8443`. Kopplung wie in der README, „PDH-Terminal einrichten“, Schritte 4 bis 6.
 
 Autostart und Startmenü starten immer den **Starter** `pdh-terminal-start.exe`, nie `pdh-terminal.exe`: Nach einem Update beendet sich das Programm mit Code 4, und nur der Starter startet es in der neuen Version neu.
@@ -588,8 +588,8 @@ Autostart und Startmenü starten immer den **Starter** `pdh-terminal-start.exe`,
 #### Leser einrichten
 
 1. USB-Leser anstecken. Es muss ein Leser für **13,56 MHz** sein (Mifare/NFC-Karten), der sich als **Tastatur** meldet (Tastaturmodus, Ausgabe der Nummer mit Enter am Ende).
-2. Admin-Seite → **Kartenleser** → Typ „USB-Leser“. Das Gerät aus der Liste wählen (Name und VID:PID) oder: **„Karte vorhalten“** drücken und eine Karte an den Leser halten. Das Terminal erkennt das Gerät, das zuletzt eine schnelle Ziffernfolge mit Enter geschickt hat, trägt es ein und schlägt das Format vor (genau 8 oder 14 Hexzeichen: `hex`; nur 10 Ziffern: `dec`; im Zweifel `hex`).
-3. Die Seite zeigt die erkannte Nummer in allen drei Schreibweisen (hex, hex-rev, dec). Wer die Karte vom Pi kennt, sieht so, welche passt. Die Nummer in PDH beim Benutzer eintragen, Format wie dort.
+2. Admin-Seite → **Kartenleser** → Typ „USB-Leser“. Das Gerät aus der Liste wählen (Name und VID:PID) oder: **„Karte vorhalten“** drücken und eine Karte an den Leser halten. Das Terminal erkennt das Gerät, das zuletzt eine schnelle Ziffernfolge mit Enter geschickt hat, trägt es ein und schlägt die Schreibweise des Lesers vor (genau 8 oder 14 Hexzeichen: `hex`; nur 10 Ziffern: `dec`; im Zweifel `hex`). Ein zweites Absenden des Knopfs (zum Beispiel das Enter des Lesers auf dem fokussierten Knopf) ist gesperrt; kommt es doch an, liefert das Terminal 10 Sekunden lang das schon erkannte Ergebnis.
+3. Die Seite zeigt die erkannte Nummer in allen drei Schreibweisen (hex, hex-rev, dec). Wer die Karte vom Pi kennt, sieht so, welche passt. Die Nummer in PDH beim Benutzer eintragen, Schreibweise wie dort. Wird der Leser abgezogen, zeigt das Tray-Symbol rot „Kartenleser getrennt“ und die Seite „Kartenleser“ den Zustand „Leser getrennt“; nach dem Wiederanstecken (auch an einem anderen Anschluss) geht es ohne Neustart weiter.
 
 Wie Tasten des Lesers abgefangen werden, einschließlich Fenstern mit höheren Rechten: Absatz „USB-Leser unter Windows (Hinweis)“ im Abschnitt „Kartenleser“.
 
@@ -599,7 +599,7 @@ Meldet eine Karte an, während das Terminal-Fenster nicht vorne ist (ein anderes
 
 | Wert | Anzeige |
 |---|---|
-| Windows-Mitteilung (`toast`) | Mitteilung von Windows über die Verknüpfung „PDH-Terminal“ im Startmenü (App-Kennung `PDH.Terminal`). Der Knopf „Terminal öffnen“ hat keine Wirkung. Ohne diese Verknüpfung (zum Beispiel nach einem Kopieren des Programms ohne Setup) erscheint keine Mitteilung. |
+| Windows-Mitteilung (`toast`) | Mitteilung von Windows über die Verknüpfung „PDH-Terminal“ im Startmenü (App-Kennung `PDH.Terminal`). Ein Klick auf die Mitteilung oder „Terminal öffnen“ startet den Eintrag erneut; das laufende Terminal derselben Sitzung zeigt dann sein Fenster (der zweite Start endet danach sofort; in einer anderen Sitzung geschieht nichts). Windows startet dazu `powershell.exe` mit `-File` auf `toast.ps1` im Programmordner (ohne `-EncodedCommand`, mit `-ExecutionPolicy RemoteSigned`); fehlt die Datei, steht es im Protokoll und es gibt keine Mitteilung. Ohne die Verknüpfung (zum Beispiel nach einem Kopieren des Programms ohne Setup) erscheint ebenfalls keine Mitteilung. |
 | Fenster in der Mitte (`overlay`, Vorgabe bei leerer Auswahl) | Eigenes Fenster immer obenauf ohne Fokus mit Name, Ergebnis und Uhrzeit; schließt nach 4 Sekunden oder per Klick. |
 | Leiste oben (`banner`) | 48 Pixel hohe Leiste über die volle Breite des Hauptbildschirms, schließt nach 4 Sekunden. |
 | Terminal nach vorn (`front`) | Das Edge-Fenster wird geholt; wo Windows das nicht erlaubt, blinkt die Taskleiste. |
@@ -614,7 +614,8 @@ Erfolg grün, Fehler rot, Abmeldung grau; Texte „Angemeldet: <Name>“, „Abg
 - **Setup ohne Code-Signatur:** SmartScreen zeigt „Unbekannter Herausgeber“ (siehe Installation).
 - **Fenster mit höheren Rechten:** Karten des Lesers landen dort im Fenster (Absatz „USB-Leser unter Windows (Hinweis)“).
 - Abschnitte der Admin-Seite, die den Helfer brauchen (Netzwerk, Zeit, Sicherung, Abbild), fehlen unter Windows.
-- Läuft Edge nicht oder ist Port 8080 oder 8443 belegt, zeigt das Tray-Symbol rot und die Selbstprüfung den Grund; Edge wird alle 30 Sekunden neu versucht.
+- Läuft Edge nicht oder ist Port 8080 oder 8443 belegt, zeigt das Tray-Symbol rot („Port 8080 belegt“) und die Selbstprüfung den Grund. Das Terminal bleibt dabei oben (es endet nicht, der Starter zählt es nicht als Fehlstart) und versucht Edge und die Ports alle 30 Sekunden neu; ist ein Port wieder frei, wird er ohne Neustart gebunden. Die Gesundmeldung des Starters steht trotzdem, weil der Prozess selbst gesund ist.
+- Das Terminal ist ein Programm ohne Konsolenfenster. Beenden geht über das Tray-Symbol („Beenden“) oder im Task-Manager.
 
 ### Bekannte Einschränkungen
 
