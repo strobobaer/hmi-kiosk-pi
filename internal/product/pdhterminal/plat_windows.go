@@ -63,7 +63,7 @@ func readRegistry(key string) (string, error) { return browser.ReadRegistry(key)
 func edgeProfileDir() string {
 	base := os.Getenv("LOCALAPPDATA")
 	if base == "" {
-		base = filepath.Join(os.TempDir(), "PDH-Terminal-lokal")
+		base = filepath.Join(os.TempDir(), "PDH-Terminal-local")
 	}
 	return filepath.Join(base, "PDH-Terminal", "edge")
 }
@@ -82,6 +82,12 @@ func (s *service) selftestSteps(*selftest.Deps) []selftest.Step {
 				return selftest.StepResult{Detail: err.Error()}
 			}
 			return selftest.StepResult{OK: true, Detail: "Konfiguration gültig"}
+		}},
+		{Name: "ports", Run: func(context.Context, selftest.Deps) selftest.StepResult {
+			if p := s.portProblems(); p != "" {
+				return selftest.StepResult{Detail: p}
+			}
+			return selftest.StepResult{OK: true, Detail: "Ports gebunden"}
 		}},
 		selftest.CardStep(),
 		{Name: "edge", Run: func(context.Context, selftest.Deps) selftest.StepResult {

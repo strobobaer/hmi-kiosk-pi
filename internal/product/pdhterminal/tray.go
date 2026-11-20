@@ -52,6 +52,7 @@ const (
 	problemEdge  = "edge"
 	problemAdmin = "port-admin"
 	problemLocal = "port-local"
+	problemStart = "port-start" // Startseite (8080) nicht gebunden
 )
 
 // setProblem merkt einen Grund für die rote Färbung (leer: erledigt) und färbt das Symbol neu.
@@ -73,7 +74,7 @@ func (s *service) setProblem(kind, msg string) {
 func (s *service) trayReason() string {
 	s.mu.RLock()
 	parts := make([]string, 0, 4)
-	for _, k := range []string{problemEdge, problemLocal, problemAdmin} {
+	for _, k := range []string{problemEdge, problemStart, problemLocal, problemAdmin} {
 		if m := s.problems[k]; m != "" {
 			parts = append(parts, m)
 		}
@@ -103,12 +104,12 @@ func (s *service) startTray(ctx context.Context, bound Bound, background func(fu
 	err := t.Start(trayActions{
 		Open: func() { s.openTerminal(ctx) },
 		Admin: func() {
-			if err := openURL(adminPageURL(bound.Admin, "/admin/")); err != nil {
+			if err := openURL(adminPageURL(s.adminBound(bound.Admin), "/admin/")); err != nil {
 				log.Printf("Admin-Seite nicht geöffnet: %v", err)
 			}
 		},
 		Selftest: func() {
-			if err := openURL(adminPageURL(bound.Admin, adminPathSelftest)); err != nil {
+			if err := openURL(adminPageURL(s.adminBound(bound.Admin), adminPathSelftest)); err != nil {
 				log.Printf("Selbstprüfung nicht geöffnet: %v", err)
 			}
 		},
@@ -237,4 +238,25 @@ func trayTip(reason string) string {
 		return "PDH-Terminal"
 	}
 	return fmt.Sprintf("PDH-Terminal: %s", reason)
+}
+
+// adminBound liefert die gebundene Admin-Adresse; wurde der Port erst später frei, die spätere.
+func (s *service) adminBound(initial string) string {
+	if p := s.adminAddr.Load(); p != nil {
+		return *p
+	}
+	return initial
+}
+
+// portProblems nennt die Gründe, wenn ein Port belegt ist (Startseite, Admin-Seite, Admin am Terminal); leer: alles gebunden.
+func (s *service) portProblems() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var parts []string
+	for _, k := range []string{problemStart, problemAdmin, problemLocal} {
+		if m := s.problems[k]; m != "" {
+			parts = append(parts, m)
+		}
+	}
+	return strings.Join(parts, "; ")
 }

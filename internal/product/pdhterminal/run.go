@@ -93,24 +93,25 @@ var restartDelay = 2 * time.Second
 var localAdminOrigin = strings.TrimSuffix(web.LocalAdminURL, "/admin/")
 
 type service struct {
-	o        Options
-	store    *config.Store
-	journal  *appcore.Journal
-	box      *secrets.Box
-	helper   *helperapi.Client
-	origins  *appcore.OriginSync
-	updates  *updatecheck.Service
-	presence appcore.AdminPresence
-	client   Client
-	cards    *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
-	display  *oled.Service                      // OLED-Statusdisplay
-	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
-	win      atomic.Pointer[window]             // Edge-Fenster (nur Windows), ab startEdge
-	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
-	certSrc  atomic.Pointer[web.CertSource]
-	tray     atomic.Pointer[tray] // Symbol im Infobereich, solange es läuft
-	exit     chan error           // Bitte um ein Ende von serve (ErrQuit, ErrRestart)
-	problems map[string]string    // Gründe für die rote Färbung des Symbols (s.mu)
+	o         Options
+	store     *config.Store
+	journal   *appcore.Journal
+	box       *secrets.Box
+	helper    *helperapi.Client
+	origins   *appcore.OriginSync
+	updates   *updatecheck.Service
+	presence  appcore.AdminPresence
+	client    Client
+	cards     *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
+	display   *oled.Service                      // OLED-Statusdisplay
+	sup       atomic.Pointer[browser.Supervisor] // ab startBrowser
+	win       atomic.Pointer[window]             // Edge-Fenster (nur Windows), ab startEdge
+	kbd       *keyboard.Supervisor               // wvkbd; nil ohne Chromium
+	certSrc   atomic.Pointer[web.CertSource]
+	adminAddr atomic.Pointer[string] // gebundene Adresse der Admin-Seite (auch nach spätem Binden)
+	tray      atomic.Pointer[tray]   // Symbol im Infobereich, solange es läuft
+	exit      chan error             // Bitte um ein Ende von serve (ErrQuit, ErrRestart)
+	problems  map[string]string      // Gründe für die rote Färbung des Symbols (s.mu)
 
 	cfgMu    sync.Mutex // Laden, Ändern, Speichern der Konfiguration als Einheit (auch für die Admin-Seite)
 	mu       sync.RWMutex
@@ -319,28 +320,47 @@ func (s *service) serve(parent context.Context) error {
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 
+	// Die Startseite ist die Grundlage der Anzeige. Unter Linux endet der Dienst ohne sie (systemd startet ihn neu).
+	// Unter Windows läuft er mit rotem Symbol weiter und bindet alle 30 s neu: Ein belegter Port ist ein Problem der
+	// Umgebung, der Prozess selbst ist gesund (ein Ende würde der Starter als Fehlstart der Version zählen).
 	l, err := appcore.ListenLoopback(s.o.LocalAddr)
-	if err != nil {
+	if err != nil && !staysUpWithoutStart {
 		cancel()
 		wg.Wait()
 		return fmt.Errorf("Startseite: %w", err)
 	}
-	bound := Bound{Local: l.Addr().String()}
+	bound := Bound{}
 	origin := func() string { return cardOrigin(s.config().PDH) }
 	cardAPI := http.NewServeMux()
 	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
 	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, notify.New(s.raiseWindow)))
-	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI))
+	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI)
 	localErr := make(chan error, 1)
-	background(func() {
-		if err := local.Serve(l); !errors.Is(err, http.ErrServerClosed) {
-			localErr <- fmt.Errorf("Startseite: %w", err)
-		}
-	})
+	serveLocal := func(l net.Listener) *http.Server {
+		srv := appcore.NewLocalServer(ctx, startHandler)
+		background(func() {
+			if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
+				localErr <- fmt.Errorf("Startseite: %w", err)
+			}
+		})
+		return srv
+	}
+	var local *http.Server
+	if l != nil {
+		bound.Local = l.Addr().String()
+		local = serveLocal(l)
+	} else {
+		s.warn(fmt.Sprintf("Startseite nicht verfügbar: %v", err))
+		s.setProblem(problemStart, portBusyText(s.o.LocalAddr, "Startseite nicht verfügbar"))
+	}
 
 	remote, onTerminal := web.NewAdminHandlers(s.adminDeps())
-	admin, adminAddr := s.startAdmin(&wg, remote)
+	adm := &adminListener{}
+	adminAddr := s.startAdmin(&wg, remote, adm)
 	bound.Admin = adminAddr
+	if adminAddr == "" {
+		background(func() { s.retryAdmin(ctx, &wg, remote, adm) })
+	}
 	stopLocalAdmin, err := appcore.ServeLocalAdmin(ctx, s.o.LocalAdminAddr, onTerminal, &s.presence)
 	if err != nil {
 		s.warn(fmt.Sprintf("Admin-Seite am Terminal nicht verfügbar: %v", err))
@@ -350,7 +370,42 @@ func (s *service) serve(parent context.Context) error {
 	}
 
 	stopTray := s.startTray(ctx, bound, background)
-	browserDone := s.startBrowser(ctx, "http://"+bound.Local+startPath)
+	// Browser und späte Startseite (nach belegtem Port) teilen sich late; closed verhindert Neues nach dem Ende.
+	var late struct {
+		mu      sync.Mutex
+		closed  bool
+		srv     *http.Server
+		browser <-chan struct{}
+	}
+	if l != nil {
+		late.browser = s.startBrowser(ctx, "http://"+bound.Local+startPath)
+	} else {
+		background(func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(portRetryEvery):
+				}
+				nl, err := appcore.ListenLoopback(s.o.LocalAddr)
+				if err != nil {
+					continue
+				}
+				late.mu.Lock()
+				if late.closed || ctx.Err() != nil {
+					late.mu.Unlock()
+					nl.Close()
+					return
+				}
+				late.srv = serveLocal(nl)
+				late.browser = s.startBrowser(ctx, "http://"+nl.Addr().String()+startPath)
+				late.mu.Unlock()
+				s.setProblem(problemStart, "")
+				log.Printf("Startseite nach belegtem Port gebunden: %s", nl.Addr())
+				return
+			}
+		})
+	}
 	s.announce(ctx, bound, background)
 
 	err = nil
@@ -364,11 +419,17 @@ func (s *service) serve(parent context.Context) error {
 	if serr := appcore.Notify("STOPPING=1"); serr != nil {
 		log.Printf("Abmeldung bei systemd: %v", serr)
 	}
-	<-browserDone
+	late.mu.Lock()
+	late.closed = true
+	lateSrv, browserDone := late.srv, late.browser
+	late.mu.Unlock()
+	if browserDone != nil {
+		<-browserDone
+	}
 	if stopLocalAdmin != nil {
 		stopLocalAdmin() // ServeLocalAdmin endet nicht mit ctx
 	}
-	shutdownServers(local, admin)
+	shutdownServers(local, lateSrv, adm.server())
 	wg.Wait()
 	return err
 }
@@ -399,6 +460,9 @@ func (s *service) announce(ctx context.Context, bound Bound, background func(fun
 	}
 	// systemd bekommt sein Lebenszeichen nur, solange die Startseite antwortet.
 	background(func() {
+		if bound.Local == "" { // Startseite nicht gebunden (Windows, belegter Port): kein systemd-Takt
+			return
+		}
 		appcore.WatchdogProbe(ctx, func(pctx context.Context) error {
 			c, err := (&net.Dialer{}).DialContext(pctx, "tcp", bound.Local)
 			if err == nil {
@@ -503,19 +567,89 @@ func (s *service) screen() (int, int) {
 	return platform.Resolve(c.Display.OverrideW, c.Display.OverrideH, w, h, found)
 }
 
-// startAdmin: Fehlt die Admin-Seite über HTTPS, bleibt das Terminal bedienbar und meldet es.
-func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, string) {
+// adminListener hält den Admin-Server, der auch erst nach einem belegten Port starten kann.
+type adminListener struct {
+	mu       sync.Mutex
+	srv      *http.Server
+	closed   bool
+	cert     tls.Certificate
+	dir      string
+	canRetry bool // das Zertifikat ist da; nur der Port fehlte
+}
+
+// set merkt den Server; nach dem Ende (server) nimmt es keinen mehr an.
+func (a *adminListener) set(srv *http.Server) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.srv = srv
+	return true
+}
+
+// server schließt die Annahme und liefert den Server (nil, wenn keiner lief).
+func (a *adminListener) server() *http.Server {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.closed = true
+	return a.srv
+}
+
+// staysUpWithoutStart: Unter Windows läuft der Dienst ohne Startseite weiter (siehe serve); Tests schalten es auch unter Linux ein.
+var staysUpWithoutStart = onWindows
+
+// portRetryEvery ist die Frist, nach der ein belegter Port neu versucht wird; Tests verkürzen sie.
+var portRetryEvery = 30 * time.Second
+
+// portBusyText: „Port 8080 belegt, <folge>“.
+func portBusyText(addr, consequence string) string {
+	if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
+		return fmt.Sprintf("Port %s belegt, %s", p, consequence)
+	}
+	return "Port belegt, " + consequence
+}
+
+// startAdmin: Fehlt die Admin-Seite über HTTPS, bleibt das Terminal bedienbar und meldet es. Die Adresse ist
+// leer, wenn sie nicht lief.
+func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminListener) string {
 	cert, dir, ok := s.loadCert()
 	if !ok {
-		return nil, ""
+		return ""
 	}
+	adm.cert, adm.dir, adm.canRetry = cert, dir, true
+	return s.listenAdmin(wg, h, adm, false)
+}
+
+// retryAdmin bindet den Port der Admin-Seite alle portRetryEvery neu, bis es gelingt (oder ctx endet).
+func (s *service) retryAdmin(ctx context.Context, wg *sync.WaitGroup, h http.Handler, adm *adminListener) {
+	if !adm.canRetry {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(portRetryEvery):
+		}
+		if addr := s.listenAdmin(wg, h, adm, true); addr != "" {
+			s.setProblem(problemAdmin, "")
+			log.Printf("Admin-Seite nach belegtem Port gebunden: %s", addr)
+			return
+		}
+	}
+}
+
+func (s *service) listenAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminListener, quiet bool) string {
 	l, err := net.Listen("tcp", s.o.AdminAddr)
 	if err != nil {
-		s.warn(fmt.Sprintf("Admin-Seite nicht verfügbar: %v", err))
-		s.setProblem(problemAdmin, "Port belegt, Admin-Seite nicht verfügbar")
-		return nil, ""
+		if !quiet {
+			s.warn(fmt.Sprintf("Admin-Seite nicht verfügbar: %v", err))
+		}
+		s.setProblem(problemAdmin, portBusyText(s.o.AdminAddr, "Admin-Seite nicht verfügbar"))
+		return ""
 	}
-	src := web.NewCertSource(dir, cert)
+	src := web.NewCertSource(adm.dir, adm.cert)
 	s.certSrc.Store(src)
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", h)
@@ -533,6 +667,10 @@ func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, 
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	if !adm.set(srv) {
+		l.Close()
+		return ""
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -540,7 +678,9 @@ func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, 
 			s.warn(fmt.Sprintf("Admin-Seite beendet: %v", err))
 		}
 	}()
-	return srv, l.Addr().String()
+	addr := l.Addr().String()
+	s.adminAddr.Store(&addr)
+	return addr
 }
 
 // loadCert weicht bei defekter Datenpartition in den RAM aus, damit die Admin-Seite den

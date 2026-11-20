@@ -28,31 +28,49 @@ func freeAddr(t *testing.T) string {
 	return l.Addr().String()
 }
 
+// startSmoke startet den Dienst; freeAddr gibt den Port frei, bevor der Dienst ihn bindet. Ein anderer Prozess kann ihn
+// dazwischen nehmen, dann bleibt LocalAdmin leer: Es wird bis zu dreimal mit neuem Port versucht.
+func startSmoke(t *testing.T, data, run string) (b Bound, cancel context.CancelFunc, done chan error) {
+	t.Helper()
+	for attempt := 1; ; attempt++ {
+		ready := make(chan Bound, 1)
+		ctx, c := context.WithCancel(context.Background())
+		d := make(chan error, 1)
+		go func() {
+			d <- Run(ctx, Options{
+				DataDir: data, RunDir: run,
+				LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0", LocalAdminAddr: freeAddr(t),
+				HelperSocket: filepath.Join(t.TempDir(), "kein.sock"),
+				HardwareID:   func() string { return "test-0001" },
+				Ready:        func(b Bound) { ready <- b },
+			})
+		}()
+		select {
+		case b = <-ready:
+		case err := <-d:
+			c()
+			t.Fatalf("Dienst endete früh: %v", err)
+		case <-time.After(20 * time.Second):
+			c()
+			t.Fatal("Dienst startet nicht")
+		}
+		if b.Admin != "" && b.LocalAdmin != "" {
+			return b, c, d
+		}
+		c()
+		<-d
+		if attempt >= 3 {
+			t.Fatalf("Admin-Seite (%q) oder Admin am Terminal (%q) nicht gebunden: Port belegt? (Versuch %d)", b.Admin, b.LocalAdmin, attempt)
+		}
+	}
+}
+
 // TestRunSmoke startet den ganzen Dienst ohne Chromium in temporären Ordnern.
 func TestRunSmoke(t *testing.T) {
 	data, run := t.TempDir(), t.TempDir()
 	rootFS = t.TempDir()
 	t.Cleanup(func() { rootFS = "/" })
-	ready := make(chan Bound, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		done <- Run(ctx, Options{
-			DataDir: data, RunDir: run,
-			LocalAddr: "127.0.0.1:0", AdminAddr: "127.0.0.1:0", LocalAdminAddr: freeAddr(t),
-			HelperSocket: filepath.Join(t.TempDir(), "kein.sock"),
-			HardwareID:   func() string { return "test-0001" },
-			Ready:        func(b Bound) { ready <- b },
-		})
-	}()
-	var b Bound
-	select {
-	case b = <-ready:
-	case err := <-done:
-		t.Fatalf("Dienst endete früh: %v", err)
-	case <-time.After(20 * time.Second):
-		t.Fatal("Dienst startet nicht")
-	}
+	b, cancel, done := startSmoke(t, data, run)
 
 	get := func(c *http.Client, url string) (int, string) {
 		t.Helper()
@@ -295,5 +313,110 @@ func TestSystemLevelOnlyWithHelper(t *testing.T) {
 			t.Errorf("Socket %q: SystemLevel gesetzt = %v, erwartet %v", tc.socket, got, tc.want)
 		}
 		s.close()
+	}
+}
+
+// TestRunLinuxExitsWhenStartPortBusy: Wie bisher endet der Dienst unter Linux ohne Startseite (systemd startet neu).
+func TestRunLinuxExitsWhenStartPortBusy(t *testing.T) {
+	old := staysUpWithoutStart
+	staysUpWithoutStart = false
+	t.Cleanup(func() { staysUpWithoutStart = old })
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	err = Run(context.Background(), Options{
+		DataDir: t.TempDir(), RunDir: t.TempDir(),
+		LocalAddr: busy.Addr().String(), AdminAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+		HelperSocket: filepath.Join(t.TempDir(), "kein.sock"), HardwareID: func() string { return "x" },
+	})
+	if err == nil || !strings.Contains(err.Error(), "Startseite") {
+		t.Fatalf("Fehler %v, erwartet Startseite", err)
+	}
+}
+
+// TestRunStaysUpDegradedWhenStartPortBusy: Windows. Port 8080 belegt: Der Dienst bleibt oben, das Symbol ist rot mit
+// Grund, die Selbstprüfung ist rot, die Gesundmarke steht (der Prozess ist gesund), und sobald der Port frei ist,
+// wird die Startseite gebunden, ohne Neustart.
+func TestRunStaysUpDegradedWhenStartPortBusy(t *testing.T) {
+	oldStay, oldEvery := staysUpWithoutStart, portRetryEvery
+	staysUpWithoutStart, portRetryEvery = true, 50*time.Millisecond
+	t.Cleanup(func() { staysUpWithoutStart, portRetryEvery = oldStay, oldEvery })
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	startAddr := busy.Addr().String()
+	_, port, _ := net.SplitHostPort(startAddr)
+
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	run := t.TempDir()
+	ft := newFakeTray()
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: t.TempDir(), RunDir: run,
+			LocalAddr: startAddr, AdminAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+			HelperSocket: filepath.Join(t.TempDir(), "kein.sock"), HardwareID: func() string { return "x" },
+			Ready: func(b Bound) { ready <- b }, tray: ft,
+		})
+	}()
+	select {
+	case b := <-ready:
+		if b.Local != "" {
+			t.Errorf("Startseite gebunden trotz belegtem Port: %q", b.Local)
+		}
+	case err := <-done:
+		t.Fatalf("Dienst endete trotz belegtem Port: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Dienst startet nicht")
+	}
+	// Das Symbol wird rot mit dem Grund.
+	waitUntil(t, "rotes Symbol mit Port", func() bool { return strings.Contains(ft.last(), "Port "+port+" belegt") })
+	if v, err := os.ReadFile(filepath.Join(run, "healthy")); err != nil || len(v) == 0 {
+		t.Errorf("Gesundmarke fehlt trotz gesundem Prozess: %q %v", v, err)
+	}
+	// Der Selbsttest-Grund (Windows-Schritt „ports“) nennt den Port.
+	e := &service{problems: map[string]string{}}
+	e.problems[problemStart] = portBusyText(startAddr, "Startseite nicht verfügbar")
+	if got := e.portProblems(); !strings.Contains(got, "Port "+port+" belegt") {
+		t.Errorf("portProblems: %q", got)
+	}
+
+	busy.Close() // frei: der nächste Versuch bindet
+	waitUntil(t, "Startseite gebunden", func() bool {
+		c, err := net.DialTimeout("tcp", startAddr, time.Second)
+		if err == nil {
+			c.Close()
+		}
+		return err == nil
+	})
+	waitUntil(t, "Symbol wieder grün", func() bool { return ft.last() == "" })
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Ende: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Dienst endet nicht")
+	}
+}
+
+func waitUntil(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("Timeout: %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
