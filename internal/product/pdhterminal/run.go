@@ -65,6 +65,10 @@ type Options struct {
 	// TrayEnabled legt das Symbol im Infobereich an (nur Windows; sonst ohne Wirkung).
 	TrayEnabled bool
 	tray        tray // ersetzt das Symbol (für Tests)
+	// Kiosk: Windows-Kiosk-Benutzer (Starter mit -kiosk). Edge läuft im Vollbild-Kiosk und startet sichtbar
+	// neu, es gibt weder Symbol im Infobereich noch Benachrichtigungen; die Admin-Geste (5 s oben rechts
+	// halten) öffnet die lokale Admin-Seite, und diese bekommt den Abschnitt „Kiosk“.
+	Kiosk bool
 	// HardwareID liest die Hardware-Kennung; nil heißt: aus dem Gerät lesen.
 	HardwareID func() string
 	// HelperCall ersetzt den Aufruf des root-Helfers für den Ursprungsabgleich (für Tests).
@@ -353,7 +357,7 @@ func (s *service) serve(parent context.Context) error {
 	origin := func() string { return cardOrigin(s.config().PDH) }
 	cardAPI := http.NewServeMux()
 	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
-	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, notify.New(s.raiseWindow)))
+	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, s.notifier()))
 	cardAPI.Handle("/api/slides/cache", slides.CacheHandler(s.slides, origin, s.applyCards))
 	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)
@@ -391,6 +395,9 @@ func (s *service) serve(parent context.Context) error {
 	}
 
 	stopTray := s.startTray(ctx, bound, background)
+	if s.o.Kiosk && onWindows {
+		background(func() { s.watchAdminGesture(ctx) })
+	}
 	if name := s.openSignalName(); name != "" {
 		background(func() {
 			open := func() {
@@ -565,6 +572,36 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 		close(done)
 	}()
 	return done
+}
+
+// notifier liefert die Benachrichtigung für Kartenergebnisse; im Kiosk ist sie aus, weil das Terminal immer
+// vorne liegt.
+func (s *service) notifier() notify.Shower {
+	if s.o.Kiosk {
+		return noNotify{}
+	}
+	return notify.New(s.raiseWindow)
+}
+
+type noNotify struct{}
+
+func (noNotify) Show([]string, string, string) {}
+
+// adminGesture: Die Admin-Geste wurde erkannt. Der Browser (Edge im Kiosk) zeigt die lokale Admin-Seite.
+func (s *service) adminGesture() {
+	log.Print("Admin-Geste erkannt, die Admin-Seite wird geöffnet")
+	if sup := s.sup.Load(); sup != nil {
+		sup.Show(browser.TargetAdmin)
+	}
+}
+
+// watchAdminGesture überwacht die Maus (Berührung wirkt als Maus) auf die Admin-Geste, bis ctx endet.
+// Unter Windows misst der Hook den Bildschirm selbst; deshalb gibt cornerConfig(0, 0) keine Größe vor.
+func (s *service) watchAdminGesture(ctx context.Context) {
+	log.Print("Admin-Geste: Maus-Hook wird angelegt")
+	if err := platform.WatchCorner(ctx, devInput, cornerConfig(0, 0), s.adminGesture); err != nil && ctx.Err() == nil {
+		log.Printf("Admin-Geste nicht verfügbar: %v", err)
+	}
 }
 
 // cornerConfig ist das Feld für die Admin-Geste: 80 × 80 px oben rechts, 5 s Haltezeit.
@@ -797,8 +834,17 @@ func (s *service) adminDeps() web.AdminDeps {
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
 		LocalActive:          s.presence.Touch,
 		LocalLeft:            s.localLeft,
-		Product:              Admin(s.o.DataDir, s.client, s.cards, s.display),
+		Product:              s.adminProduct(),
 	}
+}
+
+// adminProduct beschreibt das Terminal für den Admin-Rahmen; im Kiosk (Windows) mit dem Abschnitt „Kiosk“.
+func (s *service) adminProduct() *web.AdminProduct {
+	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
+	if s.o.Kiosk && onWindows {
+		p.kiosk, p.logoff = true, logoffUser
+	}
+	return p.product()
 }
 
 // remoteIsWifi: Die Antwort geht über die Schnittstelle, auf der die Anfrage ankam.

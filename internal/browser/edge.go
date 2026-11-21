@@ -21,6 +21,14 @@ func FindEdge(readReg func(key string) (string, error)) (string, error) {
 	return "", fmt.Errorf("Edge nicht gefunden (msedge.exe)")
 }
 
+// edgeBackgroundArgs halten die Seite im Hintergrund wach (Karte lesen, Zeitgeber) und erlauben der
+// HTTPS-Seite von PDH den Zugriff auf die lokale Startseite (lokaler Netzzugriff).
+var edgeBackgroundArgs = []string{
+	"--disable-features=msEdgeSleepingTabs,LocalNetworkAccessChecks,PrivateNetworkAccessRespectPreflightResults",
+	"--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+	"--disable-backgrounding-occluded-windows",
+}
+
 // EdgeArgs: Edge als App-Fenster mit eigenem Profil. Die Schalter halten die Seite im
 // Hintergrund wach (Karte lesen, Zeitgeber) und erlauben der HTTPS-Seite von PDH den
 // Zugriff auf die lokale Startseite (lokaler Netzzugriff).
@@ -33,4 +41,15 @@ func EdgeArgs(startURL, profileDir string) []string {
 		"--disable-background-timer-throttling", "--disable-renderer-backgrounding",
 		"--disable-backgrounding-occluded-windows",
 	}
+}
+
+// EdgeKioskArgs: Edge im Vollbild-Kiosk (Windows-Kiosk-Benutzer) statt als App-Fenster, mit eigenem
+// Profil und denselben Hintergrund-Schaltern wie EdgeArgs.
+func EdgeKioskArgs(startURL, profileDir string) []string {
+	a := []string{
+		"--kiosk", startURL, "--edge-kiosk-type=fullscreen",
+		"--no-first-run", "--user-data-dir=" + profileDir,
+		"--no-default-browser-check",
+	}
+	return append(a, edgeBackgroundArgs...)
 }

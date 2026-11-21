@@ -94,6 +94,9 @@ func (s *service) refreshTray() {
 
 // startTray legt das Symbol an, falls gewünscht und möglich, und liefert die Funktion, die es entfernt.
 func (s *service) startTray(ctx context.Context, bound Bound, background func(func())) (stop func()) {
+	if s.o.Kiosk { // Im Kiosk gibt es keine Taskleiste und kein „Beenden“.
+		return func() {}
+	}
 	t := s.o.tray
 	if t == nil && s.o.TrayEnabled {
 		t = newTray()

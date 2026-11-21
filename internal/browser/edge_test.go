@@ -218,3 +218,54 @@ func TestSupervisorRestartsWhenWindowGone(t *testing.T) {
 		t.Fatal("kein OnRestart")
 	}
 }
+
+func TestEdgeKioskArgs(t *testing.T) {
+	got := EdgeKioskArgs("http://127.0.0.1:8080/start", `C:\p\edge`)
+	want := []string{
+		"--kiosk", "http://127.0.0.1:8080/start", "--edge-kiosk-type=fullscreen",
+		"--no-first-run", `--user-data-dir=C:\p\edge`,
+		"--no-default-browser-check",
+		"--disable-features=msEdgeSleepingTabs,LocalNetworkAccessChecks,PrivateNetworkAccessRespectPreflightResults",
+		"--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+		"--disable-backgrounding-occluded-windows",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("EdgeKioskArgs:\n got %q\nwant %q", got, want)
+	}
+	// EdgeArgs bleibt unverändert und teilt die Hintergrund-Schalter.
+	if a := EdgeArgs("u", "p"); !slices.Equal(a[len(a)-4:], got[len(got)-4:]) {
+		t.Errorf("Hintergrund-Schalter weichen ab: %q", a)
+	}
+}
+
+func TestSupervisorEdgeKioskAdminAndBack(t *testing.T) {
+	g := newRig(t)
+	g.s.SetEdge(`C:\p\edge`)
+	g.s.SetEdgeKiosk("http://127.0.0.1:8081/admin/")
+	g.s.SetStartURL("http://127.0.0.1:8080/start")
+	g.run(t)
+	g.s.Show(TargetStart)
+	c := g.nextStart(t)
+	if c.Args[0] != "--kiosk" || c.Args[1] != "http://127.0.0.1:8080/start" {
+		t.Fatalf("Start im Kiosk: %q", c.Args)
+	}
+	g.s.Show(TargetAdmin)
+	c = g.nextStart(t)
+	if c.Args[0] != "--kiosk" || c.Args[1] != "http://127.0.0.1:8081/admin/" {
+		t.Fatalf("Admin im Kiosk: %q", c.Args)
+	}
+	g.s.Show(TargetStart) // „Zurück“
+	c = g.nextStart(t)
+	if c.Args[1] != "http://127.0.0.1:8080/start" {
+		t.Fatalf("Zurück: %q", c.Args)
+	}
+}
+
+func TestSupervisorEdgeAppIgnoresAdminTarget(t *testing.T) {
+	g := newRig(t)
+	g.s.SetEdge(`C:\p\edge`)
+	g.s.SetStartURL("http://127.0.0.1:8080/start")
+	if a := g.s.args(TargetAdmin); a[0] != "--app=http://127.0.0.1:8080/start" {
+		t.Fatalf("Zusatz-Modus unverändert: %q", a)
+	}
+}

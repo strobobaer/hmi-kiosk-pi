@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/browser"
+	"hmikiosk/internal/web"
 )
 
 // window ist das Browser-Fenster des Terminals. Unter Windows das Edge-Fenster, unter
@@ -52,15 +53,30 @@ func (s *service) startEdge(ctx context.Context, startURL string) <-chan struct{
 		if h, ok := win.(interface{ Exists() bool }); ok {
 			sup.SetWindowCheck(h.Exists) // Edge bleibt nach dem Schließen im Hintergrund
 		}
-		sup.SetOnRestart(func(n int) {
+		if s.o.Kiosk {
+			// Im Kiosk bleibt Edge nach einem Neustart sichtbar und vorn; Admin-Geste und „Zurück“ laufen über
+			// dieselbe Überwachung.
+			sup.SetEdgeKiosk(web.LocalAdminURL)
+		}
+		if f := restartHook(s.o.Kiosk, func(n int) {
 			log.Printf("Edge neu gestartet (%d), Fenster wird minimiert", n)
 			go minimizeWhenShown(ctx, win)
-		})
+		}); f != nil {
+			sup.SetOnRestart(f)
+		}
 		sup.Show(browser.TargetStart)
 		s.sup.Store(sup)
 		sup.Run(ctx)
 	}()
 	return done
+}
+
+// restartHook: Im Kiosk gibt es kein Minimieren nach einem Neustart (nil), sonst minimize.
+func restartHook(kiosk bool, minimize func(n int)) func(n int) {
+	if kiosk {
+		return nil
+	}
+	return minimize
 }
 
 // waitForEdge sucht Edge, bis es da ist oder ctx endet; die erste Meldung steht im Protokoll.

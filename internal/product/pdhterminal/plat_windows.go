@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
 	"hmikiosk/internal/browser"
@@ -98,4 +99,19 @@ func (s *service) selftestSteps(*selftest.Deps) []selftest.Step {
 			return selftest.StepResult{OK: true, Detail: "Edge gefunden: " + p}
 		}},
 	}
+}
+
+// ewxLogoff ist EWX_LOGOFF für ExitWindowsEx.
+const ewxLogoff = 0
+
+var procExitWindowsEx = windows.NewLazySystemDLL("user32.dll").NewProc("ExitWindowsEx")
+
+// logoffUser meldet den angemeldeten Benutzer ab (ExitWindowsEx mit EWX_LOGOFF). Der Aufruf stößt die
+// Abmeldung nur an und kehrt zurück.
+func logoffUser() error {
+	r, _, err := procExitWindowsEx.Call(ewxLogoff, 0)
+	if r == 0 {
+		return err
+	}
+	return nil
 }

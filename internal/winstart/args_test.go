@@ -16,6 +16,9 @@ func TestParseArgs(t *testing.T) {
 		{[]string{"-base", "X", "-data", "Y", "-run=Z", "-no-chromium"}, Paths{"X", "Y", "Z"}, []string{"-data", "Y", "-run=Z", "-no-chromium"}},
 		{[]string{"--base=X", "-local", "127.0.0.1:1"}, Paths{"X", "D", "R"}, []string{"-local", "127.0.0.1:1"}},
 		{[]string{"-run"}, def, []string{"-run"}},
+		// Der Kiosk-Schalter geht unverändert an das Programm.
+		{[]string{"-kiosk"}, def, []string{"-kiosk"}},
+		{[]string{"-base", "X", "-kiosk", "-run=Z"}, Paths{"X", "D", "Z"}, []string{"-kiosk", "-run=Z"}},
 	} {
 		got, pass := ParseArgs(c.in, def)
 		if got != c.want || !slices.Equal(pass, c.wantPass) {

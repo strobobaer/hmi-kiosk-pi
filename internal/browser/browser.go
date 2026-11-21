@@ -81,6 +81,7 @@ type Supervisor struct {
 	wake     chan struct{}
 
 	edgeProfile string         // gesetzt: Edge statt Chromium (SetEdge)
+	edgeKiosk   string         // gesetzt: Edge im Kiosk, die Adresse der Admin-Seite für TargetAdmin (SetEdgeKiosk)
 	onRestart   func(n int)    // nach jedem Neustart (SetOnRestart)
 	cur         client.Process // laufender Prozess (Process)
 	windowCheck func() bool    // Edge-Fenster vorhanden (SetWindowCheck)
@@ -125,8 +126,15 @@ func (s *Supervisor) args(t Target) []string {
 	profile := s.profile
 	startURL := s.startURL
 	edgeProfile := s.edgeProfile
+	edgeKiosk := s.edgeKiosk
 	s.mu.Unlock()
 	if edgeProfile != "" {
+		if edgeKiosk != "" {
+			if t == TargetAdmin {
+				return EdgeKioskArgs(edgeKiosk, edgeProfile)
+			}
+			return EdgeKioskArgs(startURL, edgeProfile)
+		}
 		return EdgeArgs(startURL, edgeProfile)
 	}
 	var a []string
@@ -327,6 +335,14 @@ func NewExec(chromiumPath, ramDir string, screenW func() int) *Supervisor {
 func (s *Supervisor) SetEdge(profileDir string) {
 	s.mu.Lock()
 	s.edgeProfile = profileDir
+	s.mu.Unlock()
+}
+
+// SetEdgeKiosk schaltet Edge (nach SetEdge) auf den Vollbild-Kiosk um: EdgeKioskArgs statt EdgeArgs, und
+// TargetAdmin öffnet adminURL (die lokale Admin-Seite) statt der Startseite. Nur vor Run aufrufen.
+func (s *Supervisor) SetEdgeKiosk(adminURL string) {
+	s.mu.Lock()
+	s.edgeKiosk = adminURL
 	s.mu.Unlock()
 }
 

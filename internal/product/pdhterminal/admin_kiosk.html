@@ -1,0 +1,20 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <h2>Kiosk</h2>
+  {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
+  <p>Dieses Terminal läuft im Kiosk: Windows startet nur das PDH-Terminal, ohne Desktop und ohne Taskleiste.</p>
+  <form method="post" action="/admin/kiosk/logoff" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label><input type="checkbox" name="confirm" value="1" required> Ja, den Kiosk-Benutzer jetzt abmelden</label>
+    <p class="hint">Danach meldet sich der Kiosk-Benutzer von selbst wieder an, und das Terminal startet neu.</p>
+    <div class="actions"><button type="submit" class="btn primary">Kiosk-Benutzer abmelden</button></div>
+  </form>
+</section>
+
+<section class="panel stack">
+  <h2>Zugang zu Windows</h2>
+  <p class="hint">Um als Administrator an Windows zu kommen: Strg+Alt+Entf drücken, „Benutzer wechseln“ wählen und sich als Administrator anmelden. Der Kiosk-Benutzer bleibt dabei angemeldet.</p>
+</section>
+{{end}}
+{{end}}

@@ -65,3 +65,6 @@ func (s *service) selftestSteps(d *selftest.Deps) []selftest.Step {
 	}
 	return append(selftest.CoreSteps(), selftest.CardStep(), selftest.StatusDisplayStep())
 }
+
+// logoffUser: Den Kiosk-Benutzer gibt es nur unter Windows.
+func logoffUser() error { return errors.New("nur unter Windows") }

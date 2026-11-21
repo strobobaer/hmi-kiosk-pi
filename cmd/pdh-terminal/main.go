@@ -22,6 +22,7 @@ func main() {
 	admin := flag.String("admin", pdhterminal.DefaultAdminAddr, "Adresse der Admin-Seite (HTTPS)")
 	localAdmin := flag.String("local-admin", pdhterminal.DefaultLocalAdminAddr, "Adresse der Admin-Seite am Terminal (nur Loopback)")
 	noChromium := flag.Bool("no-chromium", false, "Chromium nicht starten (für Tests)")
+	kiosk := flag.Bool("kiosk", false, "Windows-Kiosk: Edge im Vollbild, kein Symbol im Infobereich, keine Benachrichtigungen, Admin-Geste oben rechts")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -34,7 +35,8 @@ func main() {
 		LocalAdminAddr:  *localAdmin,
 		HelperSocket:    *helperSocket,
 		ChromiumEnabled: !*noChromium,
-		TrayEnabled:     true,
+		TrayEnabled:     !*kiosk,
+		Kiosk:           *kiosk,
 	})
 	stop()
 	switch {
