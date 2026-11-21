@@ -6,7 +6,7 @@
 # Ergebnis in dist/:
 #   PDH-Terminal-Setup-<version>.exe                  Setup (Inno Setup)           + .sha256
 #   pdh-terminal-<version>-windows-amd64.pkg          signiertes Paket für Updates + .sha256
-#   win/pdh-terminal.exe, pdh-terminal-start.exe, pdh-terminal-kiosk.exe  die gebauten Programme
+#   win/pdh-terminal.exe, win/pdh-terminal-start.exe, win/pdh-terminal-kiosk.exe  die gebauten Programme
 #
 # Programm, Starter und Kiosk-Helfer werden mit derselben Version und demselben öffentlichen Schlüssel gebaut wie beim
 # Linux-Release (Makefile-Ziel "release"): Der Starter nimmt seine Basisversion aus seiner eigenen Version.

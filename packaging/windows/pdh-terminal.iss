@@ -253,9 +253,15 @@ begin
   if CurStep = ssPostInstall then
   begin
     KioskActive := False;
-    if KioskWanted then
+    if KioskWanted and PrevKiosk then
     begin
-      // Der Helfer macht zuerst -undo (wiederholbar) und rollt bei einem Fehler selbst zurück.
+      // Update eines Kiosks: Der Helfer läuft nicht erneut (-setup räumt erst auf und würde Benutzer und Profil löschen,
+      // während die Sitzung abgemeldet wird). Der Shell-Pfad {app}\pdh-terminal-start.exe -kiosk bleibt gleich.
+      SaveMode('kiosk');
+    end
+    else if KioskWanted then
+    begin
+      // Zusatz nach Kiosk oder Neuinstallation: Der Helfer macht zuerst -undo (wiederholbar) und rollt bei einem Fehler selbst zurück.
       rc := RunHelper('-setup -app "' + ExpandConstant('{app}') + '"');
       if rc = 0 then
       begin
@@ -284,12 +290,22 @@ begin
         rc := RunHelper('-undo');
         if rc <> 0 then
         begin
-          msg := 'Der Rückbau des Kiosks ist fehlgeschlagen (Code ' + IntToStr(rc) + '). Einzelheiten: ' + KioskLogPath();
+          // Rückbau gescheitert: Der Kiosk ist noch eingerichtet (die Shell startet das Terminal). Marker bleibt kiosk,
+          // damit ein erneutes Setup den Rückbau wiederholt; kein Run-Eintrag (sonst startet das Terminal doppelt).
+          RegDeleteValue(HKLM, RunKey, 'PDH-Terminal');
+          SaveMode('kiosk');
+          if rc < 0 then
+            msg := 'Der Rückbau des Kiosks ist fehlgeschlagen: Der Kiosk-Helfer ließ sich nicht starten. Der PC bleibt in der Betriebsart Kiosk; das Setup erneut mit /MODE=zusatz ausführen.'
+          else
+            msg := 'Der Rückbau des Kiosks ist fehlgeschlagen (Code ' + IntToStr(rc) + '). Der PC bleibt in der Betriebsart Kiosk; das Setup erneut mit /MODE=zusatz ausführen. Einzelheiten: ' + KioskLogPath();
           Log(msg);
           SuppressibleMsgBox(msg, mbError, MB_OK, IDOK);
-        end;
-      end;
-      SaveMode('zusatz');
+        end
+        else
+          SaveMode('zusatz');
+      end
+      else
+        SaveMode('zusatz');
     end;
   end;
 end;
@@ -310,13 +326,19 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   rc: Integer;
+  ok: Boolean;
 begin
   if CurUninstallStep = usUninstall then
   begin
-    // Kiosk zuerst zurücknehmen, solange der Helfer noch da ist (-undo ist unschädlich, wenn nichts eingerichtet ist).
-    if FileExists(ExpandConstant('{app}\{#KioskHelper}')) then
-      Exec(ExpandConstant('{app}\{#KioskHelper}'), '-undo', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    // Erst die Programme beenden, dann den Kiosk zurücknehmen, solange der Helfer noch da ist
+    // (-undo ist unschädlich, wenn nichts eingerichtet ist). Die Deinstallation läuft bei einem Fehler weiter.
     StopTerminal();
+    rc := -1;
+    ok := FileExists(ExpandConstant('{app}\{#KioskHelper}')) and
+      Exec(ExpandConstant('{app}\{#KioskHelper}'), '-undo', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    Log('Kiosk-Rueckbau bei der Deinstallation: gestartet=' + IntToStr(Ord(ok)) + ', Code=' + IntToStr(rc));
+    if (not ok) or (rc <> 0) then
+      SuppressibleMsgBox('Der Rückbau des Kiosks ist nicht gelungen (Code ' + IntToStr(rc) + '). Der Benutzer PDH-Kiosk, der Autologon oder die Shell-Einstellung können bestehen bleiben. Zum Entfernen die Installation erneut aufspielen und mit pdh-terminal-kiosk.exe -undo zurückbauen oder die Schritte aus docs/betrieb.md (Betriebsart Kiosk, Rückbau) von Hand ausführen. Einzelheiten: ' + KioskLogPath(), mbError, MB_OK, IDOK);
     RegDeleteValue(HKLM, RunKey, 'PDH-Terminal');
   end;
   if CurUninstallStep = usPostUninstall then

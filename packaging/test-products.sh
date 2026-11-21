@@ -224,7 +224,7 @@ check "windows: /MODE=zusatz|kiosk wird ausgewertet, Fehler bei unbekanntem Wert
 check "windows: /RESTART=yes für still nach Kiosk" grep -qF '{param:RESTART|}' "$iss"
 check "windows: Seite Betriebsart" grep -qF "'Betriebsart'" "$iss"
 check "windows: Kiosk richtet per -setup -app ein, Rückbau per -undo" bash -c "grep -qF \"'-setup -app \" '$iss' && grep -qF \"'-undo'\" '$iss'"
-check "windows: Deinstallation ruft -undo vor dem Entfernen (usUninstall)" bash -c "sed -n '/CurUninstallStepChanged/,\$p' '$iss' | grep -A4 'usUninstall' | grep -qF -- '-undo'"
+check "windows: Deinstallation ruft -undo vor dem Entfernen (usUninstall)" bash -c "sed -n '/CurUninstallStepChanged/,\$p' '$iss' | grep -E '^ +Exec[(].*-undo' | grep -qv '^ *//'"
 check "windows: Run-Eintrag entfällt im Kiosk (Check) und wird dort entfernt" bash -c "grep -Eq 'CurrentVersion.Run\";.*Check: WantRunKey' '$iss' && grep -qF \"RegDeleteValue(HKLM, RunKey\" '$iss'"
 check "windows: Kiosk-Startmenü/[Run] startet den Starter im Kiosk nicht (StartAfterInstall)" grep -qF 'Check: StartAfterInstall' "$iss"
 check "windows: build-setup.sh baut und prüft pdh-terminal-kiosk.exe" bash -c "grep -qF './cmd/pdh-terminal-kiosk' packaging/windows/build-setup.sh && grep -qF 'pdh-terminal-kiosk.exe' packaging/windows/build-setup.sh"
