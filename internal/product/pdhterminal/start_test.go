@@ -34,7 +34,7 @@ func startSetup(t *testing.T, c Client, pair bool) (http.Handler, string) {
 	if c.HTTP == nil {
 		c = p.client()
 	}
-	return StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url} }, c, nil), url
+	return StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url} }, c, nil, nil), url
 }
 
 func TestStartOK(t *testing.T) {
@@ -90,13 +90,13 @@ func TestStartStates(t *testing.T) {
 	p.revoked.Store(true)
 	dir := t.TempDir()
 	_ = SaveDevice(dir, Device{DeviceID: "a1-1", Secret: testSecret, URL: p.hostURL()})
-	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), nil)
+	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), nil, nil)
 	w = startReq(t, h, "GET", "/start", "127.0.0.1:8080")
 	if !strings.Contains(w.Body.String(), "Gerät in PDH gesperrt.") || !strings.Contains(w.Body.String(), `content="60"`) || strings.Contains(w.Body.String(), testSecret) {
 		t.Errorf("gesperrt: %s", w.Body)
 	}
 	// Zertifikat
-	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.untrustedClient(), nil)
+	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.untrustedClient(), nil, nil)
 	w = startReq(t, h, "GET", "/start", "127.0.0.1:8080")
 	if !strings.Contains(w.Body.String(), "Zertifikat von PDH wird nicht vertraut. Neuer Versuch in 30 Sekunden.") ||
 		!strings.Contains(w.Body.String(), `http-equiv="refresh" content="30"`) || strings.Contains(w.Body.String(), testSecret) {
@@ -104,7 +104,7 @@ func TestStartStates(t *testing.T) {
 	}
 	// nicht erreichbar
 	p.srv.Close()
-	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), nil)
+	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), nil, nil)
 	w = startReq(t, h, "GET", "/start", "127.0.0.1:8080")
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "PDH nicht erreichbar. Neuer Versuch in 30 Sekunden.") ||
 		!strings.Contains(w.Body.String(), `http-equiv="refresh" content="30"`) || strings.Contains(w.Body.String(), testSecret) {
@@ -116,12 +116,12 @@ func TestStartOtherURLCountsUnpaired(t *testing.T) {
 	p := newFakePDH(t)
 	dir := t.TempDir()
 	_ = SaveDevice(dir, Device{DeviceID: "a1-1", Secret: testSecret, URL: "https://andere.firma.de"})
-	h := StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), nil)
+	h := StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), nil, nil)
 	w := startReq(t, h, "GET", "/start", "127.0.0.1:8080")
 	if !strings.Contains(w.Body.String(), "Gerät nicht gekoppelt") || strings.Contains(w.Body.String(), testSecret) {
 		t.Errorf("%s", w.Body)
 	}
-	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{} }, p.client(), nil)
+	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{} }, p.client(), nil, nil)
 	if w := startReq(t, h, "GET", "/start", "127.0.0.1:8080"); !strings.Contains(w.Body.String(), "Gerät nicht gekoppelt") {
 		t.Errorf("ohne URL: %s", w.Body)
 	}
@@ -174,7 +174,7 @@ func TestStartHTTPAllowed(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, network, addr)
 	}
 	client := Client{HTTP: &http.Client{Transport: tr}}
-	h := StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url, AllowHTTP: true} }, client, nil)
+	h := StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url, AllowHTTP: true} }, client, nil, nil)
 	w := startReq(t, h, "GET", "/start", "127.0.0.1:8080")
 	body := w.Body.String()
 	if !strings.Contains(body, `<form method="post" action="`+url+`/terminal/geraet">`) {
@@ -184,7 +184,7 @@ func TestStartHTTPAllowed(t *testing.T) {
 		t.Errorf("CSP = %q", csp)
 	}
 	// Ohne den Haken bleibt die Startseite ohne Formular.
-	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url} }, client, nil)
+	h = StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: url} }, client, nil, nil)
 	if w := startReq(t, h, "GET", "/start", "127.0.0.1:8080"); strings.Contains(w.Body.String(), "<form") {
 		t.Errorf("http ohne Erlaubnis zeigt Formular")
 	}
@@ -197,7 +197,7 @@ func TestStartCardRoute(t *testing.T) {
 		gotMethod = r.Method
 		w.WriteHeader(http.StatusNoContent)
 	})
-	h := StartHandler(t.TempDir(), func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), cards)
+	h := StartHandler(t.TempDir(), func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), cards, nil)
 	for _, c := range [][2]string{{"GET", "/api/card/events"}, {"OPTIONS", "/api/card/events"},
 		{"POST", "/api/card/result"}, {"OPTIONS", "/api/card/result"}} {
 		gotMethod = ""
@@ -213,7 +213,7 @@ func TestStartCardRoute(t *testing.T) {
 		t.Errorf("fremder Host: Status %d", w.Code)
 	}
 	// Ohne Kartenroute (nil) bleibt der Pfad unbekannt bzw. POST gesperrt.
-	h = StartHandler(t.TempDir(), func() config.PDHCfg { return config.PDHCfg{} }, p.client(), nil)
+	h = StartHandler(t.TempDir(), func() config.PDHCfg { return config.PDHCfg{} }, p.client(), nil, nil)
 	if w := startReq(t, h, "GET", "/api/card/events", "127.0.0.1:8080"); w.Code != http.StatusNotFound {
 		t.Errorf("nil: Status %d", w.Code)
 	}

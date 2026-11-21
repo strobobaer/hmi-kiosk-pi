@@ -35,9 +35,16 @@ type Settings struct {
 	SPIDev      string // Gerätepfad bei BusSPI
 	UARTDev     string // Gerätepfad bei BusUART
 	Unsupported string // Grund, wenn Typ oder Anschluss dieser Version unbekannt sind (Leser bleibt aus)
+
+	Global bool // Globales Terminal (Infobildschirm, Zwischenspeicher vorhanden): der Leser bleibt aus
 }
 
-func (s Settings) off() bool { return s.Type == "" || s.Type == "aus" || s.Unsupported != "" }
+// GlobalDetail ist der Statustext, solange ein globales Terminal den Leser abgeschaltet hat.
+const GlobalDetail = "Globales Terminal: Kartenleser aus"
+
+func (s Settings) off() bool {
+	return s.Global || s.Type == "" || s.Type == "aus" || s.Unsupported != ""
+}
 
 // Status ist der Zustand des Lesers für die Anzeige.
 type Status struct {
@@ -123,6 +130,11 @@ func (s *Service) Apply(st Settings) {
 
 	s.mu.Lock()
 	s.cur, s.started = st, true
+	if st.Global {
+		s.setStatusLocked(Status{Detail: GlobalDetail, State: StateNone})
+		s.mu.Unlock()
+		return
+	}
 	if st.Unsupported != "" {
 		s.setStatusLocked(Status{Detail: st.Unsupported, State: StateError})
 		s.mu.Unlock()
@@ -278,6 +290,9 @@ func (s *Service) Probe(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	st, rd := s.cur, s.rd
 	s.mu.Unlock()
+	if st.Global {
+		return "", errors.New(GlobalDetail)
+	}
 	if st.Unsupported != "" {
 		return "", errors.New(st.Unsupported)
 	}

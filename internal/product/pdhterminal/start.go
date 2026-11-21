@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/product/pdhterminal/slides"
 	"hmikiosk/internal/web"
 )
 
@@ -36,15 +37,22 @@ const (
 // steht nur im Formularfeld der Antwort, nie in einer Adresse oder einem Header.
 // cards (darf nil sein) bedient /api/card/ (events und result); die Routen liegen vor der GET/HEAD-Sperre
 // (Preflight braucht OPTIONS, result ist ein POST) und bleiben hinter der Host-Prüfung. Unbekanntes
-// unter /api/card/ beantwortet cards selbst mit 404.
-func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards http.Handler) http.Handler {
+// unter /api/card/ beantwortet cards selbst mit 404. Dasselbe gilt für /api/slides/ (Zwischenspeicher der
+// Folienschau). store (darf nil sein) ist der Zwischenspeicher: Liegt einer vor und ist PDH nicht erreichbar,
+// zeigt die Startseite statt der Offline-Meldung die lokale Folienschau unter /slides.
+func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards http.Handler, store *slides.Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/start", http.StatusFound)
 	})
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
-		serveStart(w, r, dataDir, cfg(), client)
+		serveStart(w, r, dataDir, cfg(), client, store)
 	})
+	if store != nil {
+		slides.Register(mux, store, func(ctx context.Context) bool {
+			return pdhOnline(ctx, dataDir, cfg(), client)
+		})
+	}
 	secured := web.SecureLocal(mux)
 	// Die Kartenrouten werden von der PDH-Seite (fremder Ursprung) aufgerufen: Host und Loopback prüft
 	// LocalPeer, den Origin-Header prüft jede Route selbst (nur die PDH-Adresse).
@@ -53,7 +61,7 @@ func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards
 		cardRoutes = web.LocalPeer(cards)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cards != nil && strings.HasPrefix(r.URL.Path, "/api/card/") {
+		if cards != nil && (strings.HasPrefix(r.URL.Path, "/api/card/") || strings.HasPrefix(r.URL.Path, "/api/slides/")) {
 			cardRoutes.ServeHTTP(w, r)
 			return
 		}
@@ -66,7 +74,7 @@ func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards
 	})
 }
 
-func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config.PDHCfg, client Client) {
+func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config.PDHCfg, client Client, store *slides.Store) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("Referrer-Policy", "no-referrer")
@@ -91,6 +99,10 @@ func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config
 		case StateUntrusted:
 			v = startView{Message: msgUntrusted, Refresh: 30}
 		default:
+			if store.Present() { // globales Terminal: lokale Folienschau statt der Offline-Meldung
+				http.Redirect(w, r, "/slides", http.StatusFound)
+				return
+			}
 			v = startView{Message: msgOffline, Refresh: 30}
 		}
 	}
@@ -98,6 +110,18 @@ func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config
 	if err := startTmpl.Execute(w, v); err != nil {
 		return
 	}
+}
+
+// pdhOnline sagt, ob PDH erreichbar und das Gerät angemeldet werden kann (wie die Startseite es prüft).
+func pdhOnline(ctx context.Context, dataDir string, p config.PDHCfg, client Client) bool {
+	d, err := LoadDevice(dataDir)
+	if p.URL == "" || config.ValidatePDH(p) != nil || err != nil || d == nil || d.URL != p.URL {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+	state, _ := client.Check(ctx, *d)
+	return state == StateOK
 }
 
 // cardOrigin ist der einzige Ursprung, der den Kartenstrom lesen darf: die PDH-Adresse

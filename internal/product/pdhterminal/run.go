@@ -25,6 +25,7 @@ import (
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/notify"
 	"hmikiosk/internal/product/pdhterminal/oled"
+	"hmikiosk/internal/product/pdhterminal/slides"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/selftest"
@@ -45,6 +46,7 @@ const (
 
 	secretsFile   = "secrets.key"
 	logDirName    = "log"
+	slidesDirName = "slides" // Zwischenspeicher der Folienschau unter dem Datenordner
 	tlsDirName    = "tls"
 	chromiumDir   = "chromium"
 	shutdownLimit = 5 * time.Second
@@ -107,6 +109,7 @@ type service struct {
 	updates   *updatecheck.Service
 	presence  appcore.AdminPresence
 	client    Client
+	slides    *slides.Store                      // Zwischenspeicher der Folienschau (globales Terminal)
 	cards     *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
 	display   *oled.Service                      // OLED-Statusdisplay
 	sup       atomic.Pointer[browser.Supervisor] // ab startBrowser
@@ -149,6 +152,7 @@ func newService(o Options) (*service, error) {
 		s.helper = helperapi.New(o.HelperSocket)
 	}
 	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
+	s.slides = &slides.Store{Dir: filepath.Join(o.DataDir, slidesDirName)}
 	s.display = oled.NewService(log.Printf)
 
 	journal, err := appcore.NewJournal(filepath.Join(o.DataDir, logDirName))
@@ -218,9 +222,20 @@ func (s *service) apply(c config.Config) {
 	s.cfg, s.cfgWarn = c, "" // Der Aufrufer hat gespeichert, config.json ist also wieder gültig.
 	s.mu.Unlock()
 	s.origins.Set(config.PDHOrigins(c.PDH))
-	s.cards.Apply(cardSettings(c.Card))
+	s.cards.Apply(s.cardSettings(c.Card))
 	s.display.Apply(statusDisplaySettings(c.StatusDisplay))
 }
+
+// cardSettings liefert die Leser-Einstellungen: Mit Zwischenspeicher gilt das Terminal als globales
+// Terminal, und der Leser bleibt aus.
+func (s *service) cardSettings(c config.CardCfg) card.Settings {
+	cs := cardSettings(c)
+	cs.Global = s.slides.Present()
+	return cs
+}
+
+// applyCards übernimmt den Zustand des Zwischenspeichers (Leser aus oder wieder an) ohne Neustart.
+func (s *service) applyCards() { s.cards.Apply(s.cardSettings(s.config().Card)) }
 
 // cleanupStartup räumt auf, was ein abgestürzter Vorgänger hinterlassen hat. Die alte
 // Gesundmarke zählt nicht mehr: Sie gälte sonst, bevor dieser Start gelungen ist.
@@ -320,7 +335,7 @@ func (s *service) serve(parent context.Context) error {
 		}()
 	}
 	// Der Kartenleser läuft unabhängig von Chromium; apply folgt späteren Änderungen.
-	s.cards.Apply(cardSettings(s.config().Card))
+	s.cards.Apply(s.cardSettings(s.config().Card))
 	s.display.Apply(statusDisplaySettings(s.config().StatusDisplay))
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
@@ -339,7 +354,8 @@ func (s *service) serve(parent context.Context) error {
 	cardAPI := http.NewServeMux()
 	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
 	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, notify.New(s.raiseWindow)))
-	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI)
+	cardAPI.Handle("/api/slides/cache", slides.CacheHandler(s.slides, origin, s.applyCards))
+	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)
 	serveLocal := func(l net.Listener) *http.Server {
 		srv := appcore.NewLocalServer(ctx, startHandler)
