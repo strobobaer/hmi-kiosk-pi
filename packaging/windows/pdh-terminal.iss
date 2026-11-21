@@ -4,7 +4,7 @@
 ;
 ; Betriebsart: "Zusatz" (Vorgabe, Autostart über HKLM Run) oder "Kiosk" (eigener Benutzer PDH-Kiosk mit Autologon, der
 ; Starter ist dessen Shell, kein Run-Eintrag). Still: /MODE=zusatz|kiosk; Neustart nach Kiosk still nur mit /RESTART=yes.
-; Die Kiosk-Einrichtung macht pdh-terminal-kiosk.exe (-setup / -undo).
+; Die Kiosk-Einrichtung macht pdh-terminal-kiosk.exe (-setup / -undo / -acl; Protokoll log\kiosk-setup.log).
 ;
 ; Der Autostart und das Startmenü starten immer den Starter (pdh-terminal-start.exe), nie das Programm selbst:
 ; Nach einem Update beendet sich das Programm mit Code 4, und nur der Starter startet es (in der neuen Version) neu.
@@ -49,14 +49,17 @@ Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 [Files]
 Source: "{#BinDir}\pdh-terminal.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\pdh-terminal-start.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Kiosk-Helfer: richtet den Kioskbetrieb ein (-setup) und nimmt ihn zurück (-undo); läuft nur aus dem Setup.
+; Kiosk-Helfer: richtet den Kioskbetrieb ein (-setup), nimmt ihn zurück (-undo) und setzt die Rechte des Datenordners neu (-acl); läuft nur aus dem Setup.
 Source: "{#BinDir}\pdh-terminal-kiosk.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Skript der Windows-Mitteilung (Toast): fest, ohne Text; das Programm startet es mit -File aus diesem Ordner.
 Source: "toast.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
-; Datenordner (Kopplung, Einstellungen, Updates unter app\): für alle Benutzer les- und schreibbar, bleibt beim Deinstallieren.
-Name: "{commonappdata}\PDH-Terminal"; Permissions: users-modify; Flags: uninsneveruninstall
+; Datenordner (Kopplung, Einstellungen, Updates unter app\), bleibt beim Deinstallieren. Zusatz: für alle Benutzer les- und
+; schreibbar. Kiosk: keine Rechte hier (users-modify würde die Rechte des Kiosks aufweichen: nur Administratoren, SYSTEM und
+; PDH-Kiosk); der Helfer (-setup / -acl) setzt sie.
+Name: "{commonappdata}\PDH-Terminal"; Permissions: users-modify; Flags: uninsneveruninstall; Check: ModeZusatz
+Name: "{commonappdata}\PDH-Terminal"; Flags: uninsneveruninstall; Check: ModeKiosk
 
 [Registry]
 ; Edge ohne Erststart-Assistent (Edge-Richtlinie HideFirstRunExperience, nur dieser eine Wert). createvalueifdoesntexist:
@@ -97,6 +100,7 @@ var
   KioskWanted: Boolean;   // gewählte Betriebsart: Kiosk
   PrevKiosk: Boolean;     // das Setup hat zuvor Kiosk eingerichtet
   KioskActive: Boolean;   // Kiosk-Einrichtung in diesem Lauf gelungen
+  KioskUpdated: Boolean;  // Update eines Kiosks (Kiosk bleibt Kiosk): das Setup hat die Kiosk-Shell beendet
   EditionOk: Boolean;
   UndoFailed: Boolean;    // Deinstallation: -undo gescheitert, der Marker bleibt kiosk
 
@@ -111,6 +115,17 @@ begin
       Result := False;
 end;
 
+// Prüffunktionen für [Dirs] (Check nimmt keine Variablen, nur Funktionen).
+function ModeZusatz(): Boolean;
+begin
+  Result := not KioskWanted;
+end;
+
+function ModeKiosk(): Boolean;
+begin
+  Result := KioskWanted;
+end;
+
 // Autostart über Run nur in der Betriebsart Zusatz.
 function WantRunKey(): Boolean;
 begin
@@ -123,14 +138,16 @@ begin
   Result := NotVerySilent() and not KioskWanted;
 end;
 
-// Kiosk braucht Windows Pro, Enterprise oder Education (EditionID: Professional*, Enterprise*, Education*).
+// Kiosk braucht Windows Pro, Enterprise (auch IoT Enterprise) oder Education (EditionID: Professional*, Enterprise*,
+// IoTEnterprise*, Education*).
 function KioskEditionSupported(): Boolean;
 var
   ed: String;
 begin
   Result := False;
   if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'EditionID', ed) then
-    Result := (Pos('Professional', ed) = 1) or (Pos('Enterprise', ed) = 1) or (Pos('Education', ed) = 1);
+    Result := (Pos('Professional', ed) = 1) or (Pos('Enterprise', ed) = 1) or
+      (Pos('IoTEnterprise', ed) = 1) or (Pos('Education', ed) = 1);
 end;
 
 function HelperPath(): String;
@@ -140,7 +157,7 @@ end;
 
 function KioskLogPath(): String;
 begin
-  Result := ExpandConstant('{commonappdata}\PDH-Terminal\log\kiosk.log');
+  Result := ExpandConstant('{commonappdata}\PDH-Terminal\log\kiosk-setup.log');
 end;
 
 // Führt den Kiosk-Helfer verborgen aus und gibt seinen Exitcode zurück (-1: nicht startbar).
@@ -158,6 +175,32 @@ end;
 procedure SaveMode(const m: String);
 begin
   RegWriteStringValue(HKLM, '{#ModeKey}', 'Betriebsart', m);
+end;
+
+// Stellt für den Datenordner "Benutzer: Ändern" wieder her (Zusatz). Nötig, wenn die Kiosk-Einrichtung scheitert, bevor
+// sie die Rechte angefasst hat: [Dirs] hat im Kiosk keine Rechte gesetzt, und Zusatz braucht sie.
+procedure GrantUsersModify();
+var
+  rc: Integer;
+begin
+  Exec(ExpandConstant('{sys}\icacls.exe'), '"' + ExpandConstant('{commonappdata}\PDH-Terminal') + '" /grant *S-1-5-32-545:(OI)(CI)M', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Log('Datenordner: Benutzer Ändern gesetzt, Code=' + IntToStr(rc));
+end;
+
+// Setzt die Rechte des Datenordners für den Kiosk neu (Helfer -acl); meldet einen Fehlschlag.
+procedure ReapplyKioskACL();
+var
+  rc: Integer;
+  msg: String;
+begin
+  rc := RunHelper('-acl');
+  Log('Kiosk-Rechte des Datenordners: Code=' + IntToStr(rc));
+  if rc <> 0 then
+  begin
+    msg := 'Die Rechte des Datenordners ließen sich für den Kiosk nicht neu setzen (Code ' + IntToStr(rc) + '). Das Setup erneut ausführen oder pdh-terminal-kiosk.exe -acl als Administrator starten. Einzelheiten: ' + KioskLogPath();
+    Log(msg);
+    SuppressibleMsgBox(msg, mbError, MB_OK, IDOK);
+  end;
 end;
 
 procedure StopTerminal();
@@ -259,6 +302,9 @@ begin
       // Update eines Kiosks: Der Helfer läuft nicht erneut (-setup räumt erst auf und würde Benutzer und Profil löschen,
       // während die Sitzung abgemeldet wird). Der Shell-Pfad {app}\pdh-terminal-start.exe -kiosk bleibt gleich.
       SaveMode('kiosk');
+      KioskUpdated := True;
+      // Die Rechte des Datenordners bleiben die des Kiosks (nicht "Benutzer: Ändern"): sicherheitshalber neu setzen.
+      ReapplyKioskACL();
     end
     else if KioskWanted then
     begin
@@ -273,6 +319,7 @@ begin
       begin
         // Es bleibt bei Zusatz: Autostart wieder an, Setup nicht abbrechen.
         KioskWanted := False;
+        GrantUsersModify();
         RegWriteStringValue(HKLM, RunKey, 'PDH-Terminal', '"' + ExpandConstant('{app}\{#Starter}') + '"');
         SaveMode('zusatz');
         if rc = 2 then
@@ -295,6 +342,8 @@ begin
           // damit ein erneutes Setup den Rückbau wiederholt; kein Run-Eintrag (sonst startet das Terminal doppelt).
           RegDeleteValue(HKLM, RunKey, 'PDH-Terminal');
           SaveMode('kiosk');
+          // [Dirs] hat in diesem Lauf "Benutzer: Ändern" gesetzt (Zielbetriebsart Zusatz), der Kiosk besteht aber noch.
+          ReapplyKioskACL();
           if rc < 0 then
             msg := 'Der Rückbau des Kiosks ist fehlgeschlagen: Der Kiosk-Helfer ließ sich nicht starten. Der PC bleibt in der Betriebsart Kiosk; das Setup erneut mit /MODE=zusatz ausführen.'
           else
@@ -311,11 +360,12 @@ begin
   end;
 end;
 
-// Nach gelungener Kiosk-Einrichtung neu starten: interaktiv als Angebot, still nur mit /RESTART=yes.
+// Nach gelungener Kiosk-Einrichtung und nach dem Update eines Kiosks neu starten (das Update beendet die Kiosk-Shell,
+// der Bildschirm bliebe sonst leer): interaktiv als Angebot, still nur mit /RESTART=yes.
 function NeedRestart(): Boolean;
 begin
   Result := False;
-  if KioskActive then
+  if KioskActive or KioskUpdated then
   begin
     if WizardSilent then
       Result := CompareText(ExpandConstant('{param:RESTART|}'), 'yes') = 0
