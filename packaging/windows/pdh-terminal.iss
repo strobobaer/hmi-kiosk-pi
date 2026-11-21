@@ -94,6 +94,8 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 const
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B2F6C1E-4D7A-4E53-9A0B-5C3D1F7E2A94}_is1';
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+  // Windows Installer: UpgradeCode des MSI (packaging/windows/msi/pdh-terminal.wxs), in der Registrierung verschlüsselt abgelegt.
+  MsiUpgradeKey = 'SOFTWARE\Classes\Installer\UpgradeCodes\A60D1944EC37E0041A7FEAA15493BD91';
 
 var
   ModePage: TInputOptionWizardPage;
@@ -218,6 +220,13 @@ var
   oldVer, newVer: Int64;
 begin
   Result := True;
+  // MSI und Setup schliessen sich aus (zwei Installationen mit gleichen Pfaden und Einträgen).
+  if RegKeyExists(HKLM64, MsiUpgradeKey) then
+  begin
+    SuppressibleMsgBox('Das PDH-Terminal ist schon als MSI installiert (Verteilung über Intune oder Gruppenrichtlinie). MSI und Setup schließen sich aus: Zuerst das PDH-Terminal unter Apps (Installierte Apps) deinstallieren, dann dieses Setup ausführen.', mbError, MB_OK, IDOK);
+    Result := False;
+    Exit;
+  end;
   // Dieselbe oder höhere Version über eine Installation ist ein Update und behält die Daten.
   // Eine ältere Version würde die neuere überschreiben: abweisen.
   if RegQueryStringValue(HKLM, UninstallKey, 'DisplayVersion', oldText) then

@@ -643,6 +643,15 @@ Der Autostart-Eintrag (`HKLM\...\Run`) entfällt im Kiosk, weil die Shell den St
 - Endet der Starter (die Shell), meldet Windows `PDH-Kiosk` ab; es gibt deshalb kein „Beenden“. Fehlt Edge, zeigt das Programm ein dauerhaftes Hinweisfenster (immer obenauf, ohne Fokus, per Klick nicht zu schließen) mit „Edge nicht gefunden“ und „Strg+Alt+Entf → Benutzer wechseln (Administrator)“; es verschwindet, sobald Edge gefunden wird und startet (das Programm sucht alle 30 Sekunden neu). Ein Browser-Fenster gibt es dann nicht, die Admin-Geste hat keine Seite zum Öffnen: Ein Administrator meldet sich über „Benutzer wechseln“ an und installiert Edge.
 - Ein Setup-Update über einen laufenden Kiosk beendet den Starter und damit die Sitzung von `PDH-Kiosk`: Der Bildschirm bliebe leer. Deshalb bietet das Setup am Ende den Neustart an (still nur mit `/RESTART=yes`); nach dem Neustart steht der Kiosk wieder. Programm-Updates per Paket (Abschnitt 2) laufen im Kiosk wie sonst von selbst.
 
+#### MSI (Intune, Gruppenrichtlinie)
+
+Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 Bit, mit `packaging/windows/build-msi.sh --version x.y.z` gebaut; nicht signiert). Inhalt wie das Setup.
+
+- **Installieren (still):** `msiexec /i PDH-Terminal-<Version>.msi MODE=zusatz /qn /l*v C:\Windows\Temp\pdh-terminal-msi.log`. `MODE` ist `zusatz` (Vorgabe) oder `kiosk`; ohne Angabe bleibt die bisherige Betriebsart. Kiosk braucht Windows 11 Pro, Enterprise oder Education und plant einen Neustart (Rückgabe 3010; `REBOOT=ReallySuppress` unterdrückt ihn, dann zeigt der Kiosk erst nach dem nächsten Neustart).
+- **Intune (Branchen-App „Windows-App (Win32)“ oder MSI-Branchen-App):** Installationsbefehl wie oben; Deinstallation `msiexec /x {ProductCode} /qn`; Neustartverhalten „Gerät bei Bedarf neu starten“ für Kiosk. **Erkennungsregel:** Typ „MSI“ mit der ProductCode der Version (`build-msi.sh` gibt sie am Ende aus; sie ist je Version fest). Bei einem Update die Erkennung auf die neue ProductCode stellen; der MSI ersetzt die ältere Version selbst (MajorUpgrade, feste UpgradeCode `{4491D06A-73CE-400E-A1F7-AE1A4539DB19}`).
+- **Betriebsart wechseln:** mit höherer Version `msiexec /i … MODE=kiosk /qn`; bei gleicher Version `msiexec /i … REINSTALL=ALL REINSTALLMODE=vamus MODE=kiosk /qn`. Kiosk nach Zusatz und die Deinstallation rufen den Rückbau (`pdh-terminal-kiosk.exe -undo`); bei einem Fehler läuft die Deinstallation weiter, Einzelheiten stehen im MSI-Protokoll und in `C:\ProgramData\PDH-Terminal\log\kiosk-setup.log`.
+- **MSI und Setup schließen sich aus:** Der MSI bricht ab, wenn das Setup installiert ist, und umgekehrt (Meldung nennt das Vorgehen: zuerst das andere deinstallieren; Kopplung und Einstellungen in `C:\ProgramData\PDH-Terminal` bleiben).
+
 #### Grenzen unter Windows
 
 - **Ein Terminal je PC.** Es gehört der zuerst angemeldeten Sitzung. Ein zweiter Benutzer (schneller Benutzerwechsel) bekommt keine zweite Instanz; sein Starter endet still ohne Tray-Symbol.

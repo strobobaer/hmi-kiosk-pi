@@ -235,6 +235,24 @@ check "windows: Kiosk-Startmenü/[Run] startet den Starter im Kiosk nicht (Start
 check "windows: build-setup.sh baut und prüft pdh-terminal-kiosk.exe" bash -c "grep -qF './cmd/pdh-terminal-kiosk' packaging/windows/build-setup.sh && grep -qF 'pdh-terminal-kiosk.exe' packaging/windows/build-setup.sh"
 
 
+
+# MSI (WiX): packaging/windows/msi/pdh-terminal.wxs und build-msi.sh
+wxs=packaging/windows/msi/pdh-terminal.wxs
+check "msi: UpgradeCode fest (4491D06A-73CE-400E-A1F7-AE1A4539DB19) und MajorUpgrade" bash -c "grep -qF 'UpgradeCode=\"4491D06A-73CE-400E-A1F7-AE1A4539DB19\"' '$wxs' && grep -qF '<MajorUpgrade' '$wxs'"
+check "msi: UpgradeCode im .iss (verschlüsselt) passt zum MSI" bash -c "grep -qF 'UpgradeCodes\A60D1944EC37E0041A7FEAA15493BD91' '$iss'"
+check "msi: MODE zusatz|kiosk, Vorgabe zusatz, Unbekanntes wird abgewiesen" bash -c "grep -qF 'MODE ~= \"kiosk\"' '$wxs' && grep -qF 'Property=\"MODE\" Value=\"zusatz\"' '$wxs' && grep -qF 'Unbekannte Betriebsart MODE' '$wxs'"
+check "msi: Betriebsart-Marker HKLM SOFTWARE\PDH-Terminal Betriebsart" grep -Fq 'Key="SOFTWARE\PDH-Terminal" Name="Betriebsart"' "$wxs"
+check "msi: Firewall TCP 8443 für Domäne und Privat" bash -c "grep -qF 'Port=\"8443\"' '$wxs' && grep -qF 'Profile=\"domain\"' '$wxs' && grep -qF 'Profile=\"private\"' '$wxs' && ! grep -qF 'Profile=\"public\"' '$wxs'"
+check "msi: Verknüpfung mit AppUserModelID PDH.Terminal" bash -c "grep -qF 'System.AppUserModel.ID' '$wxs' && grep -qF 'Value=\"PDH.Terminal\"' '$wxs'"
+check "msi: Run-Eintrag und Benutzerrechte nur in Zusatz (Condition NOT KIOSK)" bash -c "awk '/Id=\"AutostartRun\"/,/<\/Component>/' '$wxs' | grep -qF 'NOT KIOSK' && awk '/Id=\"DataDirZusatz\"/,/<\/Component>/' '$wxs' | grep -qF 'NOT KIOSK'"
+check "msi: Helfer-Aktionen verzögert, ohne Identitätswechsel (-setup -app, -acl, -undo)" bash -c "grep -E 'Id=\"Kiosk(Setup|Acl|UndoSwitch|UndoUninstall)\"' '$wxs' | grep -cF 'Execute=\"deferred\" Impersonate=\"no\"' | grep -qx 4 && grep -qF 'ExeCommand=\"-setup -app' '$wxs' && grep -qF 'ExeCommand=\"-acl\"' '$wxs'"
+check "msi: -undo bei Wechsel nach Zusatz und bei Deinstallation, die Deinstallation läuft bei Fehler weiter (Return=ignore)" bash -c "grep -E 'Id=\"KioskUndoSwitch\"' '$wxs' | grep -qF 'ExeCommand=\"-undo\"' && grep -E 'Id=\"KioskUndoUninstall\"' '$wxs' | grep -qF 'Return=\"ignore\"' && grep -qF 'REMOVE=\"ALL\"' '$wxs'"
+check "msi: Edition im Kiosk (Professional, Enterprise, IoTEnterprise, Education)" bash -c "for e in Professional Enterprise IoTEnterprise Education; do grep -qF \"EDITIONID ~<< \\\"\$e\\\"\" '$wxs' || exit 1; done"
+check "msi: schließt sich mit dem Inno-Setup aus (Uninstall-Schlüssel, Meldung)" bash -c "grep -qF '8B2F6C1E-4D7A-4E53-9A0B-5C3D1F7E2A94}_is1' '$wxs' && grep -qF 'RegKeyExists(HKLM64, MsiUpgradeKey)' '$iss'"
+check "msi: Neustart nach Kiosk über ScheduleReboot" grep -qF '<ScheduleReboot' "$wxs"
+check "msi: Edge-Richtlinie HideFirstRunExperience und toast.ps1" bash -c "grep -qF 'HideFirstRunExperience' '$wxs' && grep -qF 'toast.ps1' '$wxs'"
+check "msi: build-msi.sh bricht ohne dist/win-Programme ab" bash -c "grep -qF 'dist/win/\$f fehlt' packaging/windows/build-msi.sh"
+check "msi: Dockerfile festgelegt (Digest, WiX-SHA-256)" bash -c "grep -Eq '^FROM debian@sha256:[0-9a-f]{64}' packaging/windows/msi/Dockerfile && grep -Eq 'WIX_SHA256=[0-9a-f]{64}' packaging/windows/msi/Dockerfile"
 if [ "$fails" -gt 0 ]; then
 	echo "$fails Prüfung(en) fehlgeschlagen"
 	exit 1

@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSI des PDH-Terminals für Windows 11 (WiX 3.14), gebaut von packaging/windows/build-msi.sh. Gleicher Inhalt wie das
+  Inno-Setup (packaging/windows/pdh-terminal.iss), gedacht für die verwaltete Verteilung (Intune, Gruppenrichtlinie):
+
+    msiexec /i PDH-Terminal-x.y.z.msi MODE=zusatz|kiosk /qn
+
+  MODE: zusatz (Vorgabe; Autostart über HKLM Run, Datenordner für Benutzer änderbar) oder kiosk (Helfer -setup, Neustart).
+  Ohne MODE bleibt es bei der bisherigen Betriebsart (Marker HKLM\SOFTWARE\PDH-Terminal\Betriebsart), sonst zusatz.
+  Der MSI und das Inno-Setup schließen sich gegenseitig aus (je eigene Prüfung beim Start).
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension"
+     xmlns:fire="http://schemas.microsoft.com/wix/FirewallExtension">
+
+  <Product Id="$(var.ProductCode)" Name="PDH-Terminal" Language="1031" Codepage="1252" Version="$(var.Version)"
+           Manufacturer="PDH" UpgradeCode="4491D06A-73CE-400E-A1F7-AE1A4539DB19">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="x64"
+             Description="PDH-Terminal für Windows 11" Manufacturer="PDH" />
+
+    <MajorUpgrade DowngradeErrorMessage="Es ist schon eine neuere Version des PDH-Terminals installiert. Dieses Paket ändert nichts." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="starter.exe" SourceFile="$(var.BinDir)\pdh-terminal-start.exe" />
+    <Property Id="ARPPRODUCTICON" Value="starter.exe" />
+
+    <!-- Betriebsart: MODE (öffentlich). KIOSK ist die ausgewertete Form, MODEVALUE der Wert für den Marker. -->
+    <Property Id="MODEVALUE" Value="zusatz" />
+    <Property Id="PREVMODE">
+      <RegistrySearch Id="PrevModeSearch" Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Betriebsart" Type="raw" Win64="yes" />
+    </Property>
+    <Property Id="EDITIONID">
+      <RegistrySearch Id="EditionSearch" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="EditionID" Type="raw" Win64="yes" />
+    </Property>
+    <Property Id="INNOINSTALLED">
+      <RegistrySearch Id="InnoSearch" Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B2F6C1E-4D7A-4E53-9A0B-5C3D1F7E2A94}_is1" Name="UninstallString" Type="raw" Win64="yes" />
+    </Property>
+
+    <CustomAction Id="ModeFromPrev" Property="MODE" Value="[PREVMODE]" Execute="immediate" />
+    <CustomAction Id="ModeDefault" Property="MODE" Value="zusatz" Execute="immediate" />
+    <CustomAction Id="SetKiosk" Property="KIOSK" Value="1" Execute="immediate" />
+    <CustomAction Id="SetPrevKiosk" Property="PREVKIOSK" Value="1" Execute="immediate" />
+    <CustomAction Id="SetModeValue" Property="MODEVALUE" Value="kiosk" Execute="immediate" />
+
+    <!-- Kiosk-Helfer: verzögert, ohne Identitätswechsel (SYSTEM), verborgen. [INSTALLFOLDER] endet auf \; das \ vor dem
+         schließenden Anführungszeichen verhindert, dass es die Zeichenkette aufhebt (Argument endet auf \, der Helfer kürzt). -->
+    <CustomAction Id="KioskSetup" FileKey="KioskExe" ExeCommand="-setup -app &quot;[INSTALLFOLDER]\&quot;" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="KioskAcl" FileKey="KioskExe" ExeCommand="-acl" Execute="deferred" Impersonate="no" Return="check" />
+    <CustomAction Id="KioskUndoSwitch" FileKey="KioskExe" ExeCommand="-undo" Execute="deferred" Impersonate="no" Return="check" />
+    <!-- Deinstallation: weiter auch bei Fehler (Return="ignore"); der Fehler steht im Protokoll des Helfers (kiosk-setup.log)
+         und im MSI-Protokoll (msiexec /l*v). -->
+    <CustomAction Id="KioskUndoUninstall" FileKey="KioskExe" ExeCommand="-undo" Execute="deferred" Impersonate="no" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="ModeFromPrev" After="AppSearch">(NOT MODE) AND PREVMODE</Custom>
+      <Custom Action="ModeDefault" After="ModeFromPrev">NOT MODE</Custom>
+      <Custom Action="SetKiosk" After="ModeDefault">MODE ~= "kiosk"</Custom>
+      <Custom Action="SetPrevKiosk" After="SetKiosk">PREVMODE ~= "kiosk"</Custom>
+      <Custom Action="SetModeValue" After="SetPrevKiosk">KIOSK</Custom>
+
+      <!-- Vor InstallFinalize, also nach dem Kopieren der Dateien und dem Setzen der Rechte. -->
+      <Custom Action="KioskSetup" Before="InstallFinalize">KIOSK AND (NOT PREVKIOSK) AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskAcl" Before="InstallFinalize">KIOSK AND PREVKIOSK AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskUndoSwitch" Before="InstallFinalize">(NOT KIOSK) AND PREVKIOSK AND (NOT REMOVE)</Custom>
+      <!-- Beim Entfernen läuft -undo vor dem Löschen der Dateien; nicht beim Ersetzen durch ein Upgrade. -->
+      <Custom Action="KioskUndoUninstall" Before="RemoveFiles">(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)</Custom>
+
+      <!-- Neustart nach Kiosk (Standard-Eigenschaft REBOOT: REBOOT=ReallySuppress unterdrückt ihn, Rückgabe 3010 sonst). -->
+      <ScheduleReboot After="InstallFinalize">KIOSK AND (NOT REMOVE)</ScheduleReboot>
+    </InstallExecuteSequence>
+    <InstallUISequence>
+      <Custom Action="ModeFromPrev" After="AppSearch">(NOT MODE) AND PREVMODE</Custom>
+      <Custom Action="ModeDefault" After="ModeFromPrev">NOT MODE</Custom>
+      <Custom Action="SetKiosk" After="ModeDefault">MODE ~= "kiosk"</Custom>
+      <Custom Action="SetPrevKiosk" After="SetKiosk">PREVMODE ~= "kiosk"</Custom>
+      <Custom Action="SetModeValue" After="SetPrevKiosk">KIOSK</Custom>
+    </InstallUISequence>
+
+    <!-- Bedingungen. Installed: bei Reparatur und Deinstallation nicht erneut prüfen. -->
+    <Condition Message="Das PDH-Terminal ist schon mit dem Setup (PDH-Terminal-Setup-x.y.z.exe) installiert. MSI und Setup schließen sich aus: Zuerst das Setup unter Apps (Installierte Apps) deinstallieren, dann diesen MSI ausführen.">
+      <![CDATA[Installed OR (NOT INNOINSTALLED)]]>
+    </Condition>
+    <Condition Message="Unbekannte Betriebsart MODE. Erlaubt: MODE=zusatz oder MODE=kiosk.">
+      <![CDATA[Installed OR (NOT MODE) OR (MODE ~= "zusatz") OR (MODE ~= "kiosk")]]>
+    </Condition>
+    <!-- Kiosk braucht Windows 11 Pro, Enterprise (auch IoT Enterprise) oder Education: EditionID beginnt mit
+         Professional, Enterprise, IoTEnterprise oder Education. -->
+    <Condition Message="Der Kioskbetrieb (MODE=kiosk) braucht Windows 11 Pro, Enterprise oder Education.">
+      <![CDATA[Installed OR (NOT (MODE ~= "kiosk")) OR (EDITIONID ~<< "Professional") OR (EDITIONID ~<< "Enterprise") OR (EDITIONID ~<< "IoTEnterprise") OR (EDITIONID ~<< "Education")]]>
+    </Condition>
+
+    <util:CloseApplication Id="CloseStarter" Target="pdh-terminal-start.exe" TerminateProcess="0" RebootPrompt="no" />
+    <util:CloseApplication Id="CloseTerminal" Target="pdh-terminal.exe" TerminateProcess="0" RebootPrompt="no" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="PDH-Terminal" />
+      </Directory>
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="DATADIR" Name="PDH-Terminal" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ProgramFiles" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E01">
+        <File Id="TerminalExe" Source="$(var.BinDir)\pdh-terminal.exe" KeyPath="yes" />
+        <File Id="StarterExe" Source="$(var.BinDir)\pdh-terminal-start.exe" />
+        <!-- Kiosk-Helfer: richtet den Kioskbetrieb ein (-setup), nimmt ihn zurück (-undo), setzt die Rechte neu (-acl). -->
+        <File Id="KioskExe" Source="$(var.BinDir)\pdh-terminal-kiosk.exe" />
+        <!-- Skript der Windows-Mitteilung (Toast): fest, ohne Text. -->
+        <File Id="ToastPs1" Source="$(var.SrcDir)\toast.ps1" />
+      </Component>
+      <!-- Firewall: Admin-Seite aus dem Firmen- und Heimnetz (Domäne, Privat), nicht aus öffentlichen Netzen. WiX erlaubt je
+           Eintrag nur ein Profil, daher zwei Regeln. -->
+      <Component Id="Firewall" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E08">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Firewall" Type="integer" Value="1" KeyPath="yes" />
+        <fire:FirewallException Id="FwDomain" Name="PDH-Terminal Admin (Domäne)" Port="8443" Protocol="tcp" Profile="domain" Scope="any" IgnoreFailure="yes" />
+        <fire:FirewallException Id="FwPrivate" Name="PDH-Terminal Admin (Privat)" Port="8443" Protocol="tcp" Profile="private" Scope="any" IgnoreFailure="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Datenordner (Kopplung, Einstellungen, Updates): bleibt beim Deinstallieren (Permanent). Zusatz: Benutzer dürfen
+         ändern. Kiosk: keine Rechte hier, der Helfer (-setup / -acl) setzt sie. -->
+    <DirectoryRef Id="DATADIR">
+      <Component Id="DataDirZusatz" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E02" Permanent="yes">
+        <Condition>NOT KIOSK</Condition>
+        <CreateFolder>
+          <util:PermissionEx User="Users" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" Delete="yes" />
+        </CreateFolder>
+      </Component>
+      <Component Id="DataDirKiosk" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E03" Permanent="yes">
+        <Condition>KIOSK</Condition>
+        <CreateFolder />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="TARGETDIR">
+      <!-- Betriebsart-Marker wie beim Inno-Setup. -->
+      <Component Id="ModeMarker" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E04">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Betriebsart" Type="string" Value="[MODEVALUE]" KeyPath="yes" />
+        <RemoveRegistryKey Action="removeOnUninstall" Root="HKLM" Key="SOFTWARE\PDH-Terminal" />
+      </Component>
+      <!-- Edge ohne Erststart-Assistent (nur dieser eine Wert, keine weiteren Richtlinien). -->
+      <Component Id="EdgePolicy" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E05">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Microsoft\Edge" Name="HideFirstRunExperience" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <!-- Autostart für alle Benutzer: der Starter, nur in der Betriebsart Zusatz (im Kiosk ist er die Shell). -->
+      <Component Id="AutostartRun" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E06">
+        <Condition>NOT KIOSK</Condition>
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="PDH-Terminal" Type="string" Value="&quot;[#StarterExe]&quot;" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenu" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E07">
+        <!-- AppUserModelID: Windows braucht sie für die Benachrichtigungen (Toast). -->
+        <Shortcut Id="StarterShortcut" Name="PDH-Terminal" Target="[#StarterExe]" WorkingDirectory="INSTALLFOLDER">
+          <ShortcutProperty Id="AppUserModelID" Key="System.AppUserModel.ID" Value="PDH.Terminal" />
+        </Shortcut>
+        <IniFile Id="AdminUrl" Action="addLine" Directory="ProgramMenuFolder" Name="PDH-Terminal Admin.url" Section="InternetShortcut" Key="URL" Value="https://127.0.0.1:8443/admin/" />
+        <RemoveFile Id="AdminUrlRemove" Name="PDH-Terminal Admin.url" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Startmenue" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="PDH-Terminal" Level="1">
+      <ComponentRef Id="ProgramFiles" />
+      <ComponentRef Id="DataDirZusatz" />
+      <ComponentRef Id="DataDirKiosk" />
+      <ComponentRef Id="ModeMarker" />
+      <ComponentRef Id="EdgePolicy" />
+      <ComponentRef Id="AutostartRun" />
+      <ComponentRef Id="StartMenu" />
+      <ComponentRef Id="Firewall" />
+    </Feature>
+  </Product>
+</Wix>
