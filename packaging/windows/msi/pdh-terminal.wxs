@@ -23,8 +23,8 @@
     <Icon Id="starter.exe" SourceFile="$(var.BinDir)\pdh-terminal-start.exe" />
     <Property Id="ARPPRODUCTICON" Value="starter.exe" />
 
-    <!-- Betriebsart: MODE (öffentlich). KIOSK ist die ausgewertete Form, MODEVALUE der Wert für den Marker. -->
-    <Property Id="MODEVALUE" Value="zusatz" />
+    <!-- Betriebsart: MODE (öffentlich). KioskMode ist die ausgewertete Form, ModeValue der Wert für den Marker. -->
+    <Property Id="ModeValue" Value="zusatz" />
     <Property Id="PREVMODE">
       <RegistrySearch Id="PrevModeSearch" Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Betriebsart" Type="raw" Win64="yes" />
     </Property>
@@ -37,9 +37,9 @@
 
     <CustomAction Id="ModeFromPrev" Property="MODE" Value="[PREVMODE]" Execute="immediate" />
     <CustomAction Id="ModeDefault" Property="MODE" Value="zusatz" Execute="immediate" />
-    <CustomAction Id="SetKiosk" Property="KIOSK" Value="1" Execute="immediate" />
-    <CustomAction Id="SetPrevKiosk" Property="PREVKIOSK" Value="1" Execute="immediate" />
-    <CustomAction Id="SetModeValue" Property="MODEVALUE" Value="kiosk" Execute="immediate" />
+    <CustomAction Id="SetKiosk" Property="KioskMode" Value="1" Execute="immediate" />
+    <CustomAction Id="SetPrevKiosk" Property="PrevKiosk" Value="1" Execute="immediate" />
+    <CustomAction Id="SetModeValue" Property="ModeValue" Value="kiosk" Execute="immediate" />
 
     <!-- Kiosk-Helfer: verzögert, ohne Identitätswechsel (SYSTEM), verborgen. [INSTALLFOLDER] endet auf \; das \ vor dem
          schließenden Anführungszeichen verhindert, dass es die Zeichenkette aufhebt (Argument endet auf \, der Helfer kürzt). -->
@@ -49,30 +49,35 @@
     <!-- Deinstallation: weiter auch bei Fehler (Return="ignore"); der Fehler steht im Protokoll des Helfers (kiosk-setup.log)
          und im MSI-Protokoll (msiexec /l*v). -->
     <CustomAction Id="KioskUndoUninstall" FileKey="KioskExe" ExeCommand="-undo" Execute="deferred" Impersonate="no" Return="ignore" />
+    <!-- Rücknahme bei einem Fehlschlag oder Abbruch: nach -setup wieder -undo, nach -undo (Wechsel nach Zusatz) wieder -setup. -->
+    <CustomAction Id="KioskSetupRollback" FileKey="KioskExe" ExeCommand="-undo" Execute="rollback" Impersonate="no" Return="ignore" />
+    <CustomAction Id="KioskUndoRollback" FileKey="KioskExe" ExeCommand="-setup -app &quot;[INSTALLFOLDER]\&quot;" Execute="rollback" Impersonate="no" Return="ignore" />
 
     <InstallExecuteSequence>
       <Custom Action="ModeFromPrev" After="AppSearch">(NOT MODE) AND PREVMODE</Custom>
       <Custom Action="ModeDefault" After="ModeFromPrev">NOT MODE</Custom>
       <Custom Action="SetKiosk" After="ModeDefault">MODE ~= "kiosk"</Custom>
       <Custom Action="SetPrevKiosk" After="SetKiosk">PREVMODE ~= "kiosk"</Custom>
-      <Custom Action="SetModeValue" After="SetPrevKiosk">KIOSK</Custom>
+      <Custom Action="SetModeValue" After="SetPrevKiosk">KioskMode</Custom>
 
       <!-- Vor InstallFinalize, also nach dem Kopieren der Dateien und dem Setzen der Rechte. -->
-      <Custom Action="KioskSetup" Before="InstallFinalize">KIOSK AND (NOT PREVKIOSK) AND (NOT REMOVE)</Custom>
-      <Custom Action="KioskAcl" Before="InstallFinalize">KIOSK AND PREVKIOSK AND (NOT REMOVE)</Custom>
-      <Custom Action="KioskUndoSwitch" Before="InstallFinalize">(NOT KIOSK) AND PREVKIOSK AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskSetup" Before="InstallFinalize">KioskMode AND (NOT PrevKiosk) AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskAcl" Before="InstallFinalize">KioskMode AND PrevKiosk AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskUndoSwitch" Before="InstallFinalize">(NOT KioskMode) AND PrevKiosk AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskSetupRollback" Before="KioskSetup">KioskMode AND (NOT PrevKiosk) AND (NOT REMOVE)</Custom>
+      <Custom Action="KioskUndoRollback" Before="KioskUndoSwitch">(NOT KioskMode) AND PrevKiosk AND (NOT REMOVE)</Custom>
       <!-- Beim Entfernen läuft -undo vor dem Löschen der Dateien; nicht beim Ersetzen durch ein Upgrade. -->
       <Custom Action="KioskUndoUninstall" Before="RemoveFiles">(REMOVE="ALL") AND (NOT UPGRADINGPRODUCTCODE)</Custom>
 
       <!-- Neustart nach Kiosk (Standard-Eigenschaft REBOOT: REBOOT=ReallySuppress unterdrückt ihn, Rückgabe 3010 sonst). -->
-      <ScheduleReboot After="InstallFinalize">KIOSK AND (NOT REMOVE)</ScheduleReboot>
+      <ScheduleReboot After="InstallFinalize">KioskMode AND (NOT REMOVE)</ScheduleReboot>
     </InstallExecuteSequence>
     <InstallUISequence>
       <Custom Action="ModeFromPrev" After="AppSearch">(NOT MODE) AND PREVMODE</Custom>
       <Custom Action="ModeDefault" After="ModeFromPrev">NOT MODE</Custom>
       <Custom Action="SetKiosk" After="ModeDefault">MODE ~= "kiosk"</Custom>
       <Custom Action="SetPrevKiosk" After="SetKiosk">PREVMODE ~= "kiosk"</Custom>
-      <Custom Action="SetModeValue" After="SetPrevKiosk">KIOSK</Custom>
+      <Custom Action="SetModeValue" After="SetPrevKiosk">KioskMode</Custom>
     </InstallUISequence>
 
     <!-- Bedingungen. Installed: bei Reparatur und Deinstallation nicht erneut prüfen. -->
@@ -80,12 +85,12 @@
       <![CDATA[Installed OR (NOT INNOINSTALLED)]]>
     </Condition>
     <Condition Message="Unbekannte Betriebsart MODE. Erlaubt: MODE=zusatz oder MODE=kiosk.">
-      <![CDATA[Installed OR (NOT MODE) OR (MODE ~= "zusatz") OR (MODE ~= "kiosk")]]>
+      <![CDATA[REMOVE="ALL" OR (NOT MODE) OR (MODE ~= "zusatz") OR (MODE ~= "kiosk")]]>
     </Condition>
     <!-- Kiosk braucht Windows 11 Pro, Enterprise (auch IoT Enterprise) oder Education: EditionID beginnt mit
          Professional, Enterprise, IoTEnterprise oder Education. -->
     <Condition Message="Der Kioskbetrieb (MODE=kiosk) braucht Windows 11 Pro, Enterprise oder Education.">
-      <![CDATA[Installed OR (NOT (MODE ~= "kiosk")) OR (EDITIONID ~<< "Professional") OR (EDITIONID ~<< "Enterprise") OR (EDITIONID ~<< "IoTEnterprise") OR (EDITIONID ~<< "Education")]]>
+      <![CDATA[REMOVE="ALL" OR (NOT (MODE ~= "kiosk")) OR (EDITIONID ~<< "Professional") OR (EDITIONID ~<< "Enterprise") OR (EDITIONID ~<< "IoTEnterprise") OR (EDITIONID ~<< "Education")]]>
     </Condition>
 
     <util:CloseApplication Id="CloseStarter" Target="pdh-terminal-start.exe" TerminateProcess="0" RebootPrompt="no" />
@@ -122,14 +127,14 @@
     <!-- Datenordner (Kopplung, Einstellungen, Updates): bleibt beim Deinstallieren (Permanent). Zusatz: Benutzer dürfen
          ändern. Kiosk: keine Rechte hier, der Helfer (-setup / -acl) setzt sie. -->
     <DirectoryRef Id="DATADIR">
-      <Component Id="DataDirZusatz" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E02" Permanent="yes">
-        <Condition>NOT KIOSK</Condition>
+      <Component Id="DataDirZusatz" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E02" Transitive="yes" Permanent="yes">
+        <Condition>NOT KioskMode</Condition>
         <CreateFolder>
-          <util:PermissionEx User="Users" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" Delete="yes" />
+          <util:PermissionEx User="[WIX_ACCOUNT_USERS]" GenericRead="yes" GenericWrite="yes" GenericExecute="yes" Delete="yes" />
         </CreateFolder>
       </Component>
-      <Component Id="DataDirKiosk" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E03" Permanent="yes">
-        <Condition>KIOSK</Condition>
+      <Component Id="DataDirKiosk" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E03" Transitive="yes" Permanent="yes">
+        <Condition>KioskMode</Condition>
         <CreateFolder />
       </Component>
     </DirectoryRef>
@@ -137,16 +142,15 @@
     <DirectoryRef Id="TARGETDIR">
       <!-- Betriebsart-Marker wie beim Inno-Setup. -->
       <Component Id="ModeMarker" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E04">
-        <RegistryValue Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Betriebsart" Type="string" Value="[MODEVALUE]" KeyPath="yes" />
-        <RemoveRegistryKey Action="removeOnUninstall" Root="HKLM" Key="SOFTWARE\PDH-Terminal" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\PDH-Terminal" Name="Betriebsart" Type="string" Value="[ModeValue]" KeyPath="yes" />
       </Component>
       <!-- Edge ohne Erststart-Assistent (nur dieser eine Wert, keine weiteren Richtlinien). -->
       <Component Id="EdgePolicy" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E05">
         <RegistryValue Root="HKLM" Key="SOFTWARE\Policies\Microsoft\Edge" Name="HideFirstRunExperience" Type="integer" Value="1" KeyPath="yes" />
       </Component>
       <!-- Autostart für alle Benutzer: der Starter, nur in der Betriebsart Zusatz (im Kiosk ist er die Shell). -->
-      <Component Id="AutostartRun" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E06">
-        <Condition>NOT KIOSK</Condition>
+      <Component Id="AutostartRun" Guid="2C5E7A10-6B3D-4F8A-9E21-7D4B0C9A1E06" Transitive="yes">
+        <Condition>NOT KioskMode</Condition>
         <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="PDH-Terminal" Type="string" Value="&quot;[#StarterExe]&quot;" KeyPath="yes" />
       </Component>
     </DirectoryRef>

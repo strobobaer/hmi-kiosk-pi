@@ -218,10 +218,12 @@ function InitializeSetup(): Boolean;
 var
   oldText, prev, m: String;
   oldVer, newVer: Int64;
+  msiNames: TArrayOfString;
 begin
   Result := True;
   // MSI und Setup schliessen sich aus (zwei Installationen mit gleichen Pfaden und Einträgen).
-  if RegKeyExists(HKLM64, MsiUpgradeKey) then
+  // Der Schlüssel zählt nur mit einem Wert darunter (ein Wert je installierter ProductCode).
+  if RegGetValueNames(HKLM64, MsiUpgradeKey, msiNames) and (GetArrayLength(msiNames) > 0) then
   begin
     SuppressibleMsgBox('Das PDH-Terminal ist schon als MSI installiert (Verteilung über Intune oder Gruppenrichtlinie). MSI und Setup schließen sich aus: Zuerst das PDH-Terminal unter Apps (Installierte Apps) deinstallieren, dann dieses Setup ausführen.', mbError, MB_OK, IDOK);
     Result := False;

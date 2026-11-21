@@ -41,7 +41,7 @@ Die fertigen Dateien liegen unter [**Releases**](../../releases):
 | `pdh-terminal-<Version>.img.xz` | SD-Abbild des PDH-Terminals für den Raspberry Pi 5 |
 | `pdh-terminal-bundle-<Version>-trixie-arm64.tar.gz` | Offline-Bundle des PDH-Terminals für Raspberry Pi OS / Debian Trixie |
 | `PDH-Terminal-Setup-<Version>.exe` | Setup des PDH-Terminals für Windows 11 (64 Bit) |
-| `PDH-Terminal-<Version>.msi` | MSI des PDH-Terminals für Windows 11 (Intune, Gruppenrichtlinie; `msiexec /i … MODE=zusatz|kiosk /qn`) |
+| `PDH-Terminal-<Version>.msi` | MSI des PDH-Terminals für Windows 11 (Intune, Gruppenrichtlinie; `msiexec /i … MODE=zusatz|kiosk /qn /norestart`) |
 | `pdh-terminal-<Version>-windows-amd64.pkg` | Signiertes Update-Paket des PDH-Terminals für Windows (für Updates laufender Windows-Terminals) |
 | `*.sha256` | Prüfsummen |
 
@@ -213,7 +213,7 @@ Ready-made files are under [**Releases**](../../releases):
 | `pdh-terminal-<version>.img.xz` | SD image of the PDH-Terminal for the Raspberry Pi 5 |
 | `pdh-terminal-bundle-<version>-trixie-arm64.tar.gz` | Offline bundle of the PDH-Terminal for Raspberry Pi OS / Debian Trixie |
 | `PDH-Terminal-Setup-<version>.exe` | Installer of the PDH-Terminal for Windows 11 (64-bit) |
-| `PDH-Terminal-<version>.msi` | MSI of the PDH-Terminal for Windows 11 (Intune, Group Policy; `msiexec /i … MODE=zusatz|kiosk /qn`) |
+| `PDH-Terminal-<version>.msi` | MSI of the PDH-Terminal for Windows 11 (Intune, Group Policy; `msiexec /i … MODE=zusatz|kiosk /qn /norestart`) |
 | `pdh-terminal-<version>-windows-amd64.pkg` | Signed update package of the PDH-Terminal for Windows (for updating running Windows terminals) |
 | `*.sha256` | Checksums |
 
