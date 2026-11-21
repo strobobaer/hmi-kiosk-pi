@@ -22,7 +22,7 @@ import (
 
 // Grenzen des Zwischenspeichers.
 const (
-	MaxBody      = 60 << 20 // größter Inhalt einer Übertragung (Bytes)
+	MaxBody      = 72 << 20 // größter Inhalt einer Übertragung (Bytes): base64 von 50 MB Bildern (≈ 67 MB) plus JSON
 	MaxImage     = 5 << 20  // je Bild (decodiert)
 	MaxImages    = 50 << 20 // alle Bilder zusammen (decodiert)
 	maxSlides    = 200

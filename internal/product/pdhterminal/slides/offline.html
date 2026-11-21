@@ -82,6 +82,7 @@ h1,h2,p,ul{margin:0;padding:0}
   function fillList(tile, kind, items, total) {
     var ul = el('ul', 't-list');
     items.forEach(function (it) {
+      if (!it || typeof it !== "object") return; // ein kaputter Eintrag darf die Folienschau nicht stoppen
       var li = el('li');
       li.appendChild(el('span', 'ti-title', it.title));
       li.appendChild(el('span', 'ti-st', it.statusLabel || it.status || ''));
@@ -114,7 +115,7 @@ h1,h2,p,ul{margin:0;padding:0}
       if (s.title) stage.appendChild(el('div', 'g-cap', s.title));
     } else if (s.kind === 'vorgaenge') {
       var g = el('div', 'g-vorg');
-      var f = s.faults || [], t = s.tickets || [];
+      var f = Array.isArray(s.faults) ? s.faults : [], t = Array.isArray(s.tickets) ? s.tickets : [];
       var hasF = f.length > 0 || (s.faults_total || 0) > 0, hasT = t.length > 0 || (s.tickets_total || 0) > 0;
       if (hasF || !hasT) g.appendChild(tileFor('fault', f, s.faults_total || 0));
       if (hasT || !hasF) g.appendChild(tileFor('ticket', t, s.tickets_total || 0));

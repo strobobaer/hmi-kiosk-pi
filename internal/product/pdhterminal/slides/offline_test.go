@@ -69,7 +69,7 @@ func TestCacheRejectsAndKeepsOld(t *testing.T) {
 	if w := cacheReq(h, http.MethodPost, testOrigin, big); w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("Bild > 5 MB: %d", w.Code)
 	}
-	// über 60 MB: ohne Content-Length (Chunked) liest MaxBytesReader nur bis zur Grenze
+	// über 72 MB: ohne Content-Length (Chunked) liest MaxBytesReader nur bis zur Grenze
 	huge := bytes.Repeat([]byte("a"), MaxBody+1)
 	r := httptest.NewRequest(http.MethodPost, "/api/slides/cache", bytes.NewReader(huge))
 	r.ContentLength = -1
@@ -77,10 +77,10 @@ func TestCacheRejectsAndKeepsOld(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("60 MB chunked: %d", w.Code)
+		t.Errorf("72 MB chunked: %d", w.Code)
 	}
 	if w := cacheReq(h, http.MethodPost, testOrigin, huge); w.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("60 MB: %d", w.Code)
+		t.Errorf("72 MB: %d", w.Code)
 	}
 	if changed.Load() != 0 {
 		t.Errorf("changed nach Ablehnung: %d", changed.Load())

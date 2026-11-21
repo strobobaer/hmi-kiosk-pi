@@ -140,7 +140,7 @@ func TestSaveReplacesAndPrunesOldVersion(t *testing.T) {
 // Review Focus 3: abgelehnte Zwischenspeicher lassen den vorigen Stand unberührt.
 func TestRejectedKeepsOld(t *testing.T) {
 	big := padPNG(t, MaxImage+1)
-	var over bytes.Buffer // > 60 MB Inhalt
+	var over bytes.Buffer // > 72 MB Inhalt
 	over.WriteString(`{"version":"x","slides":[],"pad":"`)
 	over.Write(bytes.Repeat([]byte("a"), MaxBody))
 	over.WriteString(`"}`)
@@ -149,7 +149,7 @@ func TestRejectedKeepsOld(t *testing.T) {
 		data    []byte
 		wantErr error
 	}{
-		{"60 MB", over.Bytes(), ErrTooLarge},
+		{"72 MB", over.Bytes(), ErrTooLarge},
 		{"Bild über 5 MB", payloadJSON(t, "neu", map[string][]byte{"s-img": big}), ErrTooLarge},
 		{"kaputtes JSON", []byte(`{"version":"neu","slides":[`), ErrInvalid},
 		{"halbe Übertragung", payloadJSON(t, "neu", nil)[:40], ErrInvalid},
@@ -260,4 +260,21 @@ func TestNilStoreNotPresent(t *testing.T) {
 	if s.Present() {
 		t.Fatal("nil-Store")
 	}
+}
+
+// 49 MB Bilder (base64 ≈ 65 MB) liegen unter der Lesegrenze und werden gespeichert.
+func TestSaveAccepts49MBOfImages(t *testing.T) {
+	s := newStore(t)
+	imgs := map[string][]byte{}
+	for i := 0; i < 10; i++ {
+		imgs[string(rune('a'+i))+"img"] = padPNG(t, 49*(1<<20)/10)
+	}
+	data := payloadJSON(t, "gross", imgs)
+	if len(data) <= 60<<20 || len(data) > MaxBody {
+		t.Fatalf("Testgröße %d", len(data))
+	}
+	if err := s.Save(data); err != nil {
+		t.Fatalf("49 MB Bilder: %v", err)
+	}
+	mustVersion(t, s, "gross")
 }
