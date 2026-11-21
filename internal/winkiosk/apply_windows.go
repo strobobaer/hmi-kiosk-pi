@@ -21,6 +21,9 @@ import (
 // Zielgerät laufen, nie auf dem Entwicklungsrechner; getestet wird die Logik in plan.go mit einem Fake.
 
 var (
+	procLsaQueryInfoPolicy = advapi32.NewProc("LsaQueryInformationPolicy")
+	procLsaFreeMemory      = advapi32.NewProc("LsaFreeMemory")
+
 	wtsapi32                = windows.NewLazySystemDLL("wtsapi32.dll")
 	procWTSFreeMemory       = wtsapi32.NewProc("WTSFreeMemory")
 	procWTSQuerySessionInfo = wtsapi32.NewProc("WTSQuerySessionInformationW")
@@ -43,23 +46,25 @@ var (
 )
 
 const (
-	userPrivUser       = 1
-	ufScript           = 0x0001
-	ufPasswdCantChange = 0x0040
-	ufDontExpirePasswd = 0x10000
-	nerrUserNotFound   = 2221
-	policyCreateSecret = 0x00000020
-	statusNameNotFound = 0xC0000034
-	errPathNotFound    = 3
-	errFileNotFound    = 2
-	errAlreadyExists   = 0x800700B7 // HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
-	errNoneMapped      = 1332
-	wtsUserName        = 5
-	wtsDomainName      = 7
-	accessFullControl  = 0x1F01FF // FILE_ALL_ACCESS
-	accessModify       = 0x1301BF // Ändern: lesen, schreiben, ausführen, löschen
-	profileListKey     = `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\`
-	editionKey         = `SOFTWARE\Microsoft\Windows NT\CurrentVersion`
+	userPrivUser            = 1
+	ufScript                = 0x0001
+	ufPasswdCantChange      = 0x0040
+	ufDontExpirePasswd      = 0x10000
+	nerrUserNotFound        = 2221
+	policyCreateSecret      = 0x00000020
+	statusNameNotFound      = 0xC0000034
+	errPathNotFound         = 3
+	errFileNotFound         = 2
+	errAlreadyExists        = 0x800700B7 // HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
+	errNoneMapped           = 1332
+	wtsUserName             = 5
+	policyViewLocalInfo     = 0x1
+	policyAccountDomainInfo = 5
+	wtsDomainName           = 7
+	accessFullControl       = 0x1F01FF // FILE_ALL_ACCESS
+	accessModify            = 0x1301BF // Ändern: lesen, schreiben, ausführen, löschen
+	profileListKey          = `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\`
+	editionKey              = `SOFTWARE\Microsoft\Windows NT\CurrentVersion`
 )
 
 type userInfo1 struct {
@@ -220,19 +225,57 @@ func profileImagePath(sid string) (string, error) {
 	return registry.ExpandString(v)
 }
 
-// localAccountResolves prüft eine SID: ok, wenn sie zum lokalen Konto user gehört oder gar nicht mehr aufgelöst
-// werden kann (Waise); Domänen- und andere Konten sind nie unsere.
-func ownOrOrphanSID(sid, user string) bool {
+// localDomainSID ist die SID der lokalen Kontodomäne dieses Rechners (S-1-5-21-a-b-c ohne RID), über
+// LsaQueryInformationPolicy(PolicyAccountDomainInformation).
+func localDomainSID() (string, error) {
+	h, err := lsaOpenAccess(policyViewLocalInfo)
+	if err != nil {
+		return "", err
+	}
+	defer procLsaClose.Call(h)
+	var buf uintptr
+	r, _, _ := procLsaQueryInfoPolicy.Call(h, policyAccountDomainInfo, uintptr(unsafe.Pointer(&buf)))
+	if r != 0 {
+		return "", lsaErr("LsaQueryInformationPolicy", r)
+	}
+	defer procLsaFreeMemory.Call(buf)
+	info := (*struct {
+		DomainName windows.NTUnicodeString
+		DomainSid  *windows.SID
+	})(unsafe.Pointer(buf))
+	if info.DomainSid == nil {
+		return "", errors.New("keine lokale Domänen-SID")
+	}
+	return info.DomainSid.String(), nil
+}
+
+// OwnsProfileSID: siehe Exec. Unauflösbar zählt nur mit dem SID-Präfix der lokalen Kontodomäne als Waise, jeder
+// andere Fehler (z. B. Domänencontroller nicht erreichbar) als "nicht unseres".
+func (s *System) OwnsProfileSID(sid, user string) (bool, error) {
 	p, err := windows.StringToSid(sid)
 	if err != nil {
-		return false
+		return false, err
 	}
 	account, domain, _, err := p.LookupAccount("")
+	res := Resolved
 	if err != nil {
-		return OwnProfileSID(!errors.Is(err, syscall.Errno(errNoneMapped)), "", "", user, "") // nur unauflösbar = Waise
+		if errors.Is(err, syscall.Errno(errNoneMapped)) {
+			res = Unmapped
+		} else {
+			res = LookupFailed
+		}
 	}
-	host, herr := windows.ComputerName()
-	return herr == nil && OwnProfileSID(true, account, domain, user, host)
+	host, err := windows.ComputerName()
+	if err != nil {
+		return false, fmt.Errorf("Computername: %w", err)
+	}
+	prefix := ""
+	if res == Unmapped {
+		if prefix, err = localDomainSID(); err != nil {
+			return false, err
+		}
+	}
+	return OwnProfileSID(sid, res, account, domain, user, host, prefix), nil
 }
 
 func (s *System) UserSID(user string) (string, error) {
@@ -282,8 +325,10 @@ func (s *System) FindOrphanProfiles(user string) ([]string, error) {
 			continue
 		}
 		base := strings.ToLower(filepath.Base(strings.ReplaceAll(p, `/`, `\`)))
-		if (base == strings.ToLower(user) || strings.HasPrefix(base, strings.ToLower(user)+".")) && ownOrOrphanSID(n, user) {
-			out = append(out, n)
+		if base == strings.ToLower(user) || strings.HasPrefix(base, strings.ToLower(user)+".") {
+			if own, err := s.OwnsProfileSID(n, user); err == nil && own {
+				out = append(out, n)
+			}
 		}
 	}
 	return out, nil
@@ -490,10 +535,12 @@ func (s *System) DeleteRegValue(root, path, name string) error {
 	return nil
 }
 
-func lsaOpen() (uintptr, error) {
+func lsaOpen() (uintptr, error) { return lsaOpenAccess(policyCreateSecret) }
+
+func lsaOpenAccess(access uintptr) (uintptr, error) {
 	oa := lsaObjectAttributes{Length: uint32(unsafe.Sizeof(lsaObjectAttributes{}))}
 	var h uintptr
-	r, _, _ := procLsaOpenPolicy.Call(0, uintptr(unsafe.Pointer(&oa)), policyCreateSecret, uintptr(unsafe.Pointer(&h)))
+	r, _, _ := procLsaOpenPolicy.Call(0, uintptr(unsafe.Pointer(&oa)), access, uintptr(unsafe.Pointer(&h)))
 	if r != 0 {
 		return 0, lsaErr("LsaOpenPolicy", r)
 	}

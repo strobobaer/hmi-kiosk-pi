@@ -18,15 +18,16 @@ type fake struct {
 	acl      string // "", "kiosk" oder "zusatz"
 	dataDir  bool   // gibt es den Datenordner?
 
-	calls      []string
-	logs       []string
-	passwords  []string // alle je übergebenen Passwörter
-	failOn     string   // Aufruf (Name oder Name|Argument), der scheitert
-	failErr    error
-	extraFail  map[string]error  // weitere einmalige Ausfälle (z. B. im Rückbau)
-	loggedOn   bool              // Kiosk-Sitzung hält das Profil
-	accounts   map[string]string // SID -> Domäne, für auflösbare Fremdkonten (z. B. CORP)
-	stuckLogon bool              // Abmelden gelingt nicht
+	calls       []string
+	logs        []string
+	passwords   []string // alle je übergebenen Passwörter
+	failOn      string   // Aufruf (Name oder Name|Argument), der scheitert
+	failErr     error
+	extraFail   map[string]error  // weitere einmalige Ausfälle (z. B. im Rückbau)
+	loggedOn    bool              // Kiosk-Sitzung hält das Profil
+	accounts    map[string]string // SID -> Domäne, für auflösbare Fremdkonten (z. B. CORP)
+	lookupFails map[string]bool   // SIDs, deren Auflösung scheitert
+	stuckLogon  bool              // Abmelden gelingt nicht
 }
 
 func newFake() *fake {
@@ -71,7 +72,7 @@ func (f *fake) DeleteUser(name string) error {
 	delete(f.accounts, sidOf(name)) // ab jetzt unauflösbar
 	return nil
 }
-func sidOf(user string) string { return "S-1-5-21-1-" + user }
+func sidOf(user string) string { return "S-1-5-21-1-1001" } // nur der Kiosk-Benutzer kommt vor
 
 const foreignSID = "S-1-5-21-9-1000" // Domänenkonto CORP\PDH-Kiosk mit Profil PDH-Kiosk.CORP
 
@@ -126,8 +127,7 @@ func (f *fake) FindOrphanProfiles(user string) ([]string, error) {
 		if base != user && !strings.HasPrefix(base, user+".") {
 			continue
 		}
-		dom, resolved := f.accounts[sid]
-		if OwnProfileSID(resolved, user, dom, user, "HOST") {
+		if own, _ := f.OwnsProfileSID(sid, user); own {
 			out = append(out, sid)
 		}
 	}
@@ -477,4 +477,24 @@ func (f *fake) foreignCount() int {
 		return 1
 	}
 	return 0
+}
+
+const localPrefix = "S-1-5-21-1" // lokale Kontodomäne des Fake-Rechners
+
+// OwnsProfileSID bildet die Windows-Umsetzung nach: aufgelöste SIDs über accounts (Domäne), sonst Unmapped;
+// f.lookupFails markiert SIDs, deren Auflösung scheitert (Domänencontroller weg).
+func (f *fake) OwnsProfileSID(sid, user string) (bool, error) {
+	dom, ok := f.accounts[sid]
+	res := Unmapped
+	switch {
+	case f.lookupFails[sid]:
+		res = LookupFailed
+	case ok:
+		res = Resolved
+	}
+	account := ""
+	if res == Resolved {
+		account = user // die Fake-Konten heißen alle wie der Benutzer
+	}
+	return OwnProfileSID(sid, res, account, dom, user, "HOST", localPrefix), nil
 }

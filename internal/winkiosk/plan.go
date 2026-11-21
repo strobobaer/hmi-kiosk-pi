@@ -58,6 +58,9 @@ type Exec interface {
 	// FindOrphanProfiles sucht Profile des Namens ohne erinnerte SID: nur solche, deren SID zum lokalen Konto
 	// PDH-Kiosk gehört oder gar nicht mehr aufgelöst werden kann; Domänen- und andere Konten bleiben außen vor.
 	FindOrphanProfiles(user string) ([]string, error)
+	// OwnsProfileSID prüft (auch für die gemerkte SID), ob die SID das lokale Konto user oder dessen Waise
+	// mit lokalem SID-Präfix ist; nur dann darf das Profil gelöscht werden.
+	OwnsProfileSID(sid, user string) (bool, error)
 	LoadHive(profilePath, key string) error
 	UnloadHive(key string) error // ErrNotFound, wenn nicht geladen
 	SetRegString(root, path, name, value string) error
@@ -354,6 +357,17 @@ func Plan(app string) []Step {
 				}
 				var errs []error
 				for _, sid := range sids {
+					if _, err := e.ProfilePathBySID(sid); errors.Is(err, ErrNotFound) {
+						continue
+					}
+					own, err := e.OwnsProfileSID(sid, KioskUser)
+					if err != nil || !own {
+						if err == nil {
+							err = errors.New("gehört nicht zum lokalen Konto, abgelehnt")
+						}
+						errs = append(errs, fmt.Errorf("Profil %s: %w", sid, err))
+						continue
+					}
 					errs = append(errs, ignoreNotFound(e.DeleteProfileBySID(sid)))
 				}
 				return errors.Join(errs...)
@@ -493,8 +507,34 @@ func LocalAccount(account, domain, user, host string) bool {
 	return strings.EqualFold(account, user) && strings.EqualFold(domain, host)
 }
 
-// OwnProfileSID entscheidet für die Suche nach Waisen-Profilen, ob eine SID unsere ist: unauflösbar (resolved ist
-// falsch) oder das lokale Konto user. Alles andere (Domäne, andere Benutzer) bleibt unberührt.
-func OwnProfileSID(resolved bool, account, domain, user, host string) bool {
-	return !resolved || LocalAccount(account, domain, user, host)
+// Resolution ist das Ergebnis der Namensauflösung einer SID.
+type Resolution int
+
+const (
+	Resolved     Resolution = iota // Konto gefunden (account, domain gelten)
+	Unmapped                       // Windows kennt die SID nicht (NONE_MAPPED)
+	LookupFailed                   // sonstiger Fehler: Domänencontroller weg, Zugriff usw.
+)
+
+// SIDPrefix ist die SID ohne die letzte Zahl (RID): S-1-5-21-a-b-c-1000 -> S-1-5-21-a-b-c.
+func SIDPrefix(sid string) string {
+	if i := strings.LastIndex(sid, "-"); i > 0 {
+		return sid[:i]
+	}
+	return ""
+}
+
+// OwnProfileSID entscheidet, ob die SID eines Profils unser lokales Konto user (oder dessen Waise) ist:
+//   - aufgelöst: nur das lokale Konto user dieses Rechners (host);
+//   - nicht aufgelöst (Unmapped): nur Waise, wenn das SID-Präfix das der lokalen Kontodomäne (localPrefix) ist.
+//     Eine Domänen-SID, die ohne Domänencontroller nicht aufgelöst wird, ist keine Waise;
+//   - jeder andere Fehler: nicht unseres.
+func OwnProfileSID(sid string, res Resolution, account, domain, user, host, localPrefix string) bool {
+	switch res {
+	case Resolved:
+		return LocalAccount(account, domain, user, host)
+	case Unmapped:
+		return localPrefix != "" && SIDPrefix(sid) == localPrefix
+	}
+	return false
 }
