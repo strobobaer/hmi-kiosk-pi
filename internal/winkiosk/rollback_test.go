@@ -20,9 +20,15 @@ func TestRunRollsBackItselfAtEveryStep(t *testing.T) {
 		if err == nil || !strings.HasPrefix(err.Error(), "Schritt ") || !strings.Contains(err.Error(), "kaputt") {
 			t.Errorf("%s: Fehler %v", step, err)
 		}
-		// Endzustand direkt nach Run, ohne weiteres Undo: das fremde Autologon ist wieder da, sonst nichts.
-		if f.regs[f.k(HKLM, winlogonKey, "DefaultUserName")] != "S:Hans" || f.regs[f.k(HKLM, winlogonKey, "AutoAdminLogon")] != "S:1" {
-			t.Errorf("%s: fremdes Autologon nicht wiederhergestellt: %v", step, f.regs)
+		// Endzustand direkt nach Run, ohne weiteres Undo: der fremde Benutzername ist wieder da, sonst nichts.
+		// AutoAdminLogon wird nie wiederhergestellt (R8: das Passwort ist nicht sicher zu sichern), sobald das
+		// Autologon angefasst wurde; davor blieb es unberührt.
+		wantAuto := "S:1"
+		if slices.Contains(f.calls, "DeleteRegValue|AutoAdminLogon") {
+			wantAuto = ""
+		}
+		if f.regs[f.k(HKLM, winlogonKey, "DefaultUserName")] != "S:Hans" || f.regs[f.k(HKLM, winlogonKey, "AutoAdminLogon")] != wantAuto {
+			t.Errorf("%s: fremdes Autologon: %v", step, f.regs)
 		}
 		delete(f.regs, f.k(HKLM, winlogonKey, "DefaultUserName"))
 		delete(f.regs, f.k(HKLM, winlogonKey, "AutoAdminLogon"))
@@ -158,8 +164,10 @@ func TestForeignAutologonBackedUpAndRestored(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Wiederhergestellt: alles Fremde außer dem gelöschten Klartext-Passwort; Sicherung weg.
+	// Wiederhergestellt: Benutzername, Domäne und Zähler. Nicht wiederhergestellt (R8): AutoAdminLogon (das Autologon
+	// bleibt aus, bis es mit seinem Passwort neu eingeschaltet wird) und das gelöschte Klartext-Passwort; Sicherung weg.
 	delete(orig, f.k(HKLM, winlogonKey, "DefaultPassword"))
+	delete(orig, f.k(HKLM, winlogonKey, "AutoAdminLogon"))
 	if !maps.Equal(f.regs, orig) {
 		t.Fatalf("Zustand: %v, erwartet %v", f.regs, orig)
 	}
@@ -197,5 +205,87 @@ func TestEveryRunUsesFreshPassword(t *testing.T) {
 	}
 	if f.passwords[2] == first {
 		t.Errorf("Passwort wurde wiederverwendet")
+	}
+}
+
+// R8: Nach dem Rückbau ist das Autologon aus (AutoAdminLogon fehlt), auch wenn vorher ein fremdes lief; Benutzername
+// und Domäne sind wieder da.
+func TestUndoDoesNotRestoreAutoAdminLogon(t *testing.T) {
+	f := newFake()
+	set := func(n, v string) { f.regs[f.k(HKLM, winlogonKey, n)] = v }
+	set("AutoAdminLogon", "S:1")
+	set("DefaultUserName", "S:Hans")
+	set("DefaultDomainName", "S:FIRMA")
+	if err := Run(Plan(app), f); err != nil {
+		t.Fatal(err)
+	}
+	if err := Undo(Plan(app), f); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := f.regs[f.k(HKLM, winlogonKey, "AutoAdminLogon")]; ok {
+		t.Errorf("AutoAdminLogon wurde wiederhergestellt: %q", v)
+	}
+	if f.regs[f.k(HKLM, winlogonKey, "DefaultUserName")] != "S:Hans" || f.regs[f.k(HKLM, winlogonKey, "DefaultDomainName")] != "S:FIRMA" {
+		t.Errorf("Benutzername/Domäne nicht wiederhergestellt: %v", f.regs)
+	}
+	if _, ok := f.regs[f.k(HKLM, backupKey, "Saved")]; ok {
+		t.Error("Sicherung blieb")
+	}
+}
+
+// -acl: setzt die Datenordner-Rechte mit der gemerkten SID, ohne etwas anderes anzufassen.
+func TestReapplyACLUsesRecordedSID(t *testing.T) {
+	f := newFake()
+	if err := Run(Plan(app), f); err != nil {
+		t.Fatal(err)
+	}
+	f.acl, f.aclSID, f.calls = "zusatz", "", nil // das Setup eines Updates hat "Benutzer: Ändern" gesetzt
+	if err := ReapplyACL(f); err != nil {
+		t.Fatal(err)
+	}
+	if f.acl != "kiosk" || f.aclSID != sidOf(KioskUser) {
+		t.Errorf("acl=%s sid=%q", f.acl, f.aclSID)
+	}
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "Set") && c != "SetDataACL|"+sidOf(KioskUser) || strings.HasPrefix(c, "Delete") || strings.HasPrefix(c, "Create") {
+			t.Errorf("-acl änderte mehr als die Rechte: %s", c)
+		}
+	}
+	// Eine gemerkte SID gilt vor der Auflösung des Namens.
+	f.regs[f.k(HKLM, sidPath, sidName)] = "S:S-1-5-21-7-7-7"
+	if err := ReapplyACL(f); err != nil || f.aclSID != "S-1-5-21-7-7-7" {
+		t.Errorf("gemerkte SID nicht genutzt: %v %q", err, f.aclSID)
+	}
+	// Ohne Kiosk (weder SID noch Konto): Fehler, keine Rechte gesetzt.
+	g := newFake()
+	if err := ReapplyACL(g); err == nil || g.acl != "zusatz" {
+		t.Errorf("ohne Kiosk: err=%v acl=%s", err, g.acl)
+	}
+}
+
+// Ein vorhandenes lokales Konto PDH-Kiosk ohne gemerkte SID gehört nicht uns: Setup lehnt ab, nichts wird gelöscht.
+func TestPreflightRefusesForeignAccount(t *testing.T) {
+	f := newFake()
+	f.users[KioskUser] = true
+	f.profiles[sidOf(KioskUser)] = `C:\Users\PDH-Kiosk`
+	err := PreflightSetup(f)
+	if !errors.Is(err, ErrForeignAccount) {
+		t.Fatalf("erwartet ErrForeignAccount, bekam %v", err)
+	}
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "Delete") {
+			t.Errorf("Preflight löschte: %s", c)
+		}
+	}
+	if !f.users[KioskUser] || len(f.profiles) != 1 {
+		t.Error("Konto oder Profil verändert")
+	}
+	// Eigenes Konto (SID gemerkt): erlaubt. Kein Konto: erlaubt.
+	f.regs[f.k(HKLM, sidPath, sidName)] = "S:" + sidOf(KioskUser)
+	if err := PreflightSetup(f); err != nil {
+		t.Errorf("eigenes Konto: %v", err)
+	}
+	if err := PreflightSetup(newFake()); err != nil {
+		t.Errorf("ohne Konto: %v", err)
 	}
 }

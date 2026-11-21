@@ -19,6 +19,8 @@ const (
 	HiveKey = "PDH-Kiosk-Hive"
 	// SecretName ist das LSA-Geheimnis, aus dem Winlogon das Autologon-Passwort liest.
 	SecretName = "DefaultPassword"
+	// LogFileName ist die Protokolldatei des Helfers im Ordner log des Datenordners.
+	LogFileName = "kiosk-setup.log"
 	// PasswordLen ist die Länge des zufälligen Passworts.
 	PasswordLen = 32
 )
@@ -74,7 +76,8 @@ type Exec interface {
 	StoreLSASecret(name string, value []byte) error
 	DeleteLSASecret(name string) error
 	DataDir() string
-	SetDataACL(dir, user string) error
+	// SetDataACL: Administratoren und SYSTEM (Vollzugriff) und das Konto mit der SID (Ändern), ohne Vererbung.
+	SetDataACL(dir, sid string) error
 	RestoreDataACL(dir string) error // ErrNotFound, wenn der Ordner fehlt
 	Logf(format string, args ...any)
 }
@@ -141,7 +144,11 @@ func ShellValue(app string) string {
 
 const logonCount = "AutoLogonCount"
 
-var logonStrings = []string{"AutoAdminLogon", "DefaultUserName", "DefaultDomainName"}
+// logonStrings sind die Werte eines fremden Autologons, die gesichert und beim Rückbau wiederhergestellt werden.
+// AutoAdminLogon fehlt mit Absicht: Es würde das Autologon des früheren Kontos einschalten, dessen Passwort (Klartext
+// DefaultPassword oder LSA-Geheimnis) nicht sicher gesichert werden kann. Nach dem Rückbau ist Autologon aus; ein
+// früheres Autologon muss mit seinem Passwort wieder eingeschaltet werden (docs/betrieb.md).
+var logonStrings = []string{"DefaultUserName", "DefaultDomainName"}
 
 type regValue struct {
 	path, name string
@@ -211,6 +218,51 @@ func profilePath(e Exec) (string, error) {
 		}
 	}
 	return "", ErrNotFound
+}
+
+// recordedSID ist die beim Setup gemerkte SID des Kiosk-Benutzers; ErrNotFound, wenn keine gemerkt ist.
+func recordedSID(e Exec) (string, error) {
+	sid, err := e.GetRegString(HKLM, sidPath, sidName)
+	if err != nil {
+		return "", err
+	}
+	if sid == "" {
+		return "", ErrNotFound
+	}
+	return sid, nil
+}
+
+// ReapplyACL setzt die Rechte des Datenordners für den Kioskbetrieb (Administratoren, SYSTEM, Kiosk-Benutzer über die
+// gemerkte SID; fehlt sie noch, über die SID des lokalen Kontos). Der Helfer-Aufruf -acl nutzt es nach einem
+// Kiosk-Update, weil das Setup den Ordner sonst mit "Benutzer: Ändern" überschreiben würde.
+func ReapplyACL(e Exec) error {
+	sid, err := recordedSID(e)
+	if errors.Is(err, ErrNotFound) {
+		sid, err = e.UserSID(KioskUser)
+	}
+	if err != nil {
+		return fmt.Errorf("SID von %s: %w", KioskUser, err)
+	}
+	return e.SetDataACL(e.DataDir(), sid)
+}
+
+// ErrForeignAccount: Es gibt schon ein lokales Konto PDH-Kiosk, das nicht von der Einrichtung stammt.
+var ErrForeignAccount = errors.New("ein lokales Konto " + KioskUser + " besteht bereits, wurde aber nicht von dieser Einrichtung angelegt")
+
+// PreflightSetup prüft vor -setup, dass kein fremdes Konto PDH-Kiosk besteht. Ohne gemerkte SID (KioskSID) gehört ein
+// vorhandenes Konto nicht uns; der Rückbau vor der Einrichtung würde es samt Profil löschen. Dann: abbrechen.
+func PreflightSetup(e Exec) error {
+	if _, err := recordedSID(e); err == nil {
+		return nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	if _, err := e.UserSID(KioskUser); err == nil {
+		return fmt.Errorf("%w; es wird nicht gelöscht. Konto entfernen oder umbenennen und das Setup erneut ausführen", ErrForeignAccount)
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // Plan liefert die Schritte in der Reihenfolge der Einrichtung. app ist das Programmverzeichnis.
@@ -428,7 +480,9 @@ func Plan(app string) []Step {
 					return err
 				}
 				// Ein Klartext-Passwort und ein Zähler würden das Autologon stören; das Passwort wird nicht gesichert.
-				for _, n := range []string{"DefaultPassword", logonCount} {
+				// AutoAdminLogon wird zuerst gelöscht: Ohne Passwort darf ein fremdes Autologon nicht weiterlaufen,
+				// auch nicht, wenn die Einrichtung danach scheitert (R8: es wird nicht wiederhergestellt).
+				for _, n := range []string{"AutoAdminLogon", "DefaultPassword", logonCount} {
 					if err = ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, n)); err != nil {
 						return err
 					}
@@ -446,7 +500,7 @@ func Plan(app string) []Step {
 			},
 			delLogon},
 		{StepACL,
-			func(e Exec) error { return e.SetDataACL(e.DataDir(), KioskUser) },
+			func(e Exec) error { return ReapplyACL(e) },
 			func(e Exec) error { return ignoreNotFound(e.RestoreDataACL(e.DataDir())) }},
 	}
 }
@@ -490,10 +544,11 @@ func undoAll(steps []Step, e Exec) error {
 	return errors.Join(errs...)
 }
 
-// EditionSupported sagt, ob der Kiosk auf der Edition (EditionID) läuft: Professional*, Enterprise*, Education*.
+// EditionSupported sagt, ob der Kiosk auf der Edition (EditionID) läuft: Professional*, Enterprise*, IoTEnterprise*
+// (zählt als Enterprise), Education*.
 // Core* (Home) und alles Unbekannte ist nein.
 func EditionSupported(editionID string) bool {
-	for _, p := range []string{"Professional", "Enterprise", "Education"} {
+	for _, p := range []string{"Professional", "Enterprise", "IoTEnterprise", "Education"} {
 		if strings.HasPrefix(editionID, p) {
 			return true
 		}

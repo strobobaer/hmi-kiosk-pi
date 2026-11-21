@@ -2,7 +2,8 @@
 
 // pdh-terminal-kiosk ist der Kiosk-Helfer des Windows-Setups. "-setup -app <Ordner>" macht den PC zum Kiosk
 // (Benutzer PDH-Kiosk, Autologon, Shell, Richtlinien, Rechte am Datenordner); "-undo" nimmt alles zurück und ist
-// wiederholbar. Rückgabewert: 0 Erfolg, 2 Edition nicht unterstützt, 1 sonst. Es läuft nur als Administrator auf
+// wiederholbar; "-acl" setzt nur die Rechte des Datenordners für den Kiosk neu (nach einem Kiosk-Update, wenn das
+// Setup den Ordner auf "Benutzer: Ändern" gesetzt hat). Protokoll: logkiosk-setup.log. Rückgabewert: 0 Erfolg, 2 Edition nicht unterstützt, 1 sonst. Es läuft nur als Administrator auf
 // dem Zielgerät und nie auf einem Entwicklungsrechner.
 package main
 
@@ -29,12 +30,19 @@ func run(args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	setup := fs.Bool("setup", false, "Kiosk einrichten")
 	undo := fs.Bool("undo", false, "Kiosk zurücknehmen")
+	acl := fs.Bool("acl", false, "nur die Rechte des Datenordners für den Kiosk neu setzen")
 	app := fs.String("app", "", "Programmordner (für -setup)")
 	if err := fs.Parse(args); err != nil {
 		return exitFail
 	}
-	if *setup == *undo || (*setup && *app == "") {
-		fmt.Fprintln(stderr, "Aufruf: pdh-terminal-kiosk -setup -app <Ordner> | -undo")
+	n := 0
+	for _, b := range []bool{*setup, *undo, *acl} {
+		if b {
+			n++
+		}
+	}
+	if n != 1 || (*setup && *app == "") {
+		fmt.Fprintln(stderr, "Aufruf: pdh-terminal-kiosk -setup -app <Ordner> | -undo | -acl")
 		return exitFail
 	}
 
@@ -49,6 +57,16 @@ func run(args []string, stderr io.Writer) int {
 	sys := winkiosk.NewSystem(lw)
 	steps := winkiosk.Plan(*app)
 
+	if *acl {
+		sys.Logf("-acl")
+		if err := winkiosk.ReapplyACL(sys); err != nil {
+			sys.Logf("Rechte des Datenordners gescheitert: %v", err)
+			fmt.Fprintln(stderr, err)
+			return exitFail
+		}
+		sys.Logf("Rechte des Datenordners gesetzt")
+		return exitOK
+	}
 	if *undo {
 		sys.Logf("-undo")
 		if err := winkiosk.Undo(steps, sys); err != nil {
@@ -69,7 +87,7 @@ func run(args []string, stderr io.Writer) int {
 	}
 	if !winkiosk.EditionSupported(edition) {
 		sys.Logf("Edition %q wird nicht unterstützt", edition)
-		fmt.Fprintln(stderr, "Der Kioskbetrieb braucht Windows 11 Pro, Enterprise oder Education.")
+		fmt.Fprintln(stderr, "Der Kioskbetrieb braucht Windows 11 Pro, Enterprise (auch IoT Enterprise) oder Education.")
 		return exitUnsupported
 	}
 	if _, err := os.Stat(filepath.Join(*app, "pdh-terminal-start.exe")); err != nil {
@@ -78,6 +96,12 @@ func run(args []string, stderr io.Writer) int {
 		return exitFail
 	}
 
+	// Ein fremdes Konto PDH-Kiosk (keine gemerkte SID) darf der Rückbau unten nicht löschen: abbrechen.
+	if err := winkiosk.PreflightSetup(sys); err != nil {
+		sys.Logf("Einrichtung abgelehnt: %v", err)
+		fmt.Fprintln(stderr, err)
+		return exitFail
+	}
 	// Wiederholbar: Reste einer früheren Einrichtung zuerst wegräumen (frisches Passwort, frischer Benutzer).
 	if err := winkiosk.Undo(steps, sys); err != nil {
 		sys.Logf("Aufräumen vor der Einrichtung: %v", err)

@@ -16,6 +16,7 @@ type fake struct {
 	regs     map[string]string // "root|pfad|name" -> Wert (mit Typ-Präfix)
 	secrets  map[string]string
 	acl      string // "", "kiosk" oder "zusatz"
+	aclSID   string // SID, für die SetDataACL zuletzt gesetzt wurde
 	dataDir  bool   // gibt es den Datenordner?
 
 	calls       []string
@@ -227,11 +228,11 @@ func (f *fake) DeleteLSASecret(name string) error {
 	return nil
 }
 func (f *fake) DataDir() string { return `C:\ProgramData\PDH-Terminal` }
-func (f *fake) SetDataACL(dir, user string) error {
-	if err := f.rec("SetDataACL", user); err != nil {
+func (f *fake) SetDataACL(dir, sid string) error {
+	if err := f.rec("SetDataACL", sid); err != nil {
 		return err
 	}
-	f.acl = "kiosk"
+	f.acl, f.aclSID = "kiosk", sid
 	return nil
 }
 func (f *fake) RestoreDataACL(dir string) error {
@@ -296,6 +297,9 @@ func TestPlanOrderAndValues(t *testing.T) {
 	}
 	if !f.users[KioskUser] || f.acl != "kiosk" || len(f.loaded) != 0 {
 		t.Errorf("Endzustand: users=%v acl=%s loaded=%v", f.users, f.acl, f.loaded)
+	}
+	if f.aclSID != sidOf(KioskUser) {
+		t.Errorf("Datenordner-Rechte für SID %q, erwartet %q", f.aclSID, sidOf(KioskUser))
 	}
 	if len(f.secrets[SecretName]) != PasswordLen {
 		t.Errorf("LSA-Geheimnis fehlt oder falsche Länge")
@@ -419,7 +423,7 @@ func TestNewPassword(t *testing.T) {
 func TestEditionSupported(t *testing.T) {
 	for id, want := range map[string]bool{
 		"Professional": true, "ProfessionalN": true, "ProfessionalWorkstation": true, "Enterprise": true,
-		"EnterpriseS": true, "Education": true, "Core": false, "CoreSingleLanguage": false, "CoreN": false, "": false,
+		"EnterpriseS": true, "Education": true, "IoTEnterprise": true, "IoTEnterpriseS": true, "IoTEnterpriseSK": true, "IoTCore": false, "Core": false, "CoreSingleLanguage": false, "CoreN": false, "": false,
 		"ServerStandard": false,
 	} {
 		if got := EditionSupported(id); got != want {

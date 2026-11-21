@@ -107,8 +107,8 @@ func dataDir() string {
 	return filepath.Join(pd, "PDH-Terminal")
 }
 
-// LogPath ist die Protokolldatei des Helfers.
-func LogPath() string { return filepath.Join(dataDir(), "log", "kiosk.log") }
+// LogPath ist die Protokolldatei des Helfers. Eigener Name: kiosk.log ist das Journal des Terminalprogramms.
+func LogPath() string { return filepath.Join(dataDir(), "log", LogFileName) }
 
 // System setzt Exec mit Win32 um. Es schreibt nie das Passwort ins Protokoll.
 type System struct {
@@ -610,9 +610,9 @@ func wellKnown(t windows.WELL_KNOWN_SID_TYPE) (*windows.SID, error) {
 	return windows.CreateWellKnownSid(t)
 }
 
-// SetDataACL: nur Administratoren und SYSTEM (Vollzugriff) und der Kiosk-Benutzer (Ändern), vererbt, ohne
+// SetDataACL: nur Administratoren und SYSTEM (Vollzugriff) und das Konto mit der SID (Ändern), vererbt, ohne
 // Rechte aus dem übergeordneten Ordner.
-func (s *System) SetDataACL(dir, user string) error {
+func (s *System) SetDataACL(dir, sid string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -624,9 +624,9 @@ func (s *System) SetDataACL(dir, user string) error {
 	if err != nil {
 		return err
 	}
-	u, err := userSID(user)
+	u, err := windows.StringToSid(sid)
 	if err != nil {
-		return err
+		return fmt.Errorf("SID %q: %w", sid, err)
 	}
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
 		access(admins, accessFullControl), access(system, accessFullControl), access(u, accessModify),
