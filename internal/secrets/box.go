@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 )
 
@@ -139,6 +140,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) (err error) {
 	}
 	if err = os.Rename(tmp.Name(), path); err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		return nil // Windows kennt kein fsync auf einem Ordner (Open+Sync: Zugriff verweigert); Rename ist dort dauerhaft
 	}
 	d, err := os.Open(dir)
 	if err != nil {

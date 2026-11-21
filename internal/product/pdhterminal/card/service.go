@@ -28,15 +28,23 @@ type Settings struct {
 	I2CBus    string // Nummer oder Gerätepfad, z. B. "1"
 	I2CAddr   int    // 0 = 0x24
 	USBDevice string // vvvv:pppp oder Namensteil
-	Format    string // nur PN532, siehe FormatUID
+	Format    string // nur PN532: Ausgabeform (FormatUID)
+	USBFormat string // nur USB: was der Leser tippt (normalizeUID); leer: der Text bleibt unverändert
 
 	Bus         string // nur PN532: "" (I²C), BusSPI oder BusUART
 	SPIDev      string // Gerätepfad bei BusSPI
 	UARTDev     string // Gerätepfad bei BusUART
 	Unsupported string // Grund, wenn Typ oder Anschluss dieser Version unbekannt sind (Leser bleibt aus)
+
+	Global bool // Globales Terminal (Infobildschirm, Zwischenspeicher vorhanden): der Leser bleibt aus
 }
 
-func (s Settings) off() bool { return s.Type == "" || s.Type == "aus" || s.Unsupported != "" }
+// GlobalDetail ist der Statustext, solange ein globales Terminal den Leser abgeschaltet hat.
+const GlobalDetail = "Globales Terminal: Kartenleser aus"
+
+func (s Settings) off() bool {
+	return s.Global || s.Type == "" || s.Type == "aus" || s.Unsupported != ""
+}
 
 // Status ist der Zustand des Lesers für die Anzeige.
 type Status struct {
@@ -122,6 +130,11 @@ func (s *Service) Apply(st Settings) {
 
 	s.mu.Lock()
 	s.cur, s.started = st, true
+	if st.Global {
+		s.setStatusLocked(Status{Detail: GlobalDetail, State: StateNone})
+		s.mu.Unlock()
+		return
+	}
 	if st.Unsupported != "" {
 		s.setStatusLocked(Status{Detail: st.Unsupported, State: StateError})
 		s.mu.Unlock()
@@ -188,6 +201,22 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 	if err != nil {
 		return err
 	}
+	// Ein Leser, der das Gerät und das Abfangen überwacht (USB unter Windows), meldet sich über sig:
+	// Abgezogen heißt Fehler „Leser getrennt“, Anstecken macht es wieder gut, ohne Neustart.
+	sig := &readerSignals{}
+	if sr, ok := r.(signalReader); ok {
+		sr.SetSignals(func(msg string) {
+			if msg != "" {
+				s.logf("kartenleser: %s", msg)
+			}
+			s.setStatus(ctx, sig.setWarn(msg, st, r))
+		}, func(attached bool) {
+			if !attached {
+				s.logf("kartenleser: %s", detachedText)
+			}
+			s.setStatus(ctx, sig.setAttached(attached, st, r))
+		})
+	}
 	s.mu.Lock()
 	s.rd = r
 	s.mu.Unlock()
@@ -200,14 +229,54 @@ func (s *Service) runOnce(ctx context.Context, st Settings) error {
 	// Als aktiv gilt der Leser erst, wenn er stable lang ohne Fehler läuft; sonst würde
 	// ein sofort scheiternder Leser (z. B. Grab) zwischen "bereit" und Fehler flackern.
 	t := time.AfterFunc(s.stable, func() {
-		s.setStatus(ctx, Status{Active: true, Detail: readyText(st, r), State: StateOK})
+		s.setStatus(ctx, sig.current(st, r))
 	})
 	defer t.Stop()
 	return r.Run(ctx, s.hub.Publish)
 }
 
+// detachedText ist der Status, solange das gewählte Lesergerät fehlt.
+const detachedText = "Leser getrennt"
+
+// readerSignals führt den Status eines Lesers, der Abfangen und Gerät meldet.
+type readerSignals struct {
+	mu       sync.Mutex
+	detached bool
+	warn     string
+}
+
+func (g *readerSignals) setWarn(msg string, st Settings, r reader) Status {
+	g.mu.Lock()
+	g.warn = msg
+	g.mu.Unlock()
+	return g.current(st, r)
+}
+
+func (g *readerSignals) setAttached(attached bool, st Settings, r reader) Status {
+	g.mu.Lock()
+	g.detached = !attached
+	g.mu.Unlock()
+	return g.current(st, r)
+}
+
+// current: getrennt vor Warnung vor „bereit“.
+func (g *readerSignals) current(st Settings, r reader) Status {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch {
+	case g.detached:
+		return Status{Detail: detachedText, State: StateError}
+	case g.warn != "":
+		return Status{Active: true, Detail: g.warn, State: StateError}
+	}
+	return Status{Active: true, Detail: readyText(st, r), State: StateOK}
+}
+
 func readyText(st Settings, r reader) string {
 	if u, ok := r.(*usbReader); ok {
+		if len(u.devs) == 0 {
+			return fmt.Sprintf("USB-Leser bereit: %s", u.sel)
+		}
 		return "USB-Leser bereit: " + usbNames(u.devs)
 	}
 	if st.Type == TypePN532I2C {
@@ -221,6 +290,9 @@ func (s *Service) Probe(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	st, rd := s.cur, s.rd
 	s.mu.Unlock()
+	if st.Global {
+		return "", errors.New(GlobalDetail)
+	}
 	if st.Unsupported != "" {
 		return "", errors.New(st.Unsupported)
 	}
@@ -248,10 +320,10 @@ func openReader(st Settings) (reader, error) {
 		return openPN532(st)
 	case TypeUSB:
 		devs := matchDevices(ListInputDevices("/dev/input"), st.USBDevice)
-		if len(devs) == 0 {
+		if len(devs) == 0 && !usbMayBeAbsent {
 			return nil, fmt.Errorf("USB-Leser %q nicht gefunden", st.USBDevice)
 		}
-		return &usbReader{devs: devs}, nil
+		return newUSBReader(st, devs), nil
 	}
 	return nil, fmt.Errorf("unbekannter Lesertyp %q", st.Type)
 }

@@ -2,6 +2,7 @@ package release
 
 import (
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -33,8 +34,42 @@ func ProductByID(id string) (Product, bool) {
 	return Product{}, false
 }
 
-// PackageName ist der Name der Paketdatei im Release.
-func (p Product) PackageName(version string) string { return p.ID + "-" + version + ".pkg" }
+// PlatformWindowsAMD64 ist die Plattformkennung der Windows-Pakete (PAX-Datensatz HMIKIOSK.platform,
+// Suffix des Paketnamens). Linux-Pakete tragen keine Kennung (leer).
+const PlatformWindowsAMD64 = "windows-amd64"
+
+// PlatformFor liefert die Plattformkennung für ein Betriebssystem und eine Architektur;
+// leer heißt Linux (ohne Datensatz im Paket) oder keine Paketplattform.
+func PlatformFor(goos, goarch string) string {
+	if goos == "windows" && goarch == "amd64" {
+		return PlatformWindowsAMD64
+	}
+	return ""
+}
+
+// CurrentPlatform ist die Plattformkennung des laufenden Programms: "windows-amd64" unter
+// Windows, sonst leer.
+func CurrentPlatform() string { return PlatformFor(runtime.GOOS, runtime.GOARCH) }
+
+// PackageName ist der Name der Paketdatei im Release (Linux).
+func (p Product) PackageName(version string) string { return p.PackageNameFor(version, "") }
+
+// PackageNameFor ist der Name der Paketdatei für eine Plattform: ohne Plattform
+// <ID>-<version>.pkg, sonst <ID>-<version>-<platform>.pkg.
+func (p Product) PackageNameFor(version, platform string) string {
+	if platform == "" {
+		return p.ID + "-" + version + ".pkg"
+	}
+	return p.ID + "-" + version + "-" + platform + ".pkg"
+}
+
+// BinaryFor ist der Name der Programmdatei im Paket: unter Windows mit ".exe".
+func (p Product) BinaryFor(platform string) string {
+	if strings.HasPrefix(platform, "windows-") {
+		return p.Binary + ".exe"
+	}
+	return p.Binary
+}
 
 var tagVersionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 

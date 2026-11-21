@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 const (
@@ -106,6 +107,9 @@ func (s *Store) writeAtomic(name string, data []byte) (err error) {
 	}
 	if err = os.Rename(tmp.Name(), s.path(name)); err != nil {
 		return err
+	}
+	if runtime.GOOS == "windows" {
+		return nil // Windows kennt kein fsync auf einem Ordner (Open+Sync: Zugriff verweigert); Rename ist dort dauerhaft
 	}
 	d, err := os.Open(s.dir)
 	if err != nil {

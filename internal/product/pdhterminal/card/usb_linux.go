@@ -11,6 +11,7 @@ import (
 	"sort"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"hmikiosk/internal/platform"
@@ -134,4 +135,26 @@ func readExclusive(ctx context.Context, paths []string, fn func(platform.InputEv
 		return nil
 	}
 	return errors.New("Leser getrennt")
+}
+
+// readKeys übernimmt alle Knoten exklusiv (sonst landet die UID als Tastatureingabe im Browser)
+// und liest erst danach.
+func (u *usbReader) readKeys(ctx context.Context, fn func(code uint16, at time.Time)) error {
+	paths := make([]string, len(u.devs))
+	for i, d := range u.devs {
+		paths[i] = d.Path
+	}
+	return readExclusive(ctx, paths, func(ev platform.InputEvent) {
+		if ev.Type == evKey && ev.Value == 1 {
+			fn(ev.Code, time.Now())
+		}
+	})
+}
+
+// usbMayBeAbsent: Unter Windows startet der Leser auch ohne angestecktes Gerät und findet es später
+// von selbst (Auswahl per Kennung oder Name, nicht per Handle); unter Linux scheitert das Öffnen.
+const usbMayBeAbsent = false
+
+func learnPlatform(ctx context.Context, d time.Duration) (InputDevice, string, error) {
+	return InputDevice{}, "", errNotSupported
 }

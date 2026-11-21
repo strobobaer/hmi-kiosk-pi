@@ -72,8 +72,14 @@ func compareNumber(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// Select wählt die höchste Version des Produkts p über current. nil heißt: nichts Neueres.
+// Select wählt die höchste Version des Produkts p über current (Linux-Paket). nil heißt: nichts Neueres.
 func Select(rels []Release, p release.Product, current string, prerelease bool) (*Offer, error) {
+	return SelectFor(rels, p, "", current, prerelease)
+}
+
+// SelectFor wie Select für ein Gerät der Plattform platform (leer: Linux). Gesucht wird die
+// Paketdatei dieser Plattform.
+func SelectFor(rels []Release, p release.Product, platform, current string, prerelease bool) (*Offer, error) {
 	if !update.ValidVersion(current) {
 		return nil, ErrNoRelease
 	}
@@ -97,9 +103,9 @@ func Select(rels []Release, p release.Product, current string, prerelease bool) 
 	if isHTTPS(best.HTMLURL) {
 		o.PageURL = best.HTMLURL
 	}
-	o.NoPackage = fmt.Sprintf("Das Release enthält keine Paketdatei %s. Diese Version kommt nur mit einem neuen SD-Abbild oder dem Bundle.", p.PackageName(bestVersion))
+	o.NoPackage = fmt.Sprintf("Das Release enthält keine Paketdatei %s. Diese Version kommt nur mit einem neuen SD-Abbild oder dem Bundle.", p.PackageNameFor(bestVersion, platform))
 	for _, a := range best.Assets {
-		if a.Name != p.PackageName(bestVersion) {
+		if a.Name != p.PackageNameFor(bestVersion, platform) {
 			continue
 		}
 		switch {

@@ -99,3 +99,16 @@ func TestEventPathLess(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 }
+
+func TestUSBReaderFormatOnlyFromUSBFormat(t *testing.T) {
+	const typed = "0123456789"
+	// Format ist PN532-Sache: ein altes format=dec ändert die UID des USB-Lesers nicht.
+	r := newUSBReader(Settings{Type: TypeUSB, USBDevice: "x", Format: "dec"}, nil)
+	if got := normalizeUID(typed, r.format); got != typed {
+		t.Errorf("Format dec ohne USBFormat: %q, erwartet unverändert", got)
+	}
+	r = newUSBReader(Settings{Type: TypeUSB, USBDevice: "x", USBFormat: "dec"}, nil)
+	if got := normalizeUID(typed, r.format); got != "15CD5B07" {
+		t.Errorf("USBFormat dec: %q, erwartet 15CD5B07", got)
+	}
+}

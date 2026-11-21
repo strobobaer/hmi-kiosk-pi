@@ -205,6 +205,11 @@ type adminEnv struct {
 const adminPassword = "Passwort-fuer-Tests-1"
 
 func newAdminEnv(t *testing.T, client Client) *adminEnv {
+	return newAdminEnvWith(t, client, func(*adminProduct) {})
+}
+
+// newAdminEnvWith wie newAdminEnv; tune ändert das Produkt vor dem Aufbau der Seite (etwa für den Kiosk).
+func newAdminEnvWith(t *testing.T, client Client, tune func(*adminProduct)) *adminEnv {
 	t.Helper()
 	dir := t.TempDir()
 	box, err := secrets.OpenBox(filepath.Join(dir, "secrets.key"), false)
@@ -227,6 +232,7 @@ func newAdminEnv(t *testing.T, client Client) *adminEnv {
 	display := oled.NewService(nil)
 	t.Cleanup(display.Close)
 	prod := newAdminProduct(dir, client, cards, display)
+	tune(prod)
 	h := web.NewAdmin(web.AdminDeps{
 		Store: store, Box: box, Apply: func(config.Config) {}, Helper: nopHelper{},
 		Status:  func() web.SystemStatus { return web.SystemStatus{} },

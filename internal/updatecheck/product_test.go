@@ -36,3 +36,33 @@ func TestSelectByProduct(t *testing.T) {
 		t.Fatalf("%+v", o)
 	}
 }
+
+func TestSelectByPlatform(t *testing.T) {
+	asset := func(name string) Asset {
+		return Asset{Name: name, Size: 10, URL: "https://github.com/o/r/releases/download/t/" + name}
+	}
+	const tag = "pdh-terminal-v0.3.0"
+	rels := []Release{rel(tag, asset("pdh-terminal-0.3.0.pkg"), asset("pdh-terminal-0.3.0-windows-amd64.pkg"))}
+	o, err := SelectFor(rels, release.PDHTerminal, release.PlatformWindowsAMD64, "0.1.0", false)
+	if err != nil || o == nil || !o.Installable() || !strings.HasSuffix(o.AssetURL, "/pdh-terminal-0.3.0-windows-amd64.pkg") {
+		t.Fatalf("Windows: %+v %v", o, err)
+	}
+	o, err = SelectFor(rels, release.PDHTerminal, "", "0.1.0", false)
+	if err != nil || o == nil || !o.Installable() || !strings.HasSuffix(o.AssetURL, "/pdh-terminal-0.3.0.pkg") {
+		t.Fatalf("Linux: %+v %v", o, err)
+	}
+	// Ein Release nur mit Linux-Paket ist unter Windows nicht installierbar, und umgekehrt.
+	linOnly := []Release{rel(tag, asset("pdh-terminal-0.3.0.pkg"))}
+	if o, _ := SelectFor(linOnly, release.PDHTerminal, release.PlatformWindowsAMD64, "0.1.0", false); o == nil || o.Installable() ||
+		!strings.Contains(o.NoPackage, "pdh-terminal-0.3.0-windows-amd64.pkg") {
+		t.Fatalf("Windows ohne Paket: %+v", o)
+	}
+	winOnly := []Release{rel(tag, asset("pdh-terminal-0.3.0-windows-amd64.pkg"))}
+	if o, _ := SelectFor(winOnly, release.PDHTerminal, "", "0.1.0", false); o == nil || o.Installable() {
+		t.Fatalf("Linux nimmt Windows-Paket: %+v", o)
+	}
+	// Select (ohne Plattform) bleibt wie bisher.
+	if o, _ := Select(rels, release.PDHTerminal, "0.1.0", false); o == nil || !strings.HasSuffix(o.AssetURL, "/pdh-terminal-0.3.0.pkg") {
+		t.Fatalf("Select: %+v", o)
+	}
+}

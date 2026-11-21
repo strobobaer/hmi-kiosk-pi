@@ -70,26 +70,89 @@ type CornerCfg struct {
 // AxisRange ist der Wertebereich einer Touchachse (EVIOCGABS).
 type AxisRange struct{ Min, Max int32 }
 
-// cornerDetector erkennt „Finger bleibt Hold lang oben rechts“. Nur der erste Finger
-// (Slot 0) zählt. Ausgewertet wird bei EV_SYN; weil ein ruhender Finger keine
+// cornerGesture ist die plattformneutrale Erkennung „Zeiger bleibt Hold lang im Feld oben
+// rechts“ (x >= minX und y <= maxY). Die Plattformen speisen sie mit Down, Move und Up;
+// weil ein ruhender Zeiger keine Ereignisse erzeugt, muss der Aufrufer zusätzlich regelmäßig
+// Tick rufen. Jede Methode liefert true genau einmal je Halten. Nicht nebenläufig sicher.
+type cornerGesture struct {
+	hold       time.Duration
+	minX, maxY int64
+	down       bool
+	x, y       int64
+	inField    bool
+	since      time.Time
+	fired      bool
+}
+
+func newCornerGesture(hold time.Duration, minX, maxY int64) *cornerGesture {
+	if hold <= 0 {
+		hold = defaultCornerHold
+	}
+	return &cornerGesture{hold: hold, minX: minX, maxY: maxY}
+}
+
+// Down: Der Zeiger (erster Finger, linke Maustaste) setzt bei (x, y) auf.
+func (g *cornerGesture) Down(x, y int64, now time.Time) bool {
+	g.down, g.x, g.y = true, x, y
+	return g.evaluate(now)
+}
+
+// Move: Der aufgesetzte Zeiger bewegt sich; ohne Aufsetzen ohne Wirkung.
+func (g *cornerGesture) Move(x, y int64, now time.Time) bool {
+	if !g.down {
+		return false
+	}
+	g.x, g.y = x, y
+	return g.evaluate(now)
+}
+
+// Up: Der Zeiger hebt ab; das Halten ist beendet.
+func (g *cornerGesture) Up(now time.Time) bool {
+	g.down = false
+	return g.evaluate(now)
+}
+
+// TickSynced wie Tick, gleicht aber vorher mit dem tatsächlichen Tastenzustand ab: Ist die Taste nicht mehr
+// gedrückt, obwohl das Loslassen verloren ging, gilt das als Up (kein falsches Auslösen nach der Haltezeit).
+func (g *cornerGesture) TickSynced(now time.Time, buttonDown bool) bool {
+	if g.down && !buttonDown {
+		g.Up(now)
+	}
+	return g.Tick(now)
+}
+
+// Tick prüft die Haltezeit, ohne dass sich etwas bewegt hat.
+func (g *cornerGesture) Tick(now time.Time) bool { return g.evaluate(now) }
+
+func (g *cornerGesture) evaluate(now time.Time) bool {
+	in := g.down && g.x >= g.minX && g.y <= g.maxY
+	if !in {
+		g.inField, g.fired = false, false
+		return false
+	}
+	if !g.inField {
+		g.inField, g.since, g.fired = true, now, false
+		return false
+	}
+	if !g.fired && now.Sub(g.since) >= g.hold {
+		g.fired = true
+		return true
+	}
+	return false
+}
+
+// cornerDetector setzt Linux-Eingabeereignisse (evdev) auf cornerGesture um. Nur der erste
+// Finger (Slot 0) zählt. Ausgewertet wird bei EV_SYN; weil ein ruhender Finger keine
 // Ereignisse erzeugt, muss der Aufrufer zusätzlich regelmäßig ein EV_SYN einspeisen.
 type cornerDetector struct {
-	hold         time.Duration
-	minX, maxY   int64 // Feld: x >= minX und y <= maxY
+	g            *cornerGesture
 	slot         int32
 	touching     bool
 	x, y         int32
 	haveX, haveY bool
-	inField      bool
-	since        time.Time
-	fired        bool
 }
 
 func newCornerDetector(cfg CornerCfg, x, y AxisRange) *cornerDetector {
-	d := &cornerDetector{hold: cfg.Hold}
-	if d.hold <= 0 {
-		d.hold = defaultCornerHold
-	}
 	px := cfg.RegionPx
 	if px <= 0 {
 		px = defaultCornerPx
@@ -100,9 +163,9 @@ func newCornerDetector(cfg CornerCfg, x, y AxisRange) *cornerDetector {
 		}
 		return span * defaultCornerPct / 100
 	}
-	d.minX = int64(x.Max) - margin(int64(x.Max)-int64(x.Min), cfg.ScreenW)
-	d.maxY = int64(y.Min) + margin(int64(y.Max)-int64(y.Min), cfg.ScreenH)
-	return d
+	minX := int64(x.Max) - margin(int64(x.Max)-int64(x.Min), cfg.ScreenW)
+	maxY := int64(y.Min) + margin(int64(y.Max)-int64(y.Min), cfg.ScreenH)
+	return &cornerDetector{g: newCornerGesture(cfg.Hold, minX, maxY)}
 }
 
 // feed verarbeitet ein Ereignis und liefert true genau einmal je Halten.
@@ -129,24 +192,14 @@ func (d *cornerDetector) feed(ev rawEvent, now time.Time) bool {
 			d.touching = ev.Value >= 0
 		}
 	case evSyn:
-		return d.evaluate(now)
-	}
-	return false
-}
-
-func (d *cornerDetector) evaluate(now time.Time) bool {
-	in := d.touching && d.haveX && d.haveY && int64(d.x) >= d.minX && int64(d.y) <= d.maxY
-	if !in {
-		d.inField, d.fired = false, false
-		return false
-	}
-	if !d.inField {
-		d.inField, d.since, d.fired = true, now, false
-		return false
-	}
-	if !d.fired && now.Sub(d.since) >= d.hold {
-		d.fired = true
-		return true
+		switch {
+		case !d.touching || !d.haveX || !d.haveY:
+			return d.g.Up(now)
+		case !d.g.down:
+			return d.g.Down(int64(d.x), int64(d.y), now)
+		default:
+			return d.g.Move(int64(d.x), int64(d.y), now)
+		}
 	}
 	return false
 }

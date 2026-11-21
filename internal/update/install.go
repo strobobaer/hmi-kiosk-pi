@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -16,6 +17,13 @@ import (
 	"hmikiosk/internal/release"
 )
 
+// packageFile ist der Name des Pakets neben dem Programm (nur Windows).
+const packageFile = "package.pkg"
+
+// BadMarker ist die Datei im Versionsordner (nur Windows), mit der der Starter eine Version
+// als schlecht kennzeichnet, die sich nicht gesund gemeldet hat. Ein neues Paket derselben Version ersetzt den Ordner.
+const BadMarker = "bad"
+
 // Install entpackt ein geprüftes Paket nach <root>/app/<version>. Es schaltet
 // nichts um. Der Entpackvorgang läuft in einem temporären Ordner und wird erst
 // am Ende umbenannt; bei einem Fehler bleibt nichts zurück.
@@ -26,6 +34,9 @@ func Install(root string, p *Package) (version string, err error) {
 	binary, ok := binaryFor(p.Product)
 	if !ok {
 		return "", errors.New("Paket ungültig")
+	}
+	if p.Platform != "" {
+		binary += ".exe"
 	}
 	app := appPath(root)
 	if err := os.MkdirAll(app, 0o755); err != nil {
@@ -58,11 +69,27 @@ func Install(root string, p *Package) (version string, err error) {
 	if err != nil {
 		return "", err
 	}
+	if p.Platform != "" {
+		// Windows: das Paket bleibt neben dem Programm, damit der Starter es später prüfen kann.
+		blob := append(append([]byte{}, p.sig...), p.targz...)
+		if err := writeNew(filepath.Join(tmp, packageFile), bytes.NewReader(blob), 0o644); err != nil {
+			return "", err
+		}
+	}
 	if err := syncDir(tmp); err != nil {
 		return "", err
 	}
 	dest := filepath.Join(app, p.Version)
-	if _, statErr := os.Lstat(dest); statErr == nil {
+	if _, statErr := os.Lstat(dest); statErr == nil && p.Platform != "" {
+		// Windows: Es gibt keine Verweise current/previous. Ein vorhandener Ordner bleibt (er kann
+		// die laufende oder die Rückfall-Version sein); nur eine als schlecht markierte Version wird ersetzt.
+		if _, err := os.Lstat(filepath.Join(dest, BadMarker)); err != nil {
+			return "", fmt.Errorf("Version %s ist bereits installiert", p.Version)
+		}
+		if err := os.RemoveAll(dest); err != nil {
+			return "", err
+		}
+	} else if statErr == nil {
 		cur, err := readLink(root, currentLink)
 		if err != nil {
 			return "", err
@@ -154,6 +181,8 @@ type Installer struct {
 	SystemLevel func() int
 	// Product ist das Produkt dieses Geräts; leer gilt als HMI-Kiosk.
 	Product release.Product
+	// Platform ist die Plattform dieses Geräts (release.CurrentPlatform); leer ist Linux.
+	Platform string
 
 	mu sync.Mutex
 }
@@ -189,6 +218,9 @@ func (in *Installer) install(ctx context.Context, blob []byte, want string) (str
 	if err := in.checkProduct(p); err != nil {
 		return "", err
 	}
+	if err := in.checkPlatform(p); err != nil {
+		return "", err
+	}
 	if err := in.checkSystemLevel(p); err != nil {
 		return "", err
 	}
@@ -207,8 +239,12 @@ func (in *Installer) install(ctx context.Context, blob []byte, want string) (str
 	if free == nil {
 		free = FreeBytes
 	}
-	if err := Prune(in.Root); err != nil {
-		log.Printf("Aufräumen alter Versionen: %v", err)
+	// Unter Windows räumt der Starter nach einem gesunden Start auf; Prune kennt dort weder
+	// die laufende noch die Rückfall-Version und löschte beide.
+	if in.Platform == "" {
+		if err := Prune(in.Root); err != nil {
+			log.Printf("Aufräumen alter Versionen: %v", err)
+		}
 	}
 	avail, err := free(app)
 	if err != nil {
@@ -257,6 +293,14 @@ func (in *Installer) checkProduct(p *Package) error {
 		name = pp.Name
 	}
 	return fmt.Errorf("Paket gehört zu %s, dieses Gerät ist %s.", name, dev.Name)
+}
+
+// checkPlatform lehnt ein Paket für ein anderes Betriebssystem ab (leer ist Linux).
+func (in *Installer) checkPlatform(p *Package) error {
+	if p.Platform != in.Platform {
+		return errors.New("Paket ist für ein anderes Betriebssystem")
+	}
+	return nil
 }
 
 // checkSystemLevel lehnt ein Paket ab, das neuere Systemteile braucht, als das Gerät hat:

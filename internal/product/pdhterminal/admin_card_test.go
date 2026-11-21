@@ -1,15 +1,20 @@
 package pdhterminal
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/product/pdhterminal/card"
 )
 
 func TestAdminCardSave(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	r := e.post("/admin/card/settings", url.Values{"type": {"pn532-i2c"}, "i2cBus": {"/dev/i2c-1"}, "i2cAddr": {"0x24"}, "format": {"hex-rev"}})
 	if r.Code != http.StatusOK {
@@ -95,6 +100,7 @@ func TestAdminCardUSBFreeFieldPrefill(t *testing.T) {
 }
 
 func TestCardSettingsMapping(t *testing.T) {
+	skipOnWindows(t)
 	got := cardSettings(config.CardCfg{Type: "pn532-i2c", PN532Bus: "spi"})
 	if got.Bus != "spi" || got.SPIDev != "/dev/spidev0.0" || got.Unsupported != "" {
 		t.Errorf("SPI: %+v", got)
@@ -110,6 +116,7 @@ func TestCardSettingsMapping(t *testing.T) {
 }
 
 func TestCardSaveSPI(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	r := e.post("/admin/card/settings", url.Values{"type": {"pn532-spi"}, "spiDev": {"/dev/spidev0.1"}, "uartDev": {"/dev/ttyS0"}})
 	if r.Code != http.StatusOK {
@@ -195,11 +202,202 @@ func TestCardSaveIgnoresI2CFieldsForOtherTypes(t *testing.T) {
 }
 
 func TestAdminCardFieldGroups(t *testing.T) {
+	skipOnWindows(t)
 	e := newAdminEnv(t, newFakePDH(t).client())
 	body := e.get("/admin/card").Body.String()
 	for _, cls := range []string{"f-i2c", "f-spi", "f-uart", "f-usb", "f-pn532"} {
 		if !strings.Contains(body, cls) {
 			t.Errorf("Feldgruppe %s fehlt im Formular", cls)
 		}
+	}
+}
+
+// windowsForm schaltet das Formular für die Dauer des Tests auf Windows.
+func windowsForm(t *testing.T) {
+	t.Helper()
+	old := formWindows
+	formWindows = true
+	t.Cleanup(func() { formWindows = old })
+}
+
+func TestCardFormWindowsTypes(t *testing.T) {
+	windowsForm(t)
+	e := newAdminEnv(t, newFakePDH(t).client())
+	body := e.get("/admin/card").Body.String()
+	sel := body[strings.Index(body, `<select name="type">`):]
+	sel = sel[:strings.Index(sel, "</select>")]
+	if n := strings.Count(sel, "<option"); n != 2 {
+		t.Fatalf("%d Arten, erwartet 2:\n%s", n, sel)
+	}
+	for _, want := range []string{"Kein Leser", "USB-Leser (Tastatur)", `value="usb"`} {
+		if !strings.Contains(sel, want) {
+			t.Errorf("%q fehlt:\n%s", want, sel)
+		}
+	}
+	if strings.Contains(sel, "PN532") || strings.Contains(body, "Schalter am PN532-Modul") {
+		t.Errorf("PN532 darf unter Windows nicht erscheinen:\n%s", body)
+	}
+	if !strings.Contains(body, "Karte vorhalten") {
+		t.Error("Anlernknopf fehlt")
+	}
+}
+
+func TestCardFormLinuxHasNoLearn(t *testing.T) {
+	skipOnWindows(t)
+	e := newAdminEnv(t, newFakePDH(t).client())
+	if body := e.get("/admin/card").Body.String(); strings.Contains(body, "Karte vorhalten") || !strings.Contains(body, "PN532 (SPI)") {
+		t.Errorf("Linux zeigt Anlernknopf oder keine PN532:\n%s", body)
+	}
+	r := e.post("/admin/card/learn", url.Values{})
+	if r.Code != http.StatusBadRequest {
+		t.Errorf("Anlernen unter Linux: %d, erwartet 400", r.Code)
+	}
+}
+
+func TestCardLearnFillsForm(t *testing.T) {
+	windowsForm(t)
+	old := learnFn
+	t.Cleanup(func() { learnFn = old })
+	learnFn = func(ctx context.Context, d time.Duration) (card.InputDevice, string, error) {
+		if d != 15*time.Second {
+			t.Errorf("Wartezeit %v, erwartet 15 s", d)
+		}
+		return card.InputDevice{Name: "SYC Reader", ID: "1a2b:3c4d"}, "DEADBEEF", nil
+	}
+	e := newAdminEnv(t, newFakePDH(t).client())
+	r := e.post("/admin/card/learn", url.Values{})
+	if r.Code != http.StatusOK {
+		t.Fatalf("%d\n%s", r.Code, r.Body.String())
+	}
+	body := r.Body.String()
+	for _, want := range []string{
+		`value="usb" selected`, `name="usbDevice" value="1a2b:3c4d"`, `value="hex" selected`,
+		"DEADBEEF", "EFBEADDE", "4022250974", "SYC Reader",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%q fehlt:\n%s", want, body)
+		}
+	}
+	// gespeichert ist noch nichts
+	if c, _, _ := e.store.Load(); c.Card != (config.CardCfg{}) {
+		t.Fatalf("Anlernen darf nicht speichern: %+v", c.Card)
+	}
+}
+
+func TestCardLearnDecimalSuggestion(t *testing.T) {
+	windowsForm(t)
+	old := learnFn
+	t.Cleanup(func() { learnFn = old })
+	learnFn = func(context.Context, time.Duration) (card.InputDevice, string, error) {
+		return card.InputDevice{Name: "Leser ohne Kennung"}, "0123456789", nil
+	}
+	e := newAdminEnv(t, newFakePDH(t).client())
+	body := e.post("/admin/card/learn", url.Values{}).Body.String()
+	if !strings.Contains(body, `value="dec" selected`) || !strings.Contains(body, `name="usbDevice" value="Leser ohne Kennung"`) {
+		t.Errorf("Vorschlag dec oder Name als Gerät fehlt:\n%s", body)
+	}
+}
+
+func TestCardLearnTimeout(t *testing.T) {
+	windowsForm(t)
+	old := learnFn
+	t.Cleanup(func() { learnFn = old })
+	learnFn = func(context.Context, time.Duration) (card.InputDevice, string, error) {
+		return card.InputDevice{}, "", errors.New("Keine Karte gelesen")
+	}
+	e := newAdminEnv(t, newFakePDH(t).client())
+	r := e.post("/admin/card/learn", url.Values{})
+	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "Keine Karte gelesen") {
+		t.Fatalf("%d\n%s", r.Code, r.Body.String())
+	}
+}
+
+// skipOnWindows überspringt Tests, die das Linux-Formular oder den PN532 voraussetzen.
+func skipOnWindows(t *testing.T) {
+	t.Helper()
+	if onWindows {
+		t.Skip("setzt das Linux-Formular voraus")
+	}
+}
+
+func TestCardSettingsUSBFormat(t *testing.T) {
+	// Altes Linux-Gerät: usb mit übrig gebliebenem format. Der USB-Leser bekommt kein Format.
+	got := cardSettings(config.CardCfg{Type: "usb", USBDevice: "ffff:0035", Format: "dec"})
+	if got.USBFormat != "" || got.Format != "dec" {
+		t.Errorf("Format dec: %+v", got)
+	}
+	got = cardSettings(config.CardCfg{Type: "usb", USBDevice: "ffff:0035", USBFormat: "dec"})
+	if got.USBFormat != "dec" {
+		t.Errorf("USBFormat dec: %+v", got)
+	}
+}
+
+func TestCardSaveKeepsOtherPlatformFormat(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	if err := e.store.Save(func() config.Config {
+		c, _, _ := e.store.Load()
+		c.Card = config.CardCfg{Type: "usb", USBDevice: "x", Format: "hex-rev", USBFormat: "dec"}
+		return c
+	}()); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{"type": {"usb"}, "usbDevice": {"x"}}
+	if formWindows {
+		form.Set("usbFormat", "hex")
+	} else {
+		form.Set("format", "hex")
+	}
+	if r := e.post("/admin/card/settings", form); r.Code != http.StatusOK {
+		t.Fatalf("Speichern: %d\n%s", r.Code, r.Body.String())
+	}
+	c, _, _ := e.store.Load()
+	want := config.CardCfg{Type: "usb", USBDevice: "x", Format: "hex", USBFormat: "dec"}
+	if formWindows {
+		want = config.CardCfg{Type: "usb", USBDevice: "x", Format: "hex-rev", USBFormat: "hex"}
+	}
+	if c.Card != want {
+		t.Fatalf("Konfiguration %+v, erwartet %+v", c.Card, want)
+	}
+}
+
+func TestCardLearnSecondSubmitUsesCachedResult(t *testing.T) {
+	windowsForm(t)
+	oldFn, oldNow := learnFn, learnNow
+	t.Cleanup(func() { learnFn, learnNow = oldFn, oldNow })
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	learnNow = func() time.Time { return now }
+	calls := 0
+	learnFn = func(context.Context, time.Duration) (card.InputDevice, string, error) {
+		calls++
+		return card.InputDevice{Name: "SYC Reader", ID: "1a2b:3c4d"}, "DEADBEEF", nil
+	}
+	e := newAdminEnv(t, newFakePDH(t).client())
+	for i := 1; i <= 2; i++ { // das zweite Absenden (Enter des Lesers) liefert dasselbe, ohne neu zu warten
+		r := e.post("/admin/card/learn", url.Values{})
+		if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "DEADBEEF") {
+			t.Fatalf("Anfrage %d: %d\n%s", i, r.Code, r.Body.String())
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("%d Lesevorgänge, erwartet 1", calls)
+	}
+	// Der Zwischenspeicher gilt nur einmal: die dritte Anfrage wartet wieder auf eine Karte.
+	e.post("/admin/card/learn", url.Values{})
+	if calls != 2 {
+		t.Fatalf("%d Lesevorgänge nach der dritten Anfrage, erwartet 2", calls)
+	}
+	// Nach Ablauf der Frist wird nicht mehr zwischengespeichert.
+	now = now.Add(learnCacheTTL + time.Second)
+	e.post("/admin/card/learn", url.Values{})
+	if calls != 3 {
+		t.Fatalf("%d Lesevorgänge nach Ablauf, erwartet 3", calls)
+	}
+}
+
+func TestCardLearnFormHasOnceGuard(t *testing.T) {
+	windowsForm(t)
+	e := newAdminEnv(t, newFakePDH(t).client())
+	if body := e.get("/admin/card").Body.String(); !strings.Contains(body, `action="/admin/card/learn" class="stack" data-once`) {
+		t.Fatalf("data-once fehlt am Anlernformular:\n%s", body)
 	}
 }

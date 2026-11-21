@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDH-Terminal</title>
+<style>
+:root{--bg:#0f1117;--bg2:#1a1d27;--bg3:#222536;--text:#f1f3fb;--muted:#9aa3b8;--border:#2f3348;--red:#ef4444;--amber:#f59e0b;--green:#10b981;--font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:clamp(18px,1.6vw,28px);line-height:1.3;overflow:hidden;-webkit-touch-callout:none;user-select:none}
+h1,h2,p,ul{margin:0;padding:0}
+.g-stage{touch-action:none;position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg);overflow:hidden}
+.g-img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;pointer-events:none;-webkit-user-drag:none}
+.g-cap{position:absolute;left:0;right:0;bottom:0;padding:2vh 4vw;background:linear-gradient(transparent,rgba(0,0,0,.75));font-size:clamp(24px,3vw,56px);font-weight:800;text-align:center;pointer-events:none}
+.g-text{max-width:90vw;max-height:94vh;overflow:hidden;text-align:center;display:flex;flex-direction:column;gap:3vh}
+.g-text h1{font-size:clamp(40px,6vw,110px);line-height:1.1;overflow-wrap:anywhere}
+.g-text p{font-size:clamp(26px,3.4vw,64px);line-height:1.3;white-space:pre-wrap;overflow-wrap:anywhere}
+.g-vorg{position:absolute;inset:0;padding:max(2vh,12px) max(2vw,16px);padding-bottom:max(5vh,40px);display:grid;grid-template-columns:1fr 1fr;gap:1.6vw}
+.g-vorg.one{grid-template-columns:1fr}
+.g-stand{position:absolute;left:0;right:0;bottom:max(1vh,6px);text-align:center;color:var(--muted);font-size:.85em;pointer-events:none}
+.g-empty{font-size:clamp(32px,5vw,90px);font-weight:800;text-align:center}
+.g-empty small{display:block;margin-top:2vh;font-size:.4em;color:var(--muted);font-weight:700}
+.t-tile{display:flex;flex-direction:column;min-height:0;background:var(--bg2);border:2px solid var(--border);border-radius:22px;padding:1.4vh 1.4vw}
+.t-tile h2{display:flex;align-items:center;gap:.5em;font-size:1.25em;padding-bottom:1vh;border-bottom:2px solid var(--border)}
+.t-tile h2 .n{margin-left:auto;min-width:2.2em;text-align:center;padding:.05em .5em;border-radius:999px;background:var(--bg3);font-variant-numeric:tabular-nums}
+.t-tile.faults h2 .n.has{background:var(--red);color:#fff}
+.t-tile.tickets h2 .n.has{background:var(--amber);color:#1b1500}
+.t-list{flex:1;min-height:0;overflow:hidden;list-style:none}
+.t-list li{display:grid;grid-template-columns:1fr auto;column-gap:1em;padding:1.1vh 0;border-bottom:1px solid var(--border)}
+.t-list .ti-title{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t-list .ti-meta{grid-column:1/-1;color:var(--muted);font-size:.8em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t-list .ti-st{color:var(--muted);font-size:.85em;white-space:nowrap}
+.t-empty{display:flex;align-items:center;justify-content:center;gap:.5em;flex:1;color:var(--green);font-weight:700;font-size:1.1em}
+.t-more{color:var(--muted);text-align:center;padding:1vh 0;font-size:.85em}
+.g-off{position:fixed;top:max(1vh,6px);right:max(1vw,8px);z-index:5;padding:.15em .7em;border-radius:999px;background:rgba(0,0,0,.55);border:1px solid var(--border);color:var(--muted);font-size:.6em;font-weight:700;pointer-events:none}
+@media (max-width:820px){.g-vorg{grid-template-columns:1fr}}
+</style></head><body>
+<div class="g-stage" id="g-stage"><div class="g-empty">Folien werden geladen …</div></div>
+<div class="g-off">Server offline</div>
+<script>
+(function () {
+  'use strict';
+  // Offline-Folienschau eines globalen Terminals. Die reinen Funktionen sind Kopien des PDH-Players
+  // (terminal.js); gezeichnet wird nur mit textContent, nie mit HTML aus den Daten.
+
+  // Nächste Folie (reihum); ohne Folien 0.
+  function nextSlideIndex(slides, i) {
+    var n = Array.isArray(slides) ? slides.length : 0;
+    if (n < 1) return 0;
+    if (typeof i !== 'number' || i < 0 || i >= n - 1) return 0;
+    return i + 1;
+  }
+  // Anzeigedauer einer Folie in Millisekunden: 5 bis 600 s, sonst 15 s.
+  function slideDurationMs(slide) {
+    var s = slide && typeof slide.duration === 'number' ? slide.duration : 15;
+    if (!(s >= 5 && s <= 600)) s = 15;
+    return Math.round(s * 1000);
+  }
+  // Wischgeste nach links: mindestens 60 px waagerecht, weniger als 40 px senkrecht.
+  function isSwipeLeft(start, end) {
+    if (!start || !end) return false;
+    var dx = start.x - end.x, dy = Math.abs(start.y - end.y);
+    return dx >= 60 && dy < 40;
+  }
+
+  var stage = document.getElementById('g-stage');
+  var slides = [], savedAt = '', cur = -1, slideTimer = null;
+  ['contextmenu', 'selectstart', 'dragstart'].forEach(function (n) {
+    document.addEventListener(n, function (ev) { ev.preventDefault(); });
+  });
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function standText() {
+    var d = new Date(savedAt);
+    if (isNaN(d.getTime())) return 'Stand unbekannt';
+    return 'Stand ' + d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  // Vorgänge sind offline nicht antippbar: bewusst keine data-Attribute, keine Verweise.
+  function fillList(tile, kind, items, total) {
+    var ul = el('ul', 't-list');
+    items.forEach(function (it) {
+      if (!it || typeof it !== "object") return; // ein kaputter Eintrag darf die Folienschau nicht stoppen
+      var li = el('li');
+      li.appendChild(el('span', 'ti-title', it.title));
+      li.appendChild(el('span', 'ti-st', it.statusLabel || it.status || ''));
+      li.appendChild(el('span', 'ti-meta', (it.path ? it.path + ' · ' : '') + (it.age || '')));
+      ul.appendChild(li);
+    });
+    if (items.length) tile.appendChild(ul);
+    else tile.appendChild(el('div', 't-empty', kind === 'fault' ? 'Keine offenen Störungen' : 'Keine offenen Tickets'));
+    var rest = Math.max(0, total - items.length);
+    if (rest) tile.appendChild(el('div', 't-more', '… und ' + rest + ' weitere'));
+  }
+  function tileFor(kind, items, total) {
+    var t = el('section', 't-tile ' + (kind === 'fault' ? 'faults' : 'tickets'));
+    var h = el('h2', null, kind === 'fault' ? 'Offene Störungen ' : 'Offene Tickets ');
+    h.appendChild(el('span', 'n' + (total ? ' has' : ''), String(total)));
+    t.appendChild(h);
+    fillList(t, kind, items, total);
+    return t;
+  }
+  function draw(s) {
+    stage.textContent = '';
+    if (!s) {
+      stage.appendChild(el('div', 'g-empty', 'Keine Folien eingerichtet'));
+      return;
+    }
+    if (s.kind === 'image') {
+      if (typeof s.image_url === 'string' && s.image_url.indexOf('/slides/img/') === 0) {
+        var img = el('img', 'g-img'); img.alt = ''; img.src = s.image_url; stage.appendChild(img);
+      }
+      if (s.title) stage.appendChild(el('div', 'g-cap', s.title));
+    } else if (s.kind === 'vorgaenge') {
+      var g = el('div', 'g-vorg');
+      var f = Array.isArray(s.faults) ? s.faults : [], t = Array.isArray(s.tickets) ? s.tickets : [];
+      var hasF = f.length > 0 || (s.faults_total || 0) > 0, hasT = t.length > 0 || (s.tickets_total || 0) > 0;
+      if (hasF || !hasT) g.appendChild(tileFor('fault', f, s.faults_total || 0));
+      if (hasT || !hasF) g.appendChild(tileFor('ticket', t, s.tickets_total || 0));
+      if (g.children.length === 1) g.className += ' one';
+      stage.appendChild(g);
+      stage.appendChild(el('div', 'g-stand', standText()));
+    } else {
+      var box = el('div', 'g-text');
+      if (s.title) box.appendChild(el('h1', null, s.title));
+      if (s.body) box.appendChild(el('p', null, s.body));
+      stage.appendChild(box);
+    }
+  }
+  function show(i) {
+    if (slideTimer) { clearTimeout(slideTimer); slideTimer = null; }
+    cur = slides.length ? i : -1;
+    draw(slides.length ? slides[cur] : null);
+    if (slides.length) slideTimer = setTimeout(function () { show(nextSlideIndex(slides, cur)); }, slideDurationMs(slides[cur]));
+  }
+
+  // Eingabe: Tippen oder Wischen nach links blättert weiter; Vorgänge öffnen sich nicht.
+  var down = null;
+  stage.addEventListener('pointerdown', function (ev) { down = { x: ev.clientX, y: ev.clientY }; });
+  stage.addEventListener('pointercancel', function () { down = null; });
+  stage.addEventListener('pointerup', function (ev) {
+    var st = down; down = null;
+    if (!st || !slides.length) return;
+    var end = { x: ev.clientX, y: ev.clientY };
+    if (isSwipeLeft(st, end)) { show(nextSlideIndex(slides, cur)); return; }
+    if (Math.abs(end.x - st.x) > 20 || Math.abs(end.y - st.y) > 20) return;
+    show(nextSlideIndex(slides, cur));
+  });
+
+  function back() { location.replace('/start'); }
+  function load() {
+    fetch('/slides/data.json', { cache: 'no-store' })
+      .then(function (r) {
+        if (r.status === 404) { back(); return null; } // Zwischenspeicher gelöscht: zurück zur Startseite
+        return r.ok ? r.json() : null;
+      })
+      .then(function (d) {
+        if (!d || !Array.isArray(d.slides)) { setTimeout(load, 5000); return; }
+        slides = d.slides; savedAt = d.saved_at || '';
+        show(0);
+      })
+      .catch(function () { setTimeout(load, 5000); });
+  }
+  // Wie die Offline-Startseite: alle 30 s prüfen, ob PDH wieder da ist; dann zurück zu /start.
+  setInterval(function () {
+    fetch('/slides/online', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) { if (d && d.online === true) back(); })
+      .catch(function () { /* weiter offline */ });
+  }, 30000);
+  load();
+})();
+</script>
+</body></html>

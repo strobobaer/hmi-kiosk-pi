@@ -24,6 +24,26 @@ type HelperAPI interface {
 	Call(ctx context.Context, cmd string, arg string) error
 }
 
+// NoHelperText steht dort, wo ohne root-Helfer Einstellungen des Betriebssystems entfielen.
+const NoHelperText = "Unter Windows über die Windows-Einstellungen"
+
+// noHelperAPI antwortet, wenn es keinen Helfer gibt; die Seiten blenden die zugehörigen Teile aus.
+type noHelperAPI struct{}
+
+func (noHelperAPI) Call(context.Context, string, string) error {
+	return errors.New(NoHelperText)
+}
+
+func navWithoutNetwork(nav []NavItem) []NavItem {
+	out := make([]NavItem, 0, len(nav))
+	for _, n := range nav {
+		if n.Section != "network" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // UpdateAPI installiert ein Programmpaket: hochgeladen (jede Version) oder per Klick
 // geladen (nur die angebotene Version want).
 type UpdateAPI interface {
@@ -150,7 +170,10 @@ type route struct {
 }
 
 type admin struct {
-	d        AdminDeps
+	d AdminDeps
+	// noHelper: Es gibt keinen root-Helfer (Windows). Die Bereiche Netzwerk, Zeit, Sicherung
+	// und Neustart entfallen; die Windows-Einstellungen ersetzen sie.
+	noHelper bool
 	sessions *sessionStore
 	lock     lockout
 	// authSlot lässt nur eine teure Passwortoperation zugleich zu: Sonst passieren
@@ -187,8 +210,13 @@ func newAdmin(d AdminDeps) *admin {
 	if d.Product == nil {
 		d.Product = HMIKioskAdmin()
 	}
+	noHelper := d.Helper == nil
+	if noHelper {
+		d.Helper = noHelperAPI{}
+	}
 	a := &admin{
-		d: d, static: sub, sessions: newSessionStore(), authSlot: make(chan struct{}, 1),
+		noHelper: noHelper,
+		d:        d, static: sub, sessions: newSessionStore(), authSlot: make(chan struct{}, 1),
 		cfgMu: d.ConfigMu, product: d.Product,
 		pages: parseAdminPages(sub),
 	}
@@ -545,7 +573,9 @@ type adminView struct {
 	Nav         []NavItem
 	ProductName string
 	HMI         bool
-	Body        any
+	// NoHelper: ohne root-Helfer (Windows); Netzwerk, Zeit, Sicherung und Neustart entfallen.
+	NoHelper bool
+	Body     any
 }
 
 func (a *admin) writePage(w http.ResponseWriter, status int, page string, v adminView) {
@@ -559,6 +589,10 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 		v.IdleSeconds = a.product.IdleSeconds
 	}
 	v.Nav, v.ProductName, v.HMI = a.product.Nav, a.product.Name, a.product.HMI
+	if a.noHelper {
+		v.NoHelper = true
+		v.Nav = navWithoutNetwork(v.Nav)
+	}
 	var buf bytes.Buffer
 	if err := a.pages[page].Execute(&buf, v); err != nil {
 		http.Error(w, "Seite konnte nicht erzeugt werden", http.StatusInternalServerError)

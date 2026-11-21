@@ -44,3 +44,28 @@ Teilprojekt bekommt eine eigene Spec und einen eigenen Plan; diese Datei hält f
 
 Das Pi-Abbild bleibt das Kioskgerät für den Pi und ändert sich durch B1–B6 nur in der Struktur, nicht im
 Verhalten.
+
+## Reihenfolge ab 2026-11-20 (Entscheidungen des Nutzers)
+
+- **Windows zuerst, schlank.** Die Teile von B1–B6 sind neu gebündelt:
+
+  | # | Teilprojekt | Inhalt |
+  |---|---|---|
+  | W1 | Windows „Zusatz“ | Kern-Trennung, `pdh-terminal.exe` mit Edge, USB-Tastaturleser mit Abfangen, Benachrichtigung je Terminal, Setup, signierte Updates mit Startregel (Spec `2026-11-20-w1-windows-zusatz-design.md`) |
+  | W2 | Windows „Kiosk“ | Betriebsart im selben Setup: eigener Benutzer, Zugewiesener Zugriff, Edge-Kiosk, Admin-Ecke (= B6) |
+  | G | Globales Terminal | Schalter je Terminal in PDH; Folienliste (Bild, Text, Vorgänge ausgewählter Anlagen) getrennt von allen anderen Terminals; Touch/Maus nur zum Öffnen eines Vorgangs (nur lesen) und Weiterblättern; keine Anmeldung, kein Leser, keine Benachrichtigung; alle Plattformen; Offline-Zwischenspeicher (TP7) |
+  | danach | PDH-Updates | Updates von PDH anstoßen, Versionen je Gerät in PDH (Rest von B1) |
+
+- **Windows-Leser:** günstige USB-RFID-Leser (Tastaturmodus). PC/SC und PN532 über USB-Seriell folgen
+  später (B3-Rest).
+- **Benachrichtigung:** Hält jemand eine Karte vor, während an einem Windows-PC ein anderes Programm
+  vorne ist, erscheint eine Benachrichtigung.
+  - Wählbar sind vier Arten:
+    - Windows-Mitteilung;
+    - Fenster in der Mitte;
+    - Leiste oben;
+    - Terminal nach vorn.
+  - Die Auswahl gilt je Terminal; Kombinationen sind möglich.
+- **Betriebsart „Test“:** entfällt als eigene Betriebsart. „Zusatz“ läuft auf jedem PC und deckt das
+  Ausprobieren ab.
+- **Ausführung:** nacheinander in einer Sitzung (am sparsamsten).

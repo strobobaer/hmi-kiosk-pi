@@ -21,16 +21,18 @@ import (
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/helperapi"
 	"hmikiosk/internal/keyboard"
-	"hmikiosk/internal/keyboard/clientrun"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/product/pdhterminal/card"
+	"hmikiosk/internal/product/pdhterminal/notify"
 	"hmikiosk/internal/product/pdhterminal/oled"
+	"hmikiosk/internal/product/pdhterminal/slides"
 	"hmikiosk/internal/release"
 	"hmikiosk/internal/secrets"
 	"hmikiosk/internal/selftest"
 	"hmikiosk/internal/update"
 	"hmikiosk/internal/updatecheck"
 	"hmikiosk/internal/web"
+	"hmikiosk/internal/winsignal"
 )
 
 // Vorgaben der Adressen und Pfade; sie gelten wie beim HMI-Kiosk, damit Helfer,
@@ -39,10 +41,12 @@ const (
 	DefaultLocalAddr      = "127.0.0.1:8080"
 	DefaultAdminAddr      = ":8443"
 	DefaultLocalAdminAddr = appcore.DefaultLocalAdminAddr
-	DefaultHelperSocket   = "/run/hmi-kiosk-helper/helper.sock"
+	// DefaultHelperSocket gilt unter Linux; den Vorgabewert liefert der Aufrufer (cmd/pdh-terminal).
+	DefaultHelperSocket = "/run/hmi-kiosk-helper/helper.sock"
 
 	secretsFile   = "secrets.key"
 	logDirName    = "log"
+	slidesDirName = "slides" // Zwischenspeicher der Folienschau unter dem Datenordner
 	tlsDirName    = "tls"
 	chromiumDir   = "chromium"
 	shutdownLimit = 5 * time.Second
@@ -55,12 +59,24 @@ type Options struct {
 	LocalAddr       string // Startseite, nur Loopback
 	AdminAddr       string // Admin-Seite über HTTPS
 	LocalAdminAddr  string // Admin-Seite am Terminal, nur Loopback
+	// HelperSocket ist der Socket des root-Helfers; leer heisst: kein Helfer (Windows).
 	HelperSocket    string
 	ChromiumEnabled bool
+	// TrayEnabled legt das Symbol im Infobereich an (nur Windows; sonst ohne Wirkung).
+	TrayEnabled bool
+	tray        tray // ersetzt das Symbol (für Tests)
+	// Kiosk: Windows-Kiosk-Benutzer (Starter mit -kiosk). Edge läuft im Vollbild-Kiosk und startet sichtbar
+	// neu, es gibt weder Symbol im Infobereich noch Benachrichtigungen; die Admin-Geste (5 s oben rechts
+	// halten) öffnet die lokale Admin-Seite, und diese bekommt den Abschnitt „Kiosk“.
+	Kiosk bool
 	// HardwareID liest die Hardware-Kennung; nil heißt: aus dem Gerät lesen.
 	HardwareID func() string
 	// HelperCall ersetzt den Aufruf des root-Helfers für den Ursprungsabgleich (für Tests).
 	HelperCall func(ctx context.Context, cmd, arg string) error
+	// OpenSignal ist der Name des Ereignisses, mit dem ein zweiter Start das Fenster anfordert (leer: unter
+	// Windows winsignal.OpenName, sonst keines). OnOpen ersetzt „Terminal öffnen“ (für Tests).
+	OpenSignal string
+	OnOpen     func()
 	// Ready wird gerufen, wenn der Dienst läuft (für Tests).
 	Ready func(Bound)
 }
@@ -81,24 +97,33 @@ const (
 	devInput = "/dev/input"
 )
 
+// restartDelay ist die Frist zwischen Update-Aktivierung und Neustart (Windows); Tests verkürzen sie.
+var restartDelay = 2 * time.Second
+
 // localAdminOrigin ist der Ursprung der Admin-Seite am Terminal (für den Systemstand).
 var localAdminOrigin = strings.TrimSuffix(web.LocalAdminURL, "/admin/")
 
 type service struct {
-	o        Options
-	store    *config.Store
-	journal  *appcore.Journal
-	box      *secrets.Box
-	helper   *helperapi.Client
-	origins  *appcore.OriginSync
-	updates  *updatecheck.Service
-	presence appcore.AdminPresence
-	client   Client
-	cards    *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
-	display  *oled.Service                      // OLED-Statusdisplay
-	sup      atomic.Pointer[browser.Supervisor] // ab startBrowser
-	kbd      *keyboard.Supervisor               // wvkbd; nil ohne Chromium
-	certSrc  atomic.Pointer[web.CertSource]
+	o         Options
+	store     *config.Store
+	journal   *appcore.Journal
+	box       *secrets.Box
+	helper    *helperapi.Client
+	origins   *appcore.OriginSync
+	updates   *updatecheck.Service
+	presence  appcore.AdminPresence
+	client    Client
+	slides    *slides.Store                      // Zwischenspeicher der Folienschau (globales Terminal)
+	cards     *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
+	display   *oled.Service                      // OLED-Statusdisplay
+	sup       atomic.Pointer[browser.Supervisor] // ab startBrowser
+	win       atomic.Pointer[window]             // Edge-Fenster (nur Windows), ab startEdge
+	kbd       *keyboard.Supervisor               // wvkbd; nil ohne Chromium
+	certSrc   atomic.Pointer[web.CertSource]
+	adminAddr atomic.Pointer[string] // gebundene Adresse der Admin-Seite (auch nach spätem Binden)
+	tray      atomic.Pointer[tray]   // Symbol im Infobereich, solange es läuft
+	exit      chan error             // Bitte um ein Ende von serve (ErrQuit, ErrRestart)
+	problems  map[string]string      // Gründe für die rote Färbung des Symbols (s.mu)
 
 	cfgMu    sync.Mutex // Laden, Ändern, Speichern der Konfiguration als Einheit (auch für die Admin-Seite)
 	mu       sync.RWMutex
@@ -126,9 +151,12 @@ func newService(o Options) (*service, error) {
 	o.LocalAddr = orDefault(o.LocalAddr, DefaultLocalAddr)
 	o.AdminAddr = orDefault(o.AdminAddr, DefaultAdminAddr)
 	o.LocalAdminAddr = orDefault(o.LocalAdminAddr, DefaultLocalAdminAddr)
-	o.HelperSocket = orDefault(o.HelperSocket, DefaultHelperSocket)
-	s := &service{o: o, store: config.Open(o.DataDir), helper: helperapi.New(o.HelperSocket)}
+	s := &service{o: o, store: config.Open(o.DataDir), exit: make(chan error, 1)}
+	if o.HelperSocket != "" {
+		s.helper = helperapi.New(o.HelperSocket)
+	}
 	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
+	s.slides = &slides.Store{Dir: filepath.Join(o.DataDir, slidesDirName)}
 	s.display = oled.NewService(log.Printf)
 
 	journal, err := appcore.NewJournal(filepath.Join(o.DataDir, logDirName))
@@ -142,7 +170,7 @@ func newService(o Options) (*service, error) {
 	}
 	call := o.HelperCall
 	if call == nil {
-		call = s.helper.Call
+		call = s.callHelper
 	}
 	s.origins = appcore.NewOriginSync(call)
 	// Das Produkt steht ausdrücklich da: Ein leeres Produkt hieße HMI-Kiosk.
@@ -153,13 +181,19 @@ func newService(o Options) (*service, error) {
 	s.claimHardware(loadFailed)
 	s.openBox(loadFailed)
 	if o.ChromiumEnabled {
-		s.kbd = clientrun.NewExec(func() (string, error) { return keyboard.Find(nil) }, func() int { _, h := s.screen(); return h })
-		// Die Bildschirmtastatur gibt es nur unter labwc (Wayland); unter X11 bleibt sie aus.
-		s.kbd.SetEnabled(s.sessionProfile() == "labwc")
+		s.initKeyboard()
 	}
 	// Die Richtlinie vom Helfer-Start gilt bis hierhin; abgeglichen wird trotzdem.
 	s.origins.Set(config.PDHOrigins(s.config().PDH))
 	return s, nil
+}
+
+// callHelper ruft den root-Helfer; ohne Helfer (Windows) gibt es nichts abzugleichen.
+func (s *service) callHelper(ctx context.Context, cmd, arg string) error {
+	if s.helper == nil {
+		return nil
+	}
+	return s.helper.Call(ctx, cmd, arg)
 }
 
 func orDefault(v, def string) string {
@@ -192,9 +226,20 @@ func (s *service) apply(c config.Config) {
 	s.cfg, s.cfgWarn = c, "" // Der Aufrufer hat gespeichert, config.json ist also wieder gültig.
 	s.mu.Unlock()
 	s.origins.Set(config.PDHOrigins(c.PDH))
-	s.cards.Apply(cardSettings(c.Card))
+	s.cards.Apply(s.cardSettings(c.Card))
 	s.display.Apply(statusDisplaySettings(c.StatusDisplay))
 }
+
+// cardSettings liefert die Leser-Einstellungen: Mit Zwischenspeicher gilt das Terminal als globales
+// Terminal, und der Leser bleibt aus.
+func (s *service) cardSettings(c config.CardCfg) card.Settings {
+	cs := cardSettings(c)
+	cs.Global = s.slides.Present()
+	return cs
+}
+
+// applyCards übernimmt den Zustand des Zwischenspeichers (Leser aus oder wieder an) ohne Neustart.
+func (s *service) applyCards() { s.cards.Apply(s.cardSettings(s.config().Card)) }
 
 // cleanupStartup räumt auf, was ein abgestürzter Vorgänger hinterlassen hat. Die alte
 // Gesundmarke zählt nicht mehr: Sie gälte sonst, bevor dieser Start gelungen ist.
@@ -240,7 +285,7 @@ func (s *service) detectHardwareID() string {
 	if s.o.HardwareID != nil {
 		return s.o.HardwareID()
 	}
-	return platform.HardwareID(procRoot, sysRoot)
+	return platformHardwareID()
 }
 
 // claimHardware hält die Kennung des ersten Geräts fest (wie beim HMI-Kiosk); einen
@@ -294,54 +339,139 @@ func (s *service) serve(parent context.Context) error {
 		}()
 	}
 	// Der Kartenleser läuft unabhängig von Chromium; apply folgt späteren Änderungen.
-	s.cards.Apply(cardSettings(s.config().Card))
+	s.cards.Apply(s.cardSettings(s.config().Card))
 	s.display.Apply(statusDisplaySettings(s.config().StatusDisplay))
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 
+	// Die Startseite ist die Grundlage der Anzeige. Unter Linux endet der Dienst ohne sie (systemd startet ihn neu).
+	// Unter Windows läuft er mit rotem Symbol weiter und bindet alle 30 s neu: Ein belegter Port ist ein Problem der
+	// Umgebung, der Prozess selbst ist gesund (ein Ende würde der Starter als Fehlstart der Version zählen).
 	l, err := appcore.ListenLoopback(s.o.LocalAddr)
-	if err != nil {
+	if err != nil && !staysUpWithoutStart {
 		cancel()
 		wg.Wait()
 		return fmt.Errorf("Startseite: %w", err)
 	}
-	bound := Bound{Local: l.Addr().String()}
-	local := appcore.NewLocalServer(ctx, StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client,
-		card.EventsHandler(s.cards.Hub(), s.cards, func() string { return cardOrigin(s.config().PDH) })))
+	bound := Bound{}
+	origin := func() string { return cardOrigin(s.config().PDH) }
+	cardAPI := http.NewServeMux()
+	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
+	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, s.notifier()))
+	cardAPI.Handle("/api/slides/cache", slides.CacheHandler(s.slides, origin, s.applyCards))
+	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)
-	background(func() {
-		if err := local.Serve(l); !errors.Is(err, http.ErrServerClosed) {
-			localErr <- fmt.Errorf("Startseite: %w", err)
-		}
-	})
+	serveLocal := func(l net.Listener) *http.Server {
+		srv := appcore.NewLocalServer(ctx, startHandler)
+		background(func() {
+			if err := srv.Serve(l); !errors.Is(err, http.ErrServerClosed) {
+				localErr <- fmt.Errorf("Startseite: %w", err)
+			}
+		})
+		return srv
+	}
+	var local *http.Server
+	if l != nil {
+		bound.Local = l.Addr().String()
+		local = serveLocal(l)
+	} else {
+		s.warn(fmt.Sprintf("Startseite nicht verfügbar: %v", err))
+		s.setProblem(problemStart, portBusyText(s.o.LocalAddr, "Startseite nicht verfügbar"))
+	}
 
 	remote, onTerminal := web.NewAdminHandlers(s.adminDeps())
-	admin, adminAddr := s.startAdmin(&wg, remote)
+	adm := &adminListener{}
+	adminAddr := s.startAdmin(&wg, remote, adm)
 	bound.Admin = adminAddr
+	if adminAddr == "" {
+		background(func() { s.retryAdmin(ctx, &wg, remote, adm) })
+	}
 	stopLocalAdmin, err := appcore.ServeLocalAdmin(ctx, s.o.LocalAdminAddr, onTerminal, &s.presence)
 	if err != nil {
 		s.warn(fmt.Sprintf("Admin-Seite am Terminal nicht verfügbar: %v", err))
+		s.setProblem(problemLocal, "Port belegt, Admin-Seite am Terminal nicht verfügbar")
 	} else {
 		bound.LocalAdmin = s.o.LocalAdminAddr
 	}
 
-	browserDone := s.startBrowser(ctx, "http://"+bound.Local+startPath)
+	stopTray := s.startTray(ctx, bound, background)
+	if s.o.Kiosk && onWindows {
+		background(func() { s.watchAdminGesture(ctx) })
+	}
+	if name := s.openSignalName(); name != "" {
+		background(func() {
+			open := func() {
+				if s.o.OnOpen != nil {
+					s.o.OnOpen()
+					return
+				}
+				s.openTerminal(ctx)
+			}
+			if err := winsignal.Listen(ctx, name, open); err != nil {
+				log.Printf("Öffnen durch einen zweiten Start nicht möglich: %v", err)
+			}
+		})
+	}
+	// Browser und späte Startseite (nach belegtem Port) teilen sich late; closed verhindert Neues nach dem Ende.
+	var late struct {
+		mu      sync.Mutex
+		closed  bool
+		srv     *http.Server
+		browser <-chan struct{}
+	}
+	if l != nil {
+		late.browser = s.startBrowser(ctx, "http://"+bound.Local+startPath)
+	} else {
+		background(func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(portRetryEvery):
+				}
+				nl, err := appcore.ListenLoopback(s.o.LocalAddr)
+				if err != nil {
+					continue
+				}
+				late.mu.Lock()
+				if late.closed || ctx.Err() != nil {
+					late.mu.Unlock()
+					nl.Close()
+					return
+				}
+				late.srv = serveLocal(nl)
+				late.browser = s.startBrowser(ctx, "http://"+nl.Addr().String()+startPath)
+				late.mu.Unlock()
+				s.setProblem(problemStart, "")
+				log.Printf("Startseite nach belegtem Port gebunden: %s", nl.Addr())
+				return
+			}
+		})
+	}
 	s.announce(ctx, bound, background)
 
 	err = nil
 	select {
 	case <-ctx.Done():
 	case err = <-localErr:
+	case err = <-s.exit:
 	}
 	cancel()
+	stopTray()
 	if serr := appcore.Notify("STOPPING=1"); serr != nil {
 		log.Printf("Abmeldung bei systemd: %v", serr)
 	}
-	<-browserDone
+	late.mu.Lock()
+	late.closed = true
+	lateSrv, browserDone := late.srv, late.browser
+	late.mu.Unlock()
+	if browserDone != nil {
+		<-browserDone
+	}
 	if stopLocalAdmin != nil {
 		stopLocalAdmin() // ServeLocalAdmin endet nicht mit ctx
 	}
-	shutdownServers(local, admin)
+	shutdownServers(local, lateSrv, adm.server())
 	wg.Wait()
 	return err
 }
@@ -372,6 +502,9 @@ func (s *service) announce(ctx context.Context, bound Bound, background func(fun
 	}
 	// systemd bekommt sein Lebenszeichen nur, solange die Startseite antwortet.
 	background(func() {
+		if bound.Local == "" { // Startseite nicht gebunden (Windows, belegter Port): kein systemd-Takt
+			return
+		}
 		appcore.WatchdogProbe(ctx, func(pctx context.Context) error {
 			c, err := (&net.Dialer{}).DialContext(pctx, "tcp", bound.Local)
 			if err == nil {
@@ -392,6 +525,9 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 	if !s.o.ChromiumEnabled {
 		close(done)
 		return done
+	}
+	if onWindows {
+		return s.startEdge(ctx, startURL)
 	}
 	path, err := browser.FindChromium(nil)
 	if err != nil {
@@ -418,7 +554,9 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 	}()
 	go func() {
 		defer wg.Done()
-		s.kbd.Run(ctx)
+		if s.kbd != nil {
+			s.kbd.Run(ctx)
+		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -434,6 +572,36 @@ func (s *service) startBrowser(ctx context.Context, startURL string) <-chan stru
 		close(done)
 	}()
 	return done
+}
+
+// notifier liefert die Benachrichtigung für Kartenergebnisse; im Kiosk ist sie aus, weil das Terminal immer
+// vorne liegt.
+func (s *service) notifier() notify.Shower {
+	if s.o.Kiosk {
+		return noNotify{}
+	}
+	return notify.New(s.raiseWindow)
+}
+
+type noNotify struct{}
+
+func (noNotify) Show([]string, string, string) {}
+
+// adminGesture: Die Admin-Geste wurde erkannt. Der Browser (Edge im Kiosk) zeigt die lokale Admin-Seite.
+func (s *service) adminGesture() {
+	log.Print("Admin-Geste erkannt, die Admin-Seite wird geöffnet")
+	if sup := s.sup.Load(); sup != nil {
+		sup.Show(browser.TargetAdmin)
+	}
+}
+
+// watchAdminGesture überwacht die Maus (Berührung wirkt als Maus) auf die Admin-Geste, bis ctx endet.
+// Unter Windows misst der Hook den Bildschirm selbst; deshalb gibt cornerConfig(0, 0) keine Größe vor.
+func (s *service) watchAdminGesture(ctx context.Context) {
+	log.Print("Admin-Geste: Maus-Hook wird angelegt")
+	if err := platform.WatchCorner(ctx, devInput, cornerConfig(0, 0), s.adminGesture); err != nil && ctx.Err() == nil {
+		log.Printf("Admin-Geste nicht verfügbar: %v", err)
+	}
 }
 
 // cornerConfig ist das Feld für die Admin-Geste: 80 × 80 px oben rechts, 5 s Haltezeit.
@@ -471,18 +639,89 @@ func (s *service) screen() (int, int) {
 	return platform.Resolve(c.Display.OverrideW, c.Display.OverrideH, w, h, found)
 }
 
-// startAdmin: Fehlt die Admin-Seite über HTTPS, bleibt das Terminal bedienbar und meldet es.
-func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, string) {
+// adminListener hält den Admin-Server, der auch erst nach einem belegten Port starten kann.
+type adminListener struct {
+	mu       sync.Mutex
+	srv      *http.Server
+	closed   bool
+	cert     tls.Certificate
+	dir      string
+	canRetry bool // das Zertifikat ist da; nur der Port fehlte
+}
+
+// set merkt den Server; nach dem Ende (server) nimmt es keinen mehr an.
+func (a *adminListener) set(srv *http.Server) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.srv = srv
+	return true
+}
+
+// server schließt die Annahme und liefert den Server (nil, wenn keiner lief).
+func (a *adminListener) server() *http.Server {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.closed = true
+	return a.srv
+}
+
+// staysUpWithoutStart: Unter Windows läuft der Dienst ohne Startseite weiter (siehe serve); Tests schalten es auch unter Linux ein.
+var staysUpWithoutStart = onWindows
+
+// portRetryEvery ist die Frist, nach der ein belegter Port neu versucht wird; Tests verkürzen sie.
+var portRetryEvery = 30 * time.Second
+
+// portBusyText: „Port 8080 belegt, <folge>“.
+func portBusyText(addr, consequence string) string {
+	if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
+		return fmt.Sprintf("Port %s belegt, %s", p, consequence)
+	}
+	return "Port belegt, " + consequence
+}
+
+// startAdmin: Fehlt die Admin-Seite über HTTPS, bleibt das Terminal bedienbar und meldet es. Die Adresse ist
+// leer, wenn sie nicht lief.
+func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminListener) string {
 	cert, dir, ok := s.loadCert()
 	if !ok {
-		return nil, ""
+		return ""
 	}
+	adm.cert, adm.dir, adm.canRetry = cert, dir, true
+	return s.listenAdmin(wg, h, adm, false)
+}
+
+// retryAdmin bindet den Port der Admin-Seite alle portRetryEvery neu, bis es gelingt (oder ctx endet).
+func (s *service) retryAdmin(ctx context.Context, wg *sync.WaitGroup, h http.Handler, adm *adminListener) {
+	if !adm.canRetry {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(portRetryEvery):
+		}
+		if addr := s.listenAdmin(wg, h, adm, true); addr != "" {
+			s.setProblem(problemAdmin, "")
+			log.Printf("Admin-Seite nach belegtem Port gebunden: %s", addr)
+			return
+		}
+	}
+}
+
+func (s *service) listenAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminListener, quiet bool) string {
 	l, err := net.Listen("tcp", s.o.AdminAddr)
 	if err != nil {
-		s.warn(fmt.Sprintf("Admin-Seite nicht verfügbar: %v", err))
-		return nil, ""
+		if !quiet {
+			s.warn(fmt.Sprintf("Admin-Seite nicht verfügbar: %v", err))
+		}
+		s.setProblem(problemAdmin, portBusyText(s.o.AdminAddr, "Admin-Seite nicht verfügbar"))
+		return ""
 	}
-	src := web.NewCertSource(dir, cert)
+	src := web.NewCertSource(adm.dir, adm.cert)
 	s.certSrc.Store(src)
 	mux := http.NewServeMux()
 	mux.Handle("/admin/", h)
@@ -500,6 +739,10 @@ func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, 
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	if !adm.set(srv) {
+		l.Close()
+		return ""
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -507,7 +750,9 @@ func (s *service) startAdmin(wg *sync.WaitGroup, h http.Handler) (*http.Server, 
 			s.warn(fmt.Sprintf("Admin-Seite beendet: %v", err))
 		}
 	}()
-	return srv, l.Addr().String()
+	addr := l.Addr().String()
+	s.adminAddr.Store(&addr)
+	return addr
 }
 
 // loadCert weicht bei defekter Datenpartition in den RAM aus, damit die Admin-Seite den
@@ -540,30 +785,48 @@ func (s *service) adminDeps() web.AdminDeps {
 	if s.kbd != nil {
 		kbd = s.kbd
 	}
+	// Ohne Helfer (Windows) bleiben die Schnittstellen nil-Schnittstellen, nicht nil-Zeiger darin.
+	var helper web.HelperAPI
+	var backup web.BackupAPI
+	var netAPI web.NetAPI
+	// Windows: Es gibt keinen Verweis umzuschalten. Der Starter wählt beim Neustart die höchste gültige Version;
+	// die Aktivierung bittet nur darum, kurz verzögert, damit die Antwort der Admin-Seite noch den Browser erreicht.
+	activate := func(context.Context, string) error {
+		time.AfterFunc(restartDelay, func() { s.requestExit(ErrRestart) })
+		return nil
+	}
+	if s.helper != nil {
+		helper, backup, netAPI = s.helper, s.helper, s.helper
+		activate = func(ctx context.Context, version string) error {
+			return s.helper.Call(ctx, "update-activate", version)
+		}
+	}
+	installer := &update.Installer{
+		Root:      s.o.DataDir,
+		PublicKey: release.PublicKey(),
+		Product:   release.PDHTerminal,
+		Platform:  release.CurrentPlatform(),
+		Activate:  activate,
+	}
+	if s.helper != nil { // der Systemstand ist ein Linux-Begriff; ohne Helfer (Windows) gibt es keine Prüfung
+		installer.SystemLevel = func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) }
+	}
 	return web.AdminDeps{
-		Keyboard:     kbd,
-		Store:        s.store,
-		Box:          s.box,
-		Apply:        s.apply,
-		ConfigMu:     &s.cfgMu,
-		Helper:       s.helper,
-		Status:       s.status,
-		LogDir:       filepath.Join(s.o.DataDir, logDirName),
-		RemoteIsWifi: remoteIsWifi,
-		EthernetLink: func() bool { return platform.EthernetHasLink(sysRoot) },
-		Update: &update.Installer{
-			Root:        s.o.DataDir,
-			PublicKey:   release.PublicKey(),
-			Product:     release.PDHTerminal,
-			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) },
-			Activate: func(ctx context.Context, version string) error {
-				return s.helper.Call(ctx, "update-activate", version)
-			},
-		},
+		Keyboard:             kbd,
+		Store:                s.store,
+		Box:                  s.box,
+		Apply:                s.apply,
+		ConfigMu:             &s.cfgMu,
+		Helper:               helper,
+		Status:               s.status,
+		LogDir:               filepath.Join(s.o.DataDir, logDirName),
+		RemoteIsWifi:         remoteIsWifi,
+		EthernetLink:         func() bool { return platform.EthernetHasLink(sysRoot) },
+		Update:               installer,
 		UpdateCheck:          s.updates,
 		Selftest:             s.adminSelftest,
-		Backup:               s.helper,
-		Net:                  s.helper,
+		Backup:               backup,
+		Net:                  netAPI,
 		HardwareID:           func() string { return s.hwID },
 		TLSDir:               filepath.Join(s.o.DataDir, tlsDirName),
 		TLSFingerprint:       s.tlsFingerprint,
@@ -571,8 +834,17 @@ func (s *service) adminDeps() web.AdminDeps {
 		UpdateKeyFingerprint: release.Fingerprint(release.PublicKey()),
 		LocalActive:          s.presence.Touch,
 		LocalLeft:            s.localLeft,
-		Product:              Admin(s.o.DataDir, s.client, s.cards, s.display),
+		Product:              s.adminProduct(),
 	}
+}
+
+// adminProduct beschreibt das Terminal für den Admin-Rahmen; im Kiosk (Windows) mit dem Abschnitt „Kiosk“.
+func (s *service) adminProduct() *web.AdminProduct {
+	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
+	if s.o.Kiosk && onWindows {
+		p.kiosk, p.logoff = true, logoffUser
+	}
+	return p.product()
 }
 
 // remoteIsWifi: Die Antwort geht über die Schnittstelle, auf der die Anfrage ankam.
@@ -585,27 +857,16 @@ func remoteIsWifi(r *http.Request) bool {
 	return wifi
 }
 
-// adminSelftest ist die Selbstprüfung für die Admin-Seite: nur die Schritte, die jedes
-// Produkt braucht (Schutz von System und Funk), plus der Kartenleser.
+// adminSelftest ist die Selbstprüfung für die Admin-Seite; die Schritte hängen von der
+// Plattform ab (selftestSteps).
 func (s *service) adminSelftest(ctx context.Context) []web.SelftestStep {
 	d := selftest.Deps{
-		Config:      s.config,
-		Mounts:      func() ([]byte, error) { return os.ReadFile(filepath.Join(procRoot, "mounts")) },
-		Exec:        runCommand,
-		BootConfig:  readBootConfig,
-		ImageMarker: func() bool { _, err := os.Stat(selftest.ImageMarkerFile); return err == nil },
+		Config: s.config,
 	}
 	if t := s.config().Card.Type; t != "" && t != "aus" {
 		d.CardReader = s.cards.Probe
 	}
-	if sd := s.config().StatusDisplay; sd.Type != "" {
-		if ok, reason := sd.Known(); ok {
-			d.StatusDisplay = func(_ context.Context, bus string, addr int) error { return oled.Probe(bus, addr) }
-		} else {
-			d.StatusDisplay = func(context.Context, string, int) error { return errors.New(reason) }
-		}
-	}
-	res := selftest.RunSteps(ctx, d, append(selftest.CoreSteps(), selftest.CardStep(), selftest.StatusDisplayStep()))
+	res := selftest.RunSteps(ctx, d, s.selftestSteps(&d))
 	out := make([]web.SelftestStep, len(res))
 	for i, r := range res {
 		out[i] = web.SelftestStep{Name: r.Name, OK: r.OK, Detail: r.Detail, NeedsHuman: r.NeedsHuman}
@@ -630,4 +891,15 @@ func shutdownServers(servers ...*http.Server) {
 		}()
 	}
 	wg.Wait()
+}
+
+// openSignalName: Das Ereignis, auf das ein zweiter Start (Startmenü, Benachrichtigung) das Fenster anfordert.
+func (s *service) openSignalName() string {
+	if s.o.OpenSignal != "" {
+		return s.o.OpenSignal
+	}
+	if onWindows && s.o.ChromiumEnabled {
+		return winsignal.OpenName
+	}
+	return ""
 }

@@ -4,7 +4,7 @@
   <h2>Status</h2>
   <dl class="facts">
     <dt>Version</dt><dd>{{.Status.Version}}</dd>
-    <dt>Schreibschutz</dt><dd>{{if .Status.OverlayActive}}aktiv{{else}}nicht aktiv{{end}}</dd>
+    {{if not $.NoHelper}}<dt>Schreibschutz</dt><dd>{{if .Status.OverlayActive}}aktiv{{else}}nicht aktiv{{end}}</dd>{{end}}
     <dt>Datenpartition</dt><dd>{{bytes .Status.DataFreeBytes}} frei von {{bytes .Status.DataTotalBytes}}</dd>
     <dt>Anzeige</dt><dd>{{.Status.Display}}</dd>
     <dt>Uhrzeit</dt><dd>{{.Now}}</dd>
@@ -33,11 +33,18 @@
 {{end}}
 </section>
 
+{{if $.NoHelper}}
+<section class="panel stack">
+  <h2>Netzwerk, Uhrzeit, Sicherung und Neustart</h2>
+  <p>Unter Windows über die Windows-Einstellungen</p>
+</section>
+{{else}}
 <section class="panel stack">
   <h2>SD-Sicherung</h2>
   {{if .BackupRunning}}<p class="msg warn">Eine SD-Sicherung läuft gerade.</p>{{end}}
   <p><a class="btn" href="/admin/system/backup">SD-Sicherung öffnen</a></p>
 </section>
+{{end}}
 
 <section class="panel stack">
   <h2>Selbstprüfung</h2>
@@ -107,6 +114,7 @@
       <input type="text" name="override_h" value="{{.Display.OverrideH}}" inputmode="numeric">
     </label>
   </div>
+  {{if $.NoHelper}}<input type="hidden" name="graphics" value="{{.Display.Graphics}}">{{else}}
   <label>Grafikprofil
     <select name="graphics">
       <option value="labwc"{{if eq .Display.Graphics "labwc"}} selected{{end}}>labwc (Wayland)</option>
@@ -114,9 +122,11 @@
     </select>
   </label>
   <p class="hint">Ein anderes Grafikprofil gilt erst nach einem Neustart des Geräts.</p>
+  {{end}}
   <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
 </form>
 
+{{if not $.NoHelper}}
 <form method="post" action="/admin/system/time" class="panel stack">
   <input type="hidden" name="csrf" value="{{$.CSRF}}">
   <h2>Uhrzeit setzen</h2>
@@ -125,6 +135,7 @@
   </label>
   <div class="actions"><button type="submit" class="btn">Uhrzeit setzen</button></div>
 </form>
+{{end}}
 
 <section class="panel stack">
   <h2>Protokoll</h2>
@@ -226,6 +237,7 @@
   <div class="actions"><button type="submit" class="btn">Passwort ändern</button></div>
 </form>
 
+{{if not $.NoHelper}}
 <section class="panel stack">
   <h2>Wartungsmodus</h2>
   <p class="hint">Öffnet die Einrichtung für ein Ersatzgerät oder ein neues Terminal, zum Beispiel nach dem Einspielen einer älteren SD-Sicherung. Bis dahin sind die Kacheln gesperrt, und das Terminal stimmt sich nicht mit anderen ab.</p>
@@ -235,7 +247,9 @@
     <div class="actions"><button type="submit" class="btn">Wartungsmodus starten</button></div>
   </form>
 </section>
+{{end}}
 
+{{if not $.NoHelper}}
 <section class="panel stack">
   <h2>Neustart</h2>
   <form method="post" action="/admin/system/restart-service" class="stack" data-confirm="Den Dienst neu starten?">
@@ -249,5 +263,6 @@
     <div class="actions"><button type="submit" class="btn danger">Terminal neu starten</button></div>
   </form>
 </section>
+{{end}}
 {{end}}
 {{end}}

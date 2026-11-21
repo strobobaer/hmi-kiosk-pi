@@ -40,6 +40,9 @@ Die fertigen Dateien liegen unter [**Releases**](../../releases):
 | `hmi-kiosk-bundle-<Version>-trixie-arm64.tar.gz` | Offline-Bundle zur Installation auf einem vorhandenen Raspberry Pi OS / Debian Trixie |
 | `pdh-terminal-<Version>.img.xz` | SD-Abbild des PDH-Terminals für den Raspberry Pi 5 |
 | `pdh-terminal-bundle-<Version>-trixie-arm64.tar.gz` | Offline-Bundle des PDH-Terminals für Raspberry Pi OS / Debian Trixie |
+| `PDH-Terminal-Setup-<Version>.exe` | Setup des PDH-Terminals für Windows 11 (64 Bit) |
+| `PDH-Terminal-<Version>.msi` | MSI des PDH-Terminals für Windows 11 (Intune, Gruppenrichtlinie; `msiexec /i … MODE=zusatz|kiosk /qn /norestart`) |
+| `pdh-terminal-<Version>-windows-amd64.pkg` | Signiertes Update-Paket des PDH-Terminals für Windows (für Updates laufender Windows-Terminals) |
 | `*.sha256` | Prüfsummen |
 
 Prüfsumme kontrollieren (Linux/macOS: `sha256sum -c <Datei>.sha256`, Windows PowerShell: `Get-FileHash <Datei>`).
@@ -99,6 +102,18 @@ Das PDH-Terminal ist ein eigenes Produkt (Abbild `pdh-terminal-<Version>.img.xz`
 7. **Kartenleser einstellen** (nur wenn ein Leser angeschlossen ist): Admin-Seite → **Kartenleser**. Typ wählen (PN532 über I²C oder USB-Leser), beim PN532 den Anschluss wie in `docs/betrieb.md`, Abschnitt 4 (Pin 3/5, 3,3 V, Modus I²C). Eine Karte halten: Die Seite zeigt unter „Zuletzt gelesen“ die Nummer; sie in PDH beim Benutzer eintragen. Das Format (hex, hex-rev, dec) muss zu den Einträgen in PDH passen.
 
 Danach meldet die Startseite sich bei PDH selbst an. Ist PDH nicht erreichbar, versucht sie es alle 30 Sekunden erneut. Die Admin-Seite kehrt nach 2 Minuten ohne Eingabe zur Startseite zurück. Zustände, Entkoppeln, Sicherung, Zertifikat und Kartenleser: `docs/betrieb.md`, Abschnitt 4.
+
+## PDH-Terminal unter Windows installieren
+
+Das PDH-Terminal läuft auch auf einem **Windows-11-PC** (64 Bit, Microsoft Edge) und meldet dort per Kartenleser an, während andere Programme laufen.
+
+1. `PDH-Terminal-Setup-<Version>.exe` von der Release-Seite laden und die Prüfsumme mit `Get-FileHash` gegen die `.sha256`-Datei prüfen.
+2. Setup starten und die Abfrage der Benutzerkontensteuerung bestätigen. Das Setup ist nicht mit einem Zertifikat signiert: SmartScreen meldet „Unbekannter Herausgeber“ (**Weitere Informationen → Trotzdem ausführen**).
+3. Das Terminal startet danach und bei jeder Anmeldung von selbst. Admin-Seite: Startmenü „PDH-Terminal Admin“. Koppeln und Leser einstellen wie unter „PDH-Terminal einrichten“, Schritte 4 bis 7 (USB-Leser mit 13,56 MHz im Tastaturmodus; auf der Seite „Kartenleser“ den Knopf „Karte vorhalten“ nutzen).
+4. Verteilung ohne Fenster: `PDH-Terminal-Setup-<Version>.exe /VERYSILENT /SUPPRESSMSGBOXES`.
+5. **Betriebsart Kiosk:** Auf der Setup-Seite „Betriebsart“ (still `/MODE=kiosk /RESTART=yes`) macht das Setup den PC zum Kioskgerät: Ein eigener Benutzer `PDH-Kiosk` meldet sich selbst an und zeigt nur das Terminal, auch als **Infobildschirm** (globales Terminal mit Folien aus PDH). Nur auf Windows 11 Pro, Enterprise und Education. Admin-Seite: 5 Sekunden oben rechts halten; an Windows kommt man mit Strg+Alt+Entf → „Benutzer wechseln“. Ein erneutes Setup mit `/MODE=zusatz` baut den Kiosk zurück.
+
+Grenzen: ein Terminal je PC (es gehört der zuerst angemeldeten Sitzung), und in der Betriebsart Zusatz ist der Datenordner `C:\ProgramData\PDH-Terminal` (mit der Kopplung) für alle Benutzer des PCs lesbar (im Kiosk nicht). Installation, Kiosk einrichten und zurückbauen, Update, Deinstallation, Benachrichtigung bei der Anmeldung und Release-Ablauf: `docs/betrieb.md`, Abschnitt 4 „Windows“. Das Setup selbst wird mit `packaging/windows/build-setup.sh` gebaut.
 
 ## Aktualisieren
 
@@ -197,6 +212,9 @@ Ready-made files are under [**Releases**](../../releases):
 | `hmi-kiosk-bundle-<version>-trixie-arm64.tar.gz` | Offline bundle for installing on an existing Raspberry Pi OS / Debian Trixie |
 | `pdh-terminal-<version>.img.xz` | SD image of the PDH-Terminal for the Raspberry Pi 5 |
 | `pdh-terminal-bundle-<version>-trixie-arm64.tar.gz` | Offline bundle of the PDH-Terminal for Raspberry Pi OS / Debian Trixie |
+| `PDH-Terminal-Setup-<version>.exe` | Installer of the PDH-Terminal for Windows 11 (64-bit) |
+| `PDH-Terminal-<version>.msi` | MSI of the PDH-Terminal for Windows 11 (Intune, Group Policy; `msiexec /i … MODE=zusatz|kiosk /qn /norestart`) |
+| `pdh-terminal-<version>-windows-amd64.pkg` | Signed update package of the PDH-Terminal for Windows (for updating running Windows terminals) |
 | `*.sha256` | Checksums |
 
 Verify the checksum (Linux/macOS: `sha256sum -c <file>.sha256`, Windows PowerShell: `Get-FileHash <file>`).
@@ -256,6 +274,18 @@ The PDH-Terminal is a separate product (image `pdh-terminal-<version>.img.xz`). 
 7. **Set up the card reader** (only if a reader is connected): admin page → **Kartenleser**. Choose the type (PN532 over I²C or USB reader); wire the PN532 as described in `docs/betrieb.md`, section 4 (pins 3/5, 3.3 V, I²C mode). Hold a card to the reader: the page shows its number under "Zuletzt gelesen"; enter it in PDH on the user. The format (hex, hex-rev, dec) must match the entries in PDH.
 
 The start page then logs in to PDH by itself. While PDH is unreachable it retries every 30 seconds. The admin page returns to the start page after 2 minutes without input. Details (German): `docs/betrieb.md`, section 4.
+
+## Install PDH-Terminal on Windows
+
+The PDH-Terminal also runs on a **Windows 11 PC** (64-bit, Microsoft Edge) and logs users in with a card reader while other programs are running.
+
+1. Download `PDH-Terminal-Setup-<version>.exe` from the releases page and compare its checksum with the `.sha256` file (`Get-FileHash`).
+2. Run the setup and confirm the User Account Control prompt. The setup is not code-signed: SmartScreen shows "Unbekannter Herausgeber" (unknown publisher) (**More info → Run anyway**).
+3. The terminal then starts, and again at every logon. Admin page: Start menu entry "PDH-Terminal Admin". Pair it and set up the reader as in "Set up PDH-Terminal", steps 4 to 7 (13.56 MHz USB reader in keyboard mode; use the "Karte vorhalten" button on the "Kartenleser" page).
+4. Silent deployment: `PDH-Terminal-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES`.
+5. **Kiosk mode:** On the setup page "Betriebsart" (silently `/MODE=kiosk /RESTART=yes`) the setup turns the PC into a kiosk device: a dedicated user `PDH-Kiosk` signs in automatically and shows only the terminal, also as an **info screen** (global terminal with slides from PDH). Windows 11 Pro, Enterprise and Education only. Admin page: hold the top-right corner for 5 seconds; to reach Windows press Ctrl+Alt+Del and choose "Switch user". Running the setup again with `/MODE=zusatz` removes the kiosk.
+
+Limits: one terminal per PC (it belongs to the first signed-in session), and in the "Zusatz" (add-on) mode the data folder `C:\ProgramData\PDH-Terminal` (with the pairing) is readable by all users of the PC (not in kiosk mode). Installation, kiosk setup and removal, update, uninstall, the login notification and the release flow (German): `docs/betrieb.md`, section 4 "Windows". The setup is built with `packaging/windows/build-setup.sh`.
 
 ## Updating
 

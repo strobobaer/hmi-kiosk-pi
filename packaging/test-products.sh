@@ -201,7 +201,60 @@ for s in build-image.sh "bundle.sh --version 1.0.0"; do
 	# shellcheck disable=SC2086  # Skriptname und Option sind gewollt getrennt
 	if out=$(VERSION=1.0.0 bash packaging/$s --product nope 2>&1); then bad "$s --product nope: kein Fehler"; elif echo "$out" | grep -q 'Unbekanntes Produkt'; then ok "$s --product nope: Abbruch mit klarer Meldung"; else bad "$s --product nope: $out"; fi
 done
+# Windows-Setup: Pflichtteile des Inno-Setup-Skripts (kein Docker nötig). "." steht für den Rückwärtsschrägstrich.
+iss=packaging/windows/pdh-terminal.iss
+check "windows: .iss vorhanden" test -s "$iss"
+check "windows: Startmenü-Eintrag mit AppUserModelID PDH.Terminal (Toasts)" grep -qF 'AppUserModelID: "PDH.Terminal"' "$iss"
+check "windows: Autostart-Eintrag HKLM Run startet den Starter" grep -Eq 'Root: HKLM; Subkey: "Software.Microsoft.Windows.CurrentVersion.Run";.*ValueName: "PDH-Terminal";.*pdh-terminal-start\.exe' "$iss"
+check "windows: Firewall-Regel TCP 8443" grep -qF 'localport=8443' "$iss"
+check "windows: Firewall-Regel nur Domäne und Privat" grep -qF 'profile=domain,private' "$iss"
+check "windows: Firewall-Regel wird bei der Deinstallation per Namen gelöscht" bash -c "grep -A3 -F '[UninstallRun]' '$iss' | grep -qF 'delete rule name='"
+check "windows: Datenordner users-modify nur in Zusatz (Check: ModeZusatz), im Kiosk ohne Rechte (Check: ModeKiosk)" bash -c "grep -Eq 'commonappdata..PDH-Terminal\".*Permissions: users-modify;.*Check: ModeZusatz' '$iss' && grep -Eq 'commonappdata..PDH-Terminal\".*Check: ModeKiosk' '$iss' && ! grep -E 'commonappdata..PDH-Terminal\".*Check: ModeKiosk' '$iss' | grep -q Permissions && ! grep -E 'commonappdata..PDH-Terminal\"' '$iss' | grep -E '^Name' | grep Permissions | grep -vq 'Check: ModeZusatz'"
+check "windows: Check-Funktionen ModeZusatz und ModeKiosk sind definiert" bash -c "grep -qE '^function ModeZusatz' '$iss' && grep -qE '^function ModeKiosk' '$iss'"
+check "windows: Datenordner wird nicht gelöscht (kein deleteafterinstall)" bash -c "! grep -qi 'deleteafterinstall' '$iss'"
+check "windows: Datenordner bleibt bei der Deinstallation (uninsneveruninstall)" grep -Eq 'commonappdata..PDH-Terminal".*uninsneveruninstall' "$iss"
+check "windows: Autostart, Startmenü und [Run] starten nie pdh-terminal.exe direkt (nur [Files] darf es nennen)" bash -c "! grep -Eq '^(Name|Root|Filename):.*[{]app[}].pdh-terminal.exe' '$iss'"
+check "windows: Edge-Richtlinie HideFirstRunExperience unter HKLM, bei der Deinstallation entfernt" grep -Eq 'Root: HKLM; Subkey: "SOFTWARE.Policies.Microsoft.Edge";.*ValueName: "HideFirstRunExperience";.*ValueData: 1;.*uninsdeletevalue' "$iss"
+check "windows: keine Edge-Richtlinie unter HKCU und keine für lokale Netzzugriffe" bash -c "! grep -Eqi 'HKCU.*Policies|LocalNetworkAccess' '$iss'"
+check "windows: toast.ps1 wird in den Programmordner installiert" grep -Eq 'Source: "toast.ps1"; DestDir: "[{]app[}]"' "$iss"
 
+
+check "windows: Kiosk-Helfer ist in [Files]" grep -Eq 'Source: "[{]#BinDir[}].pdh-terminal-kiosk.exe"; DestDir: "[{]app[}]"' "$iss"
+check "windows: [Code] prüft die Edition (EditionID: Professional, Enterprise, IoTEnterprise, Education)" bash -c "grep -qF 'EditionID' '$iss' && grep -qF \"'Professional'\" '$iss' && grep -qF \"'Enterprise'\" '$iss' && grep -qF \"'IoTEnterprise'\" '$iss' && grep -qF \"'Education'\" '$iss'"
+check "windows: /MODE=zusatz|kiosk wird ausgewertet, Fehler bei unbekanntem Wert" bash -c "grep -qF '{param:MODE|}' '$iss' && grep -qF \"'kiosk'\" '$iss' && grep -qF \"'zusatz'\" '$iss'"
+check "windows: /RESTART=yes für still nach Kiosk" grep -qF '{param:RESTART|}' "$iss"
+check "windows: Seite Betriebsart" grep -qF "'Betriebsart'" "$iss"
+check "windows: Kiosk richtet per -setup -app ein, Rückbau per -undo" bash -c "grep -qF \"'-setup -app \" '$iss' && grep -qF \"'-undo'\" '$iss'"
+check "windows: Kiosk-Update (PrevKiosk und KioskWanted) setzt die Rechte per -acl neu und bietet den Neustart an" bash -c "grep -qF \"'-acl'\" '$iss' && grep -qF 'KioskUpdated := True' '$iss' && grep -qF 'if KioskActive or KioskUpdated then' '$iss'"
+check "windows: nach gescheitertem Rückbau (Marker bleibt kiosk) werden die Kiosk-Rechte neu gesetzt" bash -c "awk '/rc := RunHelper..-undo../,/SaveMode..zusatz../' '$iss' | grep -qF 'ReapplyKioskACL()'"
+check "windows: scheitert die Kiosk-Einrichtung, bekommt Zusatz den Datenordner wieder (users-modify per icacls)" bash -c "grep -qF 'procedure GrantUsersModify' '$iss' && grep -qF 'S-1-5-32-545:(OI)(CI)M' '$iss'"
+check "windows: Protokoll des Helfers heißt kiosk-setup.log (nicht kiosk.log, das ist das Journal des Programms)" bash -c "grep -qF 'log\\kiosk-setup.log' '$iss' && ! grep -qF 'log\\kiosk.log' '$iss'"
+check "windows: Deinstallation ruft -undo vor dem Entfernen (usUninstall)" bash -c "sed -n '/CurUninstallStepChanged/,\$p' '$iss' | grep -E '^ +Exec[(].*-undo' | grep -qv '^ *//'"
+check "windows: Run-Eintrag entfällt im Kiosk (Check) und wird dort entfernt" bash -c "grep -Eq 'CurrentVersion.Run\";.*Check: WantRunKey' '$iss' && grep -qF \"RegDeleteValue(HKLM, RunKey\" '$iss'"
+check "windows: Kiosk-Startmenü/[Run] startet den Starter im Kiosk nicht (StartAfterInstall)" grep -qF 'Check: StartAfterInstall' "$iss"
+check "windows: build-setup.sh baut und prüft pdh-terminal-kiosk.exe" bash -c "grep -qF './cmd/pdh-terminal-kiosk' packaging/windows/build-setup.sh && grep -qF 'pdh-terminal-kiosk.exe' packaging/windows/build-setup.sh"
+
+
+
+# MSI (WiX): packaging/windows/msi/pdh-terminal.wxs und build-msi.sh
+wxs=packaging/windows/msi/pdh-terminal.wxs
+check "msi: UpgradeCode fest (4491D06A-73CE-400E-A1F7-AE1A4539DB19) und MajorUpgrade" bash -c "grep -qF 'UpgradeCode=\"4491D06A-73CE-400E-A1F7-AE1A4539DB19\"' '$wxs' && grep -qF '<MajorUpgrade' '$wxs'"
+check "msi: UpgradeCode im .iss (verschlüsselt) passt zum MSI" bash -c "grep -qF 'UpgradeCodes\A60D1944EC37E0041A7FEAA15493BD91' '$iss'"
+check "msi: MODE zusatz|kiosk, Vorgabe zusatz, Unbekanntes wird abgewiesen" bash -c "grep -qF 'MODE ~= \"kiosk\"' '$wxs' && grep -qF 'Property=\"MODE\" Value=\"zusatz\"' '$wxs' && grep -qF 'Unbekannte Betriebsart MODE' '$wxs'"
+check "msi: Betriebsart-Marker HKLM SOFTWARE\PDH-Terminal Betriebsart" grep -Fq 'Key="SOFTWARE\PDH-Terminal" Name="Betriebsart"' "$wxs"
+check "msi: Firewall TCP 8443 für Domäne und Privat" bash -c "grep -qF 'Port=\"8443\"' '$wxs' && grep -qF 'Profile=\"domain\"' '$wxs' && grep -qF 'Profile=\"private\"' '$wxs' && ! grep -qF 'Profile=\"public\"' '$wxs'"
+check "msi: Verknüpfung mit AppUserModelID PDH.Terminal" bash -c "grep -qF 'System.AppUserModel.ID' '$wxs' && grep -qF 'Value=\"PDH.Terminal\"' '$wxs'"
+check "msi: Run-Eintrag und Benutzerrechte nur in Zusatz (Condition NOT KioskMode)" bash -c "awk '/Id=\"AutostartRun\"/,/<\/Component>/' '$wxs' | grep -qF 'NOT KioskMode' && awk '/Id=\"DataDirZusatz\"/,/<\/Component>/' '$wxs' | grep -qF 'NOT KioskMode'"
+check "msi: Helfer-Aktionen verzögert, ohne Identitätswechsel (-setup -app, -acl, -undo)" bash -c "grep -E 'Id=\"Kiosk(Setup|Acl|UndoSwitch|UndoUninstall)\"' '$wxs' | grep -cF 'Execute=\"deferred\" Impersonate=\"no\"' | grep -qx 4 && grep -qF 'ExeCommand=\"-setup -app' '$wxs' && grep -qF 'ExeCommand=\"-acl\"' '$wxs'"
+check "msi: -undo bei Wechsel nach Zusatz und bei Deinstallation, die Deinstallation läuft bei Fehler weiter (Return=ignore)" bash -c "grep -E 'Id=\"KioskUndoSwitch\"' '$wxs' | grep -qF 'ExeCommand=\"-undo\"' && grep -E 'Id=\"KioskUndoUninstall\"' '$wxs' | grep -qF 'Return=\"ignore\"' && grep -qF 'REMOVE=\"ALL\"' '$wxs'"
+check "msi: Edition im Kiosk (Professional, Enterprise, IoTEnterprise, Education)" bash -c "for e in Professional Enterprise IoTEnterprise Education; do grep -qF \"EDITIONID ~<< \\\"\$e\\\"\" '$wxs' || exit 1; done"
+check "msi: schließt sich mit dem Inno-Setup aus (Uninstall-Schlüssel, Meldung)" bash -c "grep -qF '8B2F6C1E-4D7A-4E53-9A0B-5C3D1F7E2A94}_is1' '$wxs' && grep -qF 'RegGetValueNames(HKLM64, MsiUpgradeKey' '$iss'"
+check "msi: Neustart nach Kiosk über ScheduleReboot" grep -qF '<ScheduleReboot' "$wxs"
+msi_rollback() { [ "$(grep -cF 'Execute="rollback" Impersonate="no" Return="ignore"' "$wxs")" = 2 ] && grep -qF 'REMOVE="ALL" OR (NOT (MODE' "$wxs" && grep -qF WIX_ACCOUNT_USERS "$wxs" && [ "$(grep -c 'Transitive="yes"' "$wxs")" = 3 ]; }
+check "msi: Rücknahme-Aktionen (rollback) für -setup und -undo, Bedingungen auch bei REINSTALL, Transitive, Benutzer sprachneutral" msi_rollback
+check "msi: Edge-Richtlinie HideFirstRunExperience und toast.ps1" bash -c "grep -qF 'HideFirstRunExperience' '$wxs' && grep -qF 'toast.ps1' '$wxs'"
+check "msi: build-msi.sh bricht ohne dist/win-Programme ab" bash -c "grep -qF 'dist/win/\$f fehlt' packaging/windows/build-msi.sh"
+check "msi: Dockerfile festgelegt (Digest, WiX-SHA-256)" bash -c "grep -Eq '^FROM debian@sha256:[0-9a-f]{64}' packaging/windows/msi/Dockerfile && grep -Eq 'WIX_SHA256=[0-9a-f]{64}' packaging/windows/msi/Dockerfile"
 if [ "$fails" -gt 0 ]; then
 	echo "$fails Prüfung(en) fehlgeschlagen"
 	exit 1

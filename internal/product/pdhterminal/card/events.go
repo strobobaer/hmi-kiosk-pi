@@ -2,9 +2,75 @@ package card
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"time"
+
+	"hmikiosk/internal/product/pdhterminal/notify"
 )
+
+// maxResultBody ist die größte Rückmeldung der PDH-Seite (in Bytes).
+const maxResultBody = 2048
+
+// ResultHandler nimmt die Rückmeldung der PDH-Seite zur Kartenanmeldung an (POST /api/card/result,
+// Antwort 204) und zeigt sie über sh, sobald das Browser-Fenster nicht vorn liegt (foreground) und PDH
+// mindestens eine Art der Benachrichtigung gewünscht hat. Ursprung und CORS wie bei EventsHandler.
+// Name und Meldung kommen aus dem Netz: Sie werden bereinigt und nur als Text gezeigt.
+func ResultHandler(origin func() string, foreground func() bool, sh notify.Shower) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowed := origin()
+		if got := r.Header.Get("Origin"); allowed == "" || got != allowed {
+			http.Error(w, "Ursprung nicht erlaubt", http.StatusForbidden)
+			return
+		}
+		hd := w.Header()
+		hd.Set("Access-Control-Allow-Origin", allowed)
+		hd.Set("Vary", "Origin")
+
+		switch r.Method {
+		case http.MethodOptions:
+			hd.Set("Access-Control-Allow-Methods", "POST")
+			hd.Set("Access-Control-Allow-Headers", "Content-Type")
+			hd.Set("Access-Control-Max-Age", "600")
+			if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+				hd.Set("Access-Control-Allow-Private-Network", "true")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPost:
+			if r.ContentLength > maxResultBody {
+				http.Error(w, "Inhalt zu groß", http.StatusRequestEntityTooLarge)
+				return
+			}
+			body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxResultBody))
+			if err != nil {
+				var tooBig *http.MaxBytesError
+				if errors.As(err, &tooBig) {
+					http.Error(w, "Inhalt zu groß", http.StatusRequestEntityTooLarge)
+				} else {
+					http.Error(w, "Inhalt nicht lesbar", http.StatusBadRequest)
+				}
+				return
+			}
+			var res notify.Result
+			if err := json.Unmarshal(body, &res); err != nil {
+				http.Error(w, "Kein gültiges JSON", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			kinds := notify.Kinds(res.Notify)
+			if sh == nil || len(kinds) == 0 || foreground() {
+				return
+			}
+			res.Name, res.Message = notify.Clean(res.Name), notify.Clean(res.Message)
+			text, tone := notify.Text(res)
+			sh.Show(kinds, text, tone)
+		default:
+			hd.Set("Allow", "POST, OPTIONS")
+			http.Error(w, "Methode nicht erlaubt", http.StatusMethodNotAllowed)
+		}
+	})
+}
 
 // pingInterval ist der Abstand der Keep-alive-Kommentare im Strom (Tests kürzen ihn).
 var pingInterval = 25 * time.Second

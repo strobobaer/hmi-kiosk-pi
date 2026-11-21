@@ -32,7 +32,9 @@ type Service struct {
 	Current  string
 	// Product ist das Produkt dieses Geräts; leer gilt als HMI-Kiosk.
 	Product release.Product
-	Now     func() time.Time
+	// Platform ist die Plattform dieses Geräts (release.CurrentPlatform; leer: Linux).
+	Platform string
+	Now      func() time.Time
 	// Logf meldet Ergebnisse der Hintergrundprüfung (nil: Protokoll).
 	Logf func(format string, args ...any)
 
@@ -78,7 +80,7 @@ func (s *Service) Check(ctx context.Context) Result {
 	default:
 		rels, err := s.Checker.Releases(ctx, cfg.Repo)
 		if err == nil {
-			res.Offer, err = Select(rels, s.product(), s.Current, cfg.Prerelease)
+			res.Offer, err = SelectFor(rels, s.product(), s.Platform, s.Current, cfg.Prerelease)
 		}
 		if err != nil {
 			res.Err = err.Error()

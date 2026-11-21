@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"hmikiosk/internal/config"
@@ -23,6 +24,9 @@ var cardPage string
 
 //go:embed admin_statusdisplay.html
 var statusDisplayPage string
+
+//go:embed admin_kiosk.html
+var kioskPage string
 
 const checkTimeout = 5 * time.Second
 
@@ -43,6 +47,13 @@ type adminProduct struct {
 	display *oled.Service
 	// probe prüft das Statusdisplay (Variable für Tests).
 	probe func(bus string, addr int) error
+	// kiosk: Windows-Kiosk, die Seite hat den Abschnitt „Kiosk“; logoff meldet den Benutzer ab (Windows:
+	// ExitWindowsEx(EWX_LOGOFF), Tests ersetzen es).
+	kiosk  bool
+	logoff func() error
+
+	learnMu    sync.Mutex
+	learnCache *learnResult // Antwort der letzten erfolgreichen Anlernanfrage, für ein zweites Absenden
 }
 
 func newAdminProduct(dataDir string, client Client, cards *card.Service, display *oled.Service) *adminProduct {
@@ -55,6 +66,41 @@ func Admin(dataDir string, client Client, cards *card.Service, display *oled.Ser
 }
 
 func (p *adminProduct) product() *web.AdminProduct {
+	ap := p.baseProduct()
+	if p.kiosk {
+		ap.Nav = append(ap.Nav, web.NavItem{Section: "kiosk", Label: "Kiosk", Path: "/admin/kiosk"})
+		ap.Pages["winkiosk"] = kioskPage
+		ap.Routes = append(ap.Routes,
+			web.ProductRoute{Method: http.MethodGet, Path: "/admin/kiosk", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
+				f.Render(w, http.StatusOK, "winkiosk", "kiosk", "Kiosk", "", kioskView{})
+			}},
+			web.ProductRoute{Method: http.MethodPost, Path: "/admin/kiosk/logoff", Handle: p.kioskLogoff},
+		)
+	}
+	return ap
+}
+
+// kioskView ist, was die Seite „Kiosk“ anzeigt.
+type kioskView struct{ Notice string }
+
+// kioskLogoff meldet den Kiosk-Benutzer ab, aber nur nach der Bestätigung im Formular.
+func (p *adminProduct) kioskLogoff(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil || r.PostFormValue("confirm") != "1" {
+		f.Render(w, http.StatusBadRequest, "winkiosk", "kiosk", "Kiosk", "Bitte die Abmeldung bestätigen", kioskView{})
+		return
+	}
+	if p.logoff == nil {
+		f.Render(w, http.StatusInternalServerError, "winkiosk", "kiosk", "Kiosk", "Abmelden ist hier nicht möglich", kioskView{})
+		return
+	}
+	if err := p.logoff(); err != nil {
+		f.Render(w, http.StatusInternalServerError, "winkiosk", "kiosk", "Kiosk", "Abmeldung fehlgeschlagen: "+err.Error(), kioskView{})
+		return
+	}
+	f.Render(w, http.StatusOK, "winkiosk", "kiosk", "Kiosk", "", kioskView{Notice: "Der Kiosk-Benutzer wird abgemeldet."})
+}
+
+func (p *adminProduct) baseProduct() *web.AdminProduct {
 	return &web.AdminProduct{
 		ID: "pdh-terminal", Name: "PDH-Terminal", Home: "/admin/pdh", HMI: false, IdleSeconds: 120,
 		Nav: []web.NavItem{
@@ -76,6 +122,7 @@ func (p *adminProduct) product() *web.AdminProduct {
 				p.renderCard(f, w, http.StatusOK, "", "", nil)
 			}},
 			{Method: http.MethodPost, Path: "/admin/card/settings", Handle: p.cardSave},
+			{Method: http.MethodPost, Path: "/admin/card/learn", Handle: p.cardLearn},
 			{Method: http.MethodGet, Path: "/admin/statusdisplay", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
 				p.renderStatusDisplay(f, w, http.StatusOK, "", "", nil)
 			}},

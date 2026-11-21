@@ -8,7 +8,10 @@
 // HMIKIOSK.system-level: Ältere Terminals lesen nur Name und Art des Eintrags und nehmen
 // solche Pakete weiter an. Pakete anderer Produkte (pdh-terminal) heißen im Archiv nach
 // ihrer Programmdatei und tragen zusätzlich HMIKIOSK.product; HMI-Kiosk-Pakete schreiben
-// diesen Datensatz nicht, fehlt er, gilt hmi-kiosk.
+// diesen Datensatz nicht, fehlt er, gilt hmi-kiosk. Windows-Pakete tragen auf dem Programmeintrag
+// zusätzlich HMIKIOSK.platform (windows-amd64) und nennen die Programmdatei <name>.exe; Linux-Pakete
+// schreiben den Datensatz nicht und bleiben unverändert. Ältere Geräte kennen den Namen mit .exe
+// nicht und lehnen solche Pakete als unzulässige Datei ab.
 package update
 
 import (
@@ -36,6 +39,7 @@ const (
 	systemLevelPAX = "HMIKIOSK.system-level"
 	maxSystemLevel = 9999
 	productPAX     = "HMIKIOSK.product"
+	platformPAX    = "HMIKIOSK.platform"
 
 	maxBinaryBytes  = 256 << 20
 	maxVersionBytes = 64
@@ -43,7 +47,10 @@ const (
 	maxArchiveBytes = maxBinaryBytes + 4<<10
 )
 
-var versionRe = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+var (
+	versionRe  = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	platformRe = regexp.MustCompile(`^windows-[a-z0-9]+$`)
+)
 
 // ValidVersion prüft das Versionsformat (x.y.z, höchstens 32 Zeichen).
 func ValidVersion(v string) bool { return len(v) <= maxVersion && versionRe.MatchString(v) }
@@ -55,7 +62,14 @@ type Package struct {
 	SystemLevel int
 	// Product ist die Kennung des Produkts (ohne Datensatz im Paket: hmi-kiosk).
 	Product string
-	targz   []byte
+	// Platform ist die Plattform des Pakets (windows-amd64); leer bei Linux-Paketen.
+	Platform string
+	// Binary ist der Name der Programmdatei im Archiv (unter Windows mit .exe).
+	Binary string
+	// BinarySum ist der SHA-256 der Programmdatei im Archiv; der Windows-Starter vergleicht ihn mit der Exe im Versionsordner.
+	BinarySum [sha256.Size]byte
+	sig       []byte
+	targz     []byte
 }
 
 // binaryFor liefert den Programmnamen des Produkts mit der Kennung id ("" gilt als hmi-kiosk).
@@ -75,13 +89,36 @@ func allBinaries() []string {
 	return bs
 }
 
-// Pack baut ein signiertes Paket aus dir/<p.Binary> für Systemteile ab Stand systemLevel.
+// verifyBinaries sind die Dateinamen, die Verify im Archiv zulässt: Programmnamen und die
+// Windows-Namen mit .exe. Ob der Name zu Produkt und Plattform passt, prüft Verify danach.
+func verifyBinaries() []string {
+	bs := allBinaries()
+	for _, p := range release.Products() {
+		bs = append(bs, p.BinaryFor(release.PlatformWindowsAMD64))
+	}
+	return bs
+}
+
+// validPlatform: leer (Linux) oder eine Windows-Kennung.
+func validPlatform(s string) bool { return s == "" || platformRe.MatchString(s) }
+
+// Pack baut ein signiertes Linux-Paket aus dir/<p.Binary> für Systemteile ab Stand systemLevel.
 func Pack(dir, version string, p release.Product, systemLevel int, priv ed25519.PrivateKey) ([]byte, error) {
+	return PackFor(dir, version, p, "", systemLevel, priv)
+}
+
+// PackFor wie Pack für die Plattform platform. Leer ergibt das Linux-Paket (byteweise wie bisher);
+// unter windows-* liest es dir/<p.Binary>.exe, nennt die Datei im Archiv ebenso und schreibt
+// den Datensatz HMIKIOSK.platform.
+func PackFor(dir, version string, p release.Product, platform string, systemLevel int, priv ed25519.PrivateKey) ([]byte, error) {
 	known, ok := release.ProductByID(p.ID)
 	if !ok || known.Binary != p.Binary {
 		return nil, errors.New("Produkt unbekannt")
 	}
 	p = known
+	if !validPlatform(platform) {
+		return nil, errors.New("Plattform ungültig (erlaubt: windows-amd64 oder leer)")
+	}
 	if !ValidVersion(version) {
 		return nil, errors.New("Versionsangabe ungültig (erwartet x.y.z)")
 	}
@@ -91,9 +128,10 @@ func Pack(dir, version string, p release.Product, systemLevel int, priv ed25519.
 	if len(priv) != ed25519.PrivateKeySize {
 		return nil, errors.New("Privater Schlüssel ungültig")
 	}
-	bin, err := os.ReadFile(filepath.Join(dir, p.Binary))
+	name := p.BinaryFor(platform)
+	bin, err := os.ReadFile(filepath.Join(dir, name))
 	if err != nil {
-		return nil, fmt.Errorf("%s nicht lesbar: %v", p.Binary, err)
+		return nil, fmt.Errorf("%s nicht lesbar: %v", name, err)
 	}
 	if len(bin) == 0 || len(bin) > maxBinaryBytes {
 		return nil, errors.New("Dienstdatei leer oder zu groß")
@@ -101,6 +139,9 @@ func Pack(dir, version string, p release.Product, systemLevel int, priv ed25519.
 	binPAX := map[string]string{systemLevelPAX: strconv.Itoa(systemLevel)}
 	if p.ID != release.HMIKiosk.ID {
 		binPAX[productPAX] = p.ID
+	}
+	if platform != "" {
+		binPAX[platformPAX] = platform
 	}
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -112,7 +153,7 @@ func Pack(dir, version string, p release.Product, systemLevel int, priv ed25519.
 		pax  map[string]string
 	}{
 		{versionName, 0o644, []byte(version + "\n"), nil},
-		{p.Binary, 0o755, bin, binPAX},
+		{name, 0o755, bin, binPAX},
 	} {
 		h := &tar.Header{Name: f.name, Typeflag: tar.TypeReg, Mode: f.mode, Size: int64(len(f.body)), PAXRecords: f.pax}
 		if f.pax != nil {
@@ -149,9 +190,10 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 	if !ed25519.Verify(pub, sum[:], sig) {
 		return nil, errors.New("Signatur ungültig, das Paket stammt nicht aus der Freigabe")
 	}
-	var version, binary, product string
+	var version, binary, product, platform string
 	var level int
-	err := walk(targz, allBinaries(), func(h *tar.Header, r io.Reader) error {
+	var binarySum [sha256.Size]byte
+	err := walk(targz, verifyBinaries(), func(h *tar.Header, r io.Reader) error {
 		if h.Name == versionName {
 			v, err := readVersion(r)
 			version = v
@@ -167,7 +209,13 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 		if id, ok := h.PAXRecords[productPAX]; ok {
 			product = id
 		}
-		_, err = io.Copy(io.Discard, r)
+		platform = h.PAXRecords[platformPAX]
+		if !validPlatform(platform) {
+			return fmt.Errorf("Plattform im Paket unbekannt: %q", platform)
+		}
+		hash := sha256.New()
+		_, err = io.Copy(hash, r)
+		hash.Sum(binarySum[:0])
 		return err
 	})
 	if err != nil {
@@ -177,10 +225,14 @@ func Verify(blob []byte, pub ed25519.PublicKey) (*Package, error) {
 	if !ok {
 		return nil, fmt.Errorf("Unbekanntes Produkt im Paket: %s", product)
 	}
+	// Der Name mit .exe gehört nur zu einem Paket mit Windows-Plattform und umgekehrt.
+	if platform != "" {
+		want += ".exe"
+	}
 	if binary != want {
 		return nil, fmt.Errorf("Programmdatei %q passt nicht zum Produkt %s des Pakets", binary, product)
 	}
-	return &Package{Version: version, SystemLevel: level, Product: product, targz: targz}, nil
+	return &Package{Version: version, SystemLevel: level, Product: product, Platform: platform, Binary: binary, BinarySum: binarySum, sig: sig, targz: targz}, nil
 }
 
 // readSystemLevel liest den Systemstand aus dem PAX-Datensatz; Pakete bis 0.1.6 haben keinen.

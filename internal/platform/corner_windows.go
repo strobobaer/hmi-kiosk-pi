@@ -1,0 +1,304 @@
+//go:build windows
+
+package platform
+
+import (
+	"context"
+	"errors"
+	"log"
+	"runtime"
+	"sync/atomic"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+const (
+	whMouseLL     = 14
+	wmMouseMove   = 0x0200
+	wmLButtonDown = 0x0201
+	wmLButtonUp   = 0x0202
+	wmQuit        = 0x0012
+
+	smCXScreen = 0
+	smCYScreen = 1
+
+	hookQueue  = 256 // Ereignisse, die zwischen Hook und Auswertung warten dürfen
+	cornerTick = 250 * time.Millisecond
+)
+
+var (
+	user32                  = windows.NewLazySystemDLL("user32.dll")
+	procSetWindowsHookExW   = user32.NewProc("SetWindowsHookExW")
+	procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
+	procCallNextHookEx      = user32.NewProc("CallNextHookEx")
+	procGetMessageW         = user32.NewProc("GetMessageW")
+	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
+	procGetSystemMetrics    = user32.NewProc("GetSystemMetrics")
+	procPeekMessageW        = user32.NewProc("PeekMessageW")
+	procGetAsyncKeyState    = user32.NewProc("GetAsyncKeyState")
+
+	procSetThreadDpiAwarenessContext = user32.NewProc("SetThreadDpiAwarenessContext") // ab Windows 10 1607
+)
+
+// dpiPerMonitorV2 ist DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4).
+const dpiPerMonitorV2 = ^uintptr(3)
+
+// setThreadPerMonitorDPI macht den aufrufenden Thread Per-Monitor-DPI-bewusst (V2), damit GetSystemMetrics und die
+// Koordinaten des WH_MOUSE_LL-Hooks in echten Bildschirmpixeln arbeiten, nicht in skalierten (125 %/150 %). Gibt den
+// bisherigen Kontext zurück (0: nicht verfügbar oder gescheitert; dann bleibt es beim Vorgefundenen).
+var setThreadPerMonitorDPI = func() (old uintptr) {
+	if procSetThreadDpiAwarenessContext.Find() != nil {
+		return 0
+	}
+	old, _, _ = procSetThreadDpiAwarenessContext.Call(dpiPerMonitorV2)
+	return old
+}
+
+// msllHook ist MSLLHOOKSTRUCT.
+type msllHook struct {
+	X, Y        int32
+	MouseData   uint32
+	Flags       uint32
+	Time        uint32
+	DwExtraInfo uintptr
+}
+
+// mouseEvent ist ein verkürztes Mausereignis aus dem Hook.
+type mouseEvent struct {
+	kind byte // 'd' Taste unten, 'u' Taste oben, 'm' Bewegung
+	x, y int32
+	at   time.Time
+}
+
+// hookState nimmt die Ereignisse des Hooks an. Die Hook-Prozedur schreibt nur nicht blockierend hinein.
+// Tasten (d/u) laufen über den Kanal und gehen nur bei einem gestauten Kanal von 256 Einträgen verloren
+// (der Takt gleicht das über GetAsyncKeyState aus); Bewegungen werden zusammengefasst: Nur die letzte
+// Lage zählt, ein Weckruf holt die Auswertung.
+type hookState struct {
+	keys chan mouseEvent
+	wake chan struct{}
+	move atomic.Pointer[mouseEvent] // jüngste, noch nicht ausgewertete Bewegung
+	// dropped zählt Tastenereignisse, für die kein Platz war; der Verbraucher meldet die Zahl einmal beim Ende.
+	dropped atomic.Uint32
+}
+
+var hookSink atomic.Pointer[hookState]
+
+// mouseHookCB wird genau einmal je Prozess angelegt (syscall.NewCallback ist nicht freigebbar und auf
+// 2000 Aufrufe begrenzt); WatchCorner darf also beliebig oft laufen.
+var mouseHookCB = syscall.NewCallback(mouseHookProc)
+
+// mouseHookProc ist die WH_MOUSE_LL-Prozedur. Sie blockiert nie, sperrt nie und protokolliert nie: Windows
+// entfernt einen zu langsamen Hook, und die ganze Maus hinge daran. Ereignisse, für die kein Platz ist, fallen weg.
+func mouseHookProc(code int32, wparam, lparam uintptr) uintptr {
+	if code == 0 && lparam != 0 { // HC_ACTION
+		var kind byte
+		switch wparam {
+		case wmLButtonDown:
+			kind = 'd'
+		case wmLButtonUp:
+			kind = 'u'
+		case wmMouseMove:
+			kind = 'm'
+		}
+		if kind != 0 {
+			if hs := hookSink.Load(); hs != nil {
+				ms := (*msllHook)(*(*unsafe.Pointer)(unsafe.Pointer(&lparam))) // Zeiger des Systems, gültig während des Aufrufs
+				ev := mouseEvent{kind: kind, x: ms.X, y: ms.Y, at: time.Now()}
+				if kind == 'm' {
+					hs.move.Store(&ev)
+				} else {
+					select {
+					case hs.keys <- ev:
+					default:
+						hs.dropped.Add(1)
+					}
+				}
+				select {
+				case hs.wake <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}
+	r, _, _ := procCallNextHookEx.Call(0, uintptr(uint32(code)), wparam, lparam)
+	return r
+}
+
+// feedMouse setzt ein Mausereignis auf die Geste um.
+func feedMouse(g *cornerGesture, ev mouseEvent) bool {
+	switch ev.kind {
+	case 'd':
+		return g.Down(int64(ev.x), int64(ev.y), ev.at)
+	case 'u':
+		return g.Up(ev.at)
+	case 'm':
+		return g.Move(int64(ev.x), int64(ev.y), ev.at)
+	}
+	return false
+}
+
+// screenSize ist die Größe des Hauptbildschirms in den Einheiten, in denen der Hook die Zeigerlage meldet:
+// Aufruf auf dem Hook-Thread nach setThreadPerMonitorDPI (dann echte Pixel).
+func screenSize() (w, h int) {
+	cx, _, _ := procGetSystemMetrics.Call(smCXScreen)
+	cy, _, _ := procGetSystemMetrics.Call(smCYScreen)
+	return int(cx), int(cy)
+}
+
+// cornerGestureFor legt das Feld oben rechts in Bildschirmpixeln fest; cfg.ScreenW, falls gesetzt, geht vor.
+func cornerGestureFor(cfg CornerCfg, w int) *cornerGesture {
+	px := cfg.RegionPx
+	if px <= 0 {
+		px = defaultCornerPx
+	}
+	if cfg.ScreenW > 0 {
+		w = cfg.ScreenW
+	}
+	if w <= 0 {
+		w = 1920
+	}
+	return newCornerGesture(cfg.Hold, int64(w-px), int64(px))
+}
+
+// WatchCorner überwacht die Maus (und damit jede Berührung, Windows macht daraus Mausereignisse) über einen
+// WH_MOUSE_LL-Hook und ruft hit, wenn die linke Taste cfg.Hold lang im Feld oben rechts gehalten wird. devDir
+// ist unter Windows ohne Bedeutung. Der Hook läuft auf einem eigenen, festen Thread mit Nachrichtenschleife; die
+// Auswertung geschieht in dieser Goroutine. Mit ctx endet alles.
+func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) (err error) {
+	hs := &hookState{keys: make(chan mouseEvent, hookQueue), wake: make(chan struct{}, 1)}
+	if !hookSink.CompareAndSwap(nil, hs) {
+		return errors.New("Maus-Hook läuft schon")
+	}
+	type started struct {
+		tid uint32
+		w   int // Bildschirmbreite in den Einheiten des Hooks
+		err error
+	}
+	ready := make(chan started, 1)
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		// Messung und Hook auf demselben, Per-Monitor-bewussten Thread: Das Feld (80 x 80) liegt in echten Pixeln.
+		if old := setThreadPerMonitorDPI(); old == 0 {
+			log.Print("Maus-Hook: DPI-Kontext nicht setzbar, Feld in den Einheiten des Prozesses")
+		} else {
+			// Der Thread geht an Go zurück: den ursprünglichen Kontext wiederherstellen.
+			defer procSetThreadDpiAwarenessContext.Call(old)
+		}
+		w, _ := screenSize()
+		hook, _, err := procSetWindowsHookExW.Call(whMouseLL, mouseHookCB, 0, 0)
+		if hook == 0 {
+			ready <- started{err: err}
+			return
+		}
+		var msg [48]byte // MSG; GetMessage liefert 0 bei WM_QUIT
+		// Die Nachrichtenschlange des Threads entsteht erst mit dem ersten Nachrichten-Aufruf; ohne sie
+		// ginge ein früh gesendetes WM_QUIT verloren.
+		procPeekMessageW.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0, 0) // PM_NOREMOVE
+		ready <- started{tid: windows.GetCurrentThreadId(), w: w}
+		for {
+			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0)
+			if int32(r) <= 0 {
+				break
+			}
+		}
+		procUnhookWindowsHookEx.Call(hook)
+	}()
+	st := <-ready
+	if st.err != nil {
+		<-stopped
+		hookSink.Store(nil)
+		return st.err
+	}
+
+	g := cornerGestureFor(cfg, st.w)
+	t := time.NewTicker(cornerTick)
+	defer t.Stop()
+	defer func() {
+		if n := hs.dropped.Load(); n > 0 {
+			log.Printf("Maus-Hook: %d Tastenereignisse verloren (Kanal voll), der Takt hat den Zustand abgeglichen", n)
+		}
+		qerr := stopHook(st.tid, stopped)
+		if qerr == nil {
+			hookSink.Store(nil) // der Hook-Thread ist wirklich beendet
+			return
+		}
+		// Der Hook lebt noch: hookSink bleibt belegt, ein zweiter Hook wird abgelehnt, bis der Thread endet.
+		go func() {
+			<-stopped
+			hookSink.Store(nil)
+		}()
+		log.Printf("Maus-Hook: %v", qerr)
+		err = qerr
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-hs.wake:
+			for drained := false; !drained; {
+				select {
+				case ev := <-hs.keys:
+					if feedMouse(g, ev) {
+						hit()
+					}
+				default:
+					drained = true
+				}
+			}
+			if mv := hs.move.Swap(nil); mv != nil && feedMouse(g, *mv) {
+				hit()
+			}
+		case now := <-t.C:
+			if g.TickSynced(now, leftButtonDown()) {
+				hit()
+			}
+		}
+	}
+}
+
+// leftButtonDown fragt die tatsächliche linke (logische) Maustaste ab.
+func leftButtonDown() bool {
+	vk := uintptr(0x01)                                   // VK_LBUTTON
+	if r, _, _ := procGetSystemMetrics.Call(23); r != 0 { // SM_SWAPBUTTON: vertauschte Tasten
+		vk = 0x02
+	}
+	r, _, _ := procGetAsyncKeyState.Call(vk)
+	return r&0x8000 != 0
+}
+
+// stopHook beendet den Hook-Thread über WM_QUIT und wartet auf sein Ende. Senden kann nur scheitern, solange
+// der Thread noch keine Nachrichtenschlange hat (selten); es wird begrenzt wiederholt. Ein Fehler heißt: Der Thread
+// läuft womöglich noch.
+func stopHook(tid uint32, stopped <-chan struct{}) error {
+	for i := 0; ; i++ {
+		select {
+		case <-stopped:
+			return nil
+		default:
+		}
+		if r, _, _ := procPostThreadMessageW.Call(uintptr(tid), wmQuit, 0, 0); r != 0 {
+			break
+		}
+		if i >= 500 {
+			return errors.New("WM_QUIT an den Hook-Thread nicht zustellbar")
+		}
+		select {
+		case <-stopped:
+			return nil
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case <-stopped:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("Hook-Thread endet nicht")
+	}
+}

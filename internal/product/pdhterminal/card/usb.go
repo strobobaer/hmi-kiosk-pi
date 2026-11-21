@@ -2,13 +2,12 @@ package card
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"hmikiosk/internal/platform"
 )
 
 const (
@@ -130,35 +129,68 @@ func usbNames(devs []InputDevice) string {
 	return strings.Join(names, ", ")
 }
 
-// usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter) über alle Knoten der Auswahl.
+// usbReader liest einen Tastatur-Leser (HID, tippt die UID und Enter). sel ist die Auswahl
+// (vvvv:pppp oder Namensteil); devs sind die beim Öffnen gefundenen Geräte.
 type usbReader struct {
-	devs []InputDevice
+	sel    string
+	format string // was der Leser tippt, siehe normalizeUID; leer: unverändert
+	devs   []InputDevice
+	warn   func(msg string)    // Meldung des Abfangens (Windows); leer: wieder in Ordnung
+	attach func(attached bool) // Gerät angesteckt oder abgezogen (Windows)
 }
 
 func (u *usbReader) Probe(ctx context.Context) (string, error) {
+	if len(u.devs) == 0 {
+		return "", fmt.Errorf("USB-Leser %q nicht gefunden", u.sel)
+	}
 	return "USB: " + usbNames(u.devs), nil
 }
 
-// Run übernimmt alle Knoten exklusiv (sonst landet die UID als Tastatureingabe im Browser)
-// und liest erst danach. Die Ereignisse aller Knoten laufen in einen gemeinsamen Puffer.
+// Run sammelt die Tasten aller Knoten des Lesers in einem gemeinsamen Puffer; readKeys liefert
+// sie plattformabhängig (Linux: exklusiv gegriffene evdev-Knoten, Windows: Raw Input mit Abfangen).
 func (u *usbReader) Run(ctx context.Context, emit func(string)) error {
-	paths := make([]string, len(u.devs))
-	for i, d := range u.devs {
-		paths[i] = d.Path
-	}
 	var (
 		mu  sync.Mutex
 		buf keyBuffer
 	)
-	return readExclusive(ctx, paths, func(ev platform.InputEvent) {
-		if ev.Type != evKey || ev.Value != 1 {
-			return
-		}
+	return u.readKeys(ctx, func(code uint16, at time.Time) {
 		mu.Lock()
-		uid, done := buf.Key(ev.Code, time.Now())
+		uid, done := buf.Key(code, at)
 		mu.Unlock()
 		if done {
-			emit(strings.ToUpper(strings.TrimSpace(uid)))
+			emit(normalizeUID(uid, u.format))
 		}
 	})
 }
+
+// newUSBReader baut den Leser aus den Einstellungen. Umgerechnet wird nur mit USBFormat; Format gilt
+// allein für den PN532, damit Konfigurationen mit einem alten Format am USB-Leser unverändert bleiben.
+func newUSBReader(st Settings, devs []InputDevice) *usbReader {
+	return &usbReader{sel: st.USBDevice, format: st.USBFormat, devs: devs}
+}
+
+// attachTracker merkt sich, ob der Leser zuletzt angesteckt war; set meldet, ob sich der Stand geändert hat
+// (der erste Stand zählt immer als Änderung).
+type attachTracker struct{ state int8 } // 0 unbekannt, 1 angesteckt, 2 abgezogen
+
+func (a *attachTracker) set(attached bool) (changed bool) {
+	v := int8(2)
+	if attached {
+		v = 1
+	}
+	if a.state == v {
+		return false
+	}
+	a.state = v
+	return true
+}
+
+// signalReader ist ein Leser, der dem Dienst melden kann, was das Abfangen und das Gerät tun.
+type signalReader interface {
+	reader
+	// SetSignals setzt vor Run die Rückrufe: warn (leer: wieder in Ordnung) und attach (Gerät da oder weg).
+	SetSignals(warn func(msg string), attach func(attached bool))
+}
+
+// SetSignals setzt die Rückrufe des Dienstes.
+func (u *usbReader) SetSignals(warn func(string), attach func(bool)) { u.warn, u.attach = warn, attach }

@@ -333,3 +333,102 @@ func TestOpenReaderNoPermission(t *testing.T) {
 		}
 	}
 }
+
+// sigReader ist ein Leser, der Gerät und Abfangen meldet wie der Windows-USB-Leser.
+type sigReader struct {
+	fakeReader
+	mu     sync.Mutex
+	warn   func(string)
+	attach func(bool)
+}
+
+func (r *sigReader) SetSignals(warn func(string), attach func(bool)) {
+	r.mu.Lock()
+	r.warn, r.attach = warn, attach
+	r.mu.Unlock()
+}
+
+func (r *sigReader) signals() (func(string), func(bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.warn, r.attach
+}
+
+func TestServiceDetachAndReattach(t *testing.T) {
+	rd := &sigReader{fakeReader: fakeReader{name: "usb", log: func(string) {}}}
+	s := NewService(NewHub(time.Now), func(string, ...any) {})
+	s.retry, s.stable = 5*time.Millisecond, 5*time.Millisecond
+	s.open = func(Settings) (reader, error) { return rd, nil }
+	defer s.Close()
+	changed, unwatch := s.WatchState()
+	defer unwatch()
+	s.Apply(Settings{Type: TypeUSB, USBDevice: "ffff:0035"})
+	waitFor(t, "aktiv", func() bool { return s.Status().Active && s.ReaderState() == StateOK })
+	_, attach := rd.signals()
+	if attach == nil {
+		t.Fatal("kein attach-Rückruf gesetzt")
+	}
+	for len(changed) > 0 {
+		<-changed
+	}
+
+	attach(false) // abgezogen
+	if st := s.Status(); st.State != StateError || st.Detail != "Leser getrennt" || st.Active {
+		t.Fatalf("nach Abziehen: %+v", st)
+	}
+	if s.ReaderState() != StateError {
+		t.Fatalf("ReaderState %q", s.ReaderState())
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("Beobachter (Tray) nicht benachrichtigt")
+	}
+	// Der Stabilitäts-Zeitgeber und eine Entwarnung des Abfangens dürfen „getrennt“ nicht überschreiben.
+	warn, _ := rd.signals()
+	warn("")
+	time.Sleep(30 * time.Millisecond)
+	if st := s.Status(); st.State != StateError {
+		t.Fatalf("Entwarnung überschreibt getrennt: %+v", st)
+	}
+
+	attach(true) // wieder angesteckt
+	if st := s.Status(); st.State != StateOK || !st.Active {
+		t.Fatalf("nach Anstecken: %+v", st)
+	}
+	if s.ReaderState() != StateOK {
+		t.Fatalf("ReaderState %q", s.ReaderState())
+	}
+	select {
+	case <-changed:
+	default:
+		t.Fatal("Beobachter nicht benachrichtigt")
+	}
+}
+
+func TestServiceStartsDetached(t *testing.T) {
+	rd := &sigReader{fakeReader: fakeReader{name: "usb", log: func(string) {}}}
+	s := NewService(NewHub(time.Now), func(string, ...any) {})
+	s.retry, s.stable = 5*time.Millisecond, 5*time.Millisecond
+	s.open = func(Settings) (reader, error) { return rd, nil }
+	defer s.Close()
+	s.Apply(Settings{Type: TypeUSB, USBDevice: "x"})
+	waitFor(t, "Signale", func() bool { _, a := rd.signals(); return a != nil })
+	_, attach := rd.signals()
+	attach(false) // der Auflöser findet das Gerät beim Start nicht
+	time.Sleep(30 * time.Millisecond)
+	if st := s.Status(); st.State != StateError || st.Detail != "Leser getrennt" {
+		t.Fatalf("Start ohne Gerät: %+v", st)
+	}
+}
+
+func TestAttachTracker(t *testing.T) {
+	var a attachTracker
+	for i, c := range []struct {
+		att, changed bool
+	}{{false, true}, {false, false}, {true, true}, {true, false}, {false, true}} {
+		if got := a.set(c.att); got != c.changed {
+			t.Errorf("Schritt %d: changed=%v, erwartet %v", i, got, c.changed)
+		}
+	}
+}

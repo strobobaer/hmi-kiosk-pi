@@ -3,6 +3,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os/exec"
@@ -29,6 +30,8 @@ const (
 	backoffMin  = time.Second
 	backoffMax  = 30 * time.Second
 	stableAfter = 60 * time.Second
+	jobPoll     = time.Second      // Edge: so oft fragt der Überwacher nach Job und Fenster
+	windowGrace = 30 * time.Second // Edge: so lange darf das erste Fenster auf sich warten lassen
 	barHeight   = 48
 	baseURL     = "http://127.0.0.1:8080/"
 	adminURL    = "http://127.0.0.1:8081/admin/" // gleich web.LocalAdminURL; browser importiert web nicht
@@ -76,6 +79,12 @@ type Supervisor struct {
 	startURL string
 	want     Target
 	wake     chan struct{}
+
+	edgeProfile string         // gesetzt: Edge statt Chromium (SetEdge)
+	edgeKiosk   string         // gesetzt: Edge im Kiosk, die Adresse der Admin-Seite für TargetAdmin (SetEdgeKiosk)
+	onRestart   func(n int)    // nach jedem Neustart (SetOnRestart)
+	cur         client.Process // laufender Prozess (Process)
+	windowCheck func() bool    // Edge-Fenster vorhanden (SetWindowCheck)
 }
 
 func New(r client.Runner, chromiumPath, ramDir string, screenW func() int) *Supervisor {
@@ -116,7 +125,18 @@ func (s *Supervisor) args(t Target) []string {
 	s.mu.Lock()
 	profile := s.profile
 	startURL := s.startURL
+	edgeProfile := s.edgeProfile
+	edgeKiosk := s.edgeKiosk
 	s.mu.Unlock()
+	if edgeProfile != "" {
+		if edgeKiosk != "" {
+			if t == TargetAdmin {
+				return EdgeKioskArgs(edgeKiosk, edgeProfile)
+			}
+			return EdgeKioskArgs(startURL, edgeProfile)
+		}
+		return EdgeArgs(startURL, edgeProfile)
+	}
 	var a []string
 	switch profile {
 	case "labwc":
@@ -161,7 +181,15 @@ func (s *Supervisor) start(t Target) (client.Process, error) {
 }
 
 // Run ist die einzige Goroutine, die Zustand und Prozess besitzt.
+//
+// Edge (Windows) endet nicht mit seinem Startprozess: Der reicht den Start oft weiter, und
+// Edge bleibt nach dem Schließen des Fensters im Hintergrund. Hat der Prozess ActiveProcesses
+// (Job-Objekt) oder gibt es SetWindowCheck, fragt Run darum jede Sekunde nach: Das Ende gilt, wenn
+// der Job leer ist oder das Fenster weg ist (zwei Abfragen in Folge); der Job wird dann beendet.
 func (s *Supervisor) Run(ctx context.Context) {
+	s.mu.Lock()
+	windowCheck := s.windowCheck
+	s.mu.Unlock()
 	var (
 		cur       Target
 		proc      client.Process
@@ -169,16 +197,43 @@ func (s *Supervisor) Run(ctx context.Context) {
 		startedAt time.Time
 		backoff   = backoffMin
 		retry     <-chan time.Time
+		watch     <-chan time.Time // Job und Fenster beobachten
+		exitErr   error
+		doneFired bool // der Startprozess ist beendet
+		seen      bool // das Fenster war schon da
+		missed    int  // aufeinanderfolgende Abfragen ohne Fenster
+		restarts  int
+		afterEnd  bool // der nächste erfolgreiche Start ist ein Neustart
 	)
+	setCur := func(p client.Process) {
+		s.mu.Lock()
+		s.cur = p
+		s.mu.Unlock()
+	}
 	stop := func() {
 		if proc != nil {
 			_ = proc.Stop(stopGrace)
 		}
-		proc, done, retry = nil, nil, nil
+		proc, done, retry, watch, afterEnd = nil, nil, nil, nil, false
+		setCur(nil)
 	}
 	scheduleRetry := func() {
 		retry = s.clock.After(backoff)
 		backoff = min(backoff*2, backoffMax)
+	}
+	// ended: Der Prozess (bei Edge samt Job und Fenster) ist wirklich zu Ende.
+	ended := func(err error) {
+		if _, ok := proc.(jobCounter); ok || windowCheck != nil {
+			_ = proc.Stop(stopGrace) // beendet übrig gebliebene Prozesse, gibt das Job-Objekt frei
+		}
+		proc, done, watch = nil, nil, nil
+		setCur(nil)
+		if s.clock.Now().Sub(startedAt) >= stableAfter {
+			backoff = backoffMin
+		}
+		s.logf("Chromium beendet (%v), Neustart in %v", err, backoff)
+		afterEnd = true
+		scheduleRetry()
 	}
 	launch := func() {
 		at := s.clock.Now()
@@ -189,6 +244,48 @@ func (s *Supervisor) Run(ctx context.Context) {
 			return
 		}
 		proc, done, startedAt, retry = p, p.Done(), at, nil
+		doneFired, seen, missed, exitErr = false, false, 0, nil
+		if _, ok := p.(jobCounter); ok || windowCheck != nil {
+			watch = s.clock.After(jobPoll)
+		}
+		setCur(p)
+		if afterEnd {
+			afterEnd = false
+			restarts++
+			s.mu.Lock()
+			f := s.onRestart
+			s.mu.Unlock()
+			if f != nil {
+				f(restarts)
+			}
+		}
+	}
+	// alive: Läuft Edge noch (Job nicht leer, Fenster da oder noch im Anlauf)?
+	alive := func() bool {
+		if jc, ok := proc.(jobCounter); ok {
+			if n, err := jc.ActiveProcesses(); err == nil && n == 0 {
+				return false
+			}
+		} else if doneFired {
+			return false
+		}
+		if windowCheck == nil {
+			return true
+		}
+		if windowCheck() {
+			seen, missed = true, 0
+			return true
+		}
+		missed++
+		if seen {
+			exitErr = errors.New("Fenster geschlossen")
+			return missed < 2
+		}
+		if s.clock.Now().Sub(startedAt) > windowGrace {
+			exitErr = errors.New("kein Fenster erschienen")
+			return false
+		}
+		return true
 	}
 	for {
 		select {
@@ -208,12 +305,18 @@ func (s *Supervisor) Run(ctx context.Context) {
 				launch()
 			}
 		case err := <-done:
-			proc, done = nil, nil
-			if s.clock.Now().Sub(startedAt) >= stableAfter {
-				backoff = backoffMin
+			done, doneFired, exitErr = nil, true, err
+			if watch != nil && alive() { // Job lebt weiter: Folgeprozess übernimmt
+				continue
 			}
-			s.logf("Chromium beendet (%v), Neustart in %v", err, backoff)
-			scheduleRetry()
+			ended(err)
+		case <-watch:
+			watch = nil
+			if alive() {
+				watch = s.clock.After(jobPoll)
+				continue
+			}
+			ended(exitErr)
 		case <-retry:
 			retry = nil
 			launch()
@@ -226,3 +329,46 @@ func (s *Supervisor) Run(ctx context.Context) {
 func NewExec(chromiumPath, ramDir string, screenW func() int) *Supervisor {
 	return New(client.NewExecRunner(), chromiumPath, ramDir, screenW)
 }
+
+// SetEdge schaltet auf Microsoft Edge im App-Fenster um (EdgeArgs mit der Startadresse, eigenes
+// Profil profileDir); die Anzeigeziele spielen dann keine Rolle. Nur vor Run aufrufen.
+func (s *Supervisor) SetEdge(profileDir string) {
+	s.mu.Lock()
+	s.edgeProfile = profileDir
+	s.mu.Unlock()
+}
+
+// SetEdgeKiosk schaltet Edge (nach SetEdge) auf den Vollbild-Kiosk um: EdgeKioskArgs statt EdgeArgs, und
+// TargetAdmin öffnet adminURL (die lokale Admin-Seite) statt der Startseite. Nur vor Run aufrufen.
+func (s *Supervisor) SetEdgeKiosk(adminURL string) {
+	s.mu.Lock()
+	s.edgeKiosk = adminURL
+	s.mu.Unlock()
+}
+
+// SetOnRestart: f(n) läuft in Run nach dem n-ten erfolgreichen Neustart (ab 1; der erste Start
+// zählt nicht), wenn der Prozess nach seinem Ende wieder lief. f darf nicht blockieren.
+func (s *Supervisor) SetOnRestart(f func(n int)) {
+	s.mu.Lock()
+	s.onRestart = f
+	s.mu.Unlock()
+}
+
+// SetWindowCheck: has meldet, ob das Fenster des Prozesses da ist. Ist es nach dem Erscheinen
+// weg (Nutzer schloss Edge, das im Hintergrund weiterläuft), gilt Edge als beendet und wird neu
+// gestartet. Nur vor Run aufrufen.
+func (s *Supervisor) SetWindowCheck(has func() bool) {
+	s.mu.Lock()
+	s.windowCheck = has
+	s.mu.Unlock()
+}
+
+// Process ist der laufende Prozess oder nil.
+func (s *Supervisor) Process() client.Process {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cur
+}
+
+// jobCounter hat der Windows-Runner: Zahl der Prozesse, die im Job noch laufen.
+type jobCounter interface{ ActiveProcesses() (int, error) }
