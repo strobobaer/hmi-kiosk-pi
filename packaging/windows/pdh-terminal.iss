@@ -98,6 +98,7 @@ var
   PrevKiosk: Boolean;     // das Setup hat zuvor Kiosk eingerichtet
   KioskActive: Boolean;   // Kiosk-Einrichtung in diesem Lauf gelungen
   EditionOk: Boolean;
+  UndoFailed: Boolean;    // Deinstallation: -undo gescheitert, der Marker bleibt kiosk
 
 // WizardSilent gilt für /SILENT und /VERYSILENT; hier zählt nur /VERYSILENT (stille Verteilung ohne Programmstart).
 function NotVerySilent(): Boolean;
@@ -337,14 +338,19 @@ begin
     ok := FileExists(ExpandConstant('{app}\{#KioskHelper}')) and
       Exec(ExpandConstant('{app}\{#KioskHelper}'), '-undo', '', SW_HIDE, ewWaitUntilTerminated, rc);
     Log('Kiosk-Rueckbau bei der Deinstallation: gestartet=' + IntToStr(Ord(ok)) + ', Code=' + IntToStr(rc));
-    if (not ok) or (rc <> 0) then
-      SuppressibleMsgBox('Der Rückbau des Kiosks ist nicht gelungen (Code ' + IntToStr(rc) + '). Der Benutzer PDH-Kiosk, der Autologon oder die Shell-Einstellung können bestehen bleiben. Zum Entfernen die Installation erneut aufspielen und mit pdh-terminal-kiosk.exe -undo zurückbauen oder die Schritte aus docs/betrieb.md (Betriebsart Kiosk, Rückbau) von Hand ausführen. Einzelheiten: ' + KioskLogPath(), mbError, MB_OK, IDOK);
+    UndoFailed := (not ok) or (rc <> 0);
+    if UndoFailed and not UninstallSilent then
+      MsgBox('Der Rückbau des Kiosks ist nicht gelungen (Code ' + IntToStr(rc) + '). Der Benutzer PDH-Kiosk, der Autologon oder die Shell-Einstellung können bestehen bleiben. Zum Entfernen die Installation erneut aufspielen und mit pdh-terminal-kiosk.exe -undo zurückbauen oder die Schritte aus docs/betrieb.md (Betriebsart Kiosk, Rückbau) von Hand ausführen. Einzelheiten: ' + KioskLogPath(), mbError, MB_OK);
     RegDeleteValue(HKLM, RunKey, 'PDH-Terminal');
   end;
   if CurUninstallStep = usPostUninstall then
   begin
-    RegDeleteValue(HKLM, '{#ModeKey}', 'Betriebsart');
-    RegDeleteKeyIfEmpty(HKLM, '{#ModeKey}');
+    // Nach gescheitertem Rückbau bleibt der Marker (kiosk) stehen, damit ein späteres Setup den Rückbau wiederholt.
+    if not UndoFailed then
+    begin
+      RegDeleteValue(HKLM, '{#ModeKey}', 'Betriebsart');
+      RegDeleteKeyIfEmpty(HKLM, '{#ModeKey}');
+    end;
     if not UninstallSilent then
       MsgBox('Kopplung und Einstellungen bleiben in C:\ProgramData\PDH-Terminal.', mbInformation, MB_OK);
   end;
