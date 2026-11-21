@@ -218,6 +218,18 @@ check "windows: keine Edge-Richtlinie unter HKCU und keine für lokale Netzzugri
 check "windows: toast.ps1 wird in den Programmordner installiert" grep -Eq 'Source: "toast.ps1"; DestDir: "[{]app[}]"' "$iss"
 
 
+check "windows: Kiosk-Helfer ist in [Files]" grep -Eq 'Source: "[{]#BinDir[}].pdh-terminal-kiosk.exe"; DestDir: "[{]app[}]"' "$iss"
+check "windows: [Code] prüft die Edition (EditionID: Professional, Enterprise, Education)" bash -c "grep -qF 'EditionID' '$iss' && grep -qF \"'Professional'\" '$iss' && grep -qF \"'Enterprise'\" '$iss' && grep -qF \"'Education'\" '$iss'"
+check "windows: /MODE=zusatz|kiosk wird ausgewertet, Fehler bei unbekanntem Wert" bash -c "grep -qF '{param:MODE|}' '$iss' && grep -qF \"'kiosk'\" '$iss' && grep -qF \"'zusatz'\" '$iss'"
+check "windows: /RESTART=yes für still nach Kiosk" grep -qF '{param:RESTART|}' "$iss"
+check "windows: Seite Betriebsart" grep -qF "'Betriebsart'" "$iss"
+check "windows: Kiosk richtet per -setup -app ein, Rückbau per -undo" bash -c "grep -qF \"'-setup -app \" '$iss' && grep -qF \"'-undo'\" '$iss'"
+check "windows: Deinstallation ruft -undo vor dem Entfernen (usUninstall)" bash -c "sed -n '/CurUninstallStepChanged/,\$p' '$iss' | grep -A4 'usUninstall' | grep -qF -- '-undo'"
+check "windows: Run-Eintrag entfällt im Kiosk (Check) und wird dort entfernt" bash -c "grep -Eq 'CurrentVersion.Run\";.*Check: WantRunKey' '$iss' && grep -qF \"RegDeleteValue(HKLM, RunKey\" '$iss'"
+check "windows: Kiosk-Startmenü/[Run] startet den Starter im Kiosk nicht (StartAfterInstall)" grep -qF 'Check: StartAfterInstall' "$iss"
+check "windows: build-setup.sh baut und prüft pdh-terminal-kiosk.exe" bash -c "grep -qF './cmd/pdh-terminal-kiosk' packaging/windows/build-setup.sh && grep -qF 'pdh-terminal-kiosk.exe' packaging/windows/build-setup.sh"
+
+
 if [ "$fails" -gt 0 ]; then
 	echo "$fails Prüfung(en) fehlgeschlagen"
 	exit 1

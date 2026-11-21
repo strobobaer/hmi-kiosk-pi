@@ -6,9 +6,9 @@
 # Ergebnis in dist/:
 #   PDH-Terminal-Setup-<version>.exe                  Setup (Inno Setup)           + .sha256
 #   pdh-terminal-<version>-windows-amd64.pkg          signiertes Paket für Updates + .sha256
-#   win/pdh-terminal.exe, win/pdh-terminal-start.exe  die gebauten Programme
+#   win/pdh-terminal.exe, pdh-terminal-start.exe, pdh-terminal-kiosk.exe  die gebauten Programme
 #
-# Programm und Starter werden mit derselben Version und demselben öffentlichen Schlüssel gebaut wie beim
+# Programm, Starter und Kiosk-Helfer werden mit derselben Version und demselben öffentlichen Schlüssel gebaut wie beim
 # Linux-Release (Makefile-Ziel "release"): Der Starter nimmt seine Basisversion aus seiner eigenen Version.
 #
 # Nötig: Docker, ein öffentlicher Schlüssel (HMI_RELEASE_PUB, Standard .secrets/release.pub) und der private
@@ -68,8 +68,8 @@ rm -f "$pkg" "$pkg.sha256" "$setup" "$setup.sha256"
 
 echo "== Programme (windows/amd64, Version $version)"
 ldflags="-H windowsgui -X hmikiosk/internal/release.ReleasePublicKeyHex=$(tr -d '\r\n' <"$pub") -X hmikiosk/internal/release.Version=$version"
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 scripts/dgo build -ldflags "$ldflags" -o "$win/" ./cmd/pdh-terminal ./cmd/pdh-terminal-start
-[ -s "$win/pdh-terminal.exe" ] && [ -s "$win/pdh-terminal-start.exe" ] || die "Die Programme wurden nicht gebaut."
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 scripts/dgo build -ldflags "$ldflags" -o "$win/" ./cmd/pdh-terminal ./cmd/pdh-terminal-start ./cmd/pdh-terminal-kiosk
+[ -s "$win/pdh-terminal.exe" ] && [ -s "$win/pdh-terminal-start.exe" ] && [ -s "$win/pdh-terminal-kiosk.exe" ] || die "Die Programme wurden nicht gebaut."
 
 echo "== Setup (Inno Setup)"
 docker run --rm -v "$(host_path "$root"):/work" "$INNO_IMAGE" "/DAppVersion=$version" packaging/windows/pdh-terminal.iss

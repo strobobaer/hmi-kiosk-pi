@@ -76,7 +76,7 @@ Raspberry Pi und Windows erscheinen mit **derselben Version** am **selben Tag** 
    packaging/windows/build-setup.sh --version x.y.z
    ```
 
-   Das Skript baut `pdh-terminal.exe` und `pdh-terminal-start.exe` mit **derselben** Version und demselben öffentlichen Schlüssel (`.secrets/release.pub`, oder `HMI_RELEASE_PUB`), erzeugt mit Inno Setup (Docker-Abbild mit festem Digest, siehe Skript) das Setup und signiert das Windows-Paket. Der private Schlüssel kommt aus `HMI_RELEASE_KEY_DIR` (Standard `.secrets`) und wird nur lesend in den Container eingebunden. Ergebnis in `dist/`: `PDH-Terminal-Setup-<version>.exe`, `pdh-terminal-<version>-windows-amd64.pkg` und je eine `.sha256`.
+   Das Skript baut `pdh-terminal.exe`, `pdh-terminal-start.exe` und den Kiosk-Helfer `pdh-terminal-kiosk.exe` mit **derselben** Version und demselben öffentlichen Schlüssel (`.secrets/release.pub`, oder `HMI_RELEASE_PUB`), erzeugt mit Inno Setup (Docker-Abbild mit festem Digest, siehe Skript) das Setup und signiert das Windows-Paket. Der private Schlüssel kommt aus `HMI_RELEASE_KEY_DIR` (Standard `.secrets`) und wird nur lesend in den Container eingebunden. Ergebnis in `dist/`: `PDH-Terminal-Setup-<version>.exe`, `pdh-terminal-<version>-windows-amd64.pkg` und je eine `.sha256`.
 3. Alles an dasselbe Release hängen:
 
    ```
@@ -568,13 +568,13 @@ sudo systemctl restart hmi-kiosk.service
 
 ### Windows
 
-Das PDH-Terminal läuft auch auf Windows 11 (Betriebsart „Zusatz“: ein normaler PC, auf dem das Terminal neben anderen Programmen läuft und die Karte anmeldet). Es startet beim Anmelden, zeigt PDH in einem eigenen Edge-Fenster und liest die Karte des USB-Lesers. Kopplung, Admin-Seite und Zustände wie oben; Besonderheiten:
+Das PDH-Terminal läuft auch auf Windows 11 (Betriebsart „Zusatz“: ein normaler PC, auf dem das Terminal neben anderen Programmen läuft und die Karte anmeldet; oder Betriebsart „Kiosk“, siehe unten: der PC zeigt nur das Terminal). Es startet beim Anmelden, zeigt PDH in einem eigenen Edge-Fenster und liest die Karte des USB-Lesers. Kopplung, Admin-Seite und Zustände wie oben; Besonderheiten:
 
 #### Installation
 
 1. `PDH-Terminal-Setup-<Version>.exe` und `PDH-Terminal-Setup-<Version>.exe.sha256` von der Release-Seite laden, Prüfsumme mit `Get-FileHash` vergleichen.
 2. Setup starten und die einmalige Abfrage der Benutzerkontensteuerung bestätigen (Administratorrechte). **SmartScreen:** Das Setup ist nicht mit einem Zertifikat signiert, Windows meldet „Unbekannter Herausgeber“: „Weitere Informationen“ → „Trotzdem ausführen“. Die Echtheit sichert die Prüfsumme; Updates sind davon unabhängig und werden vom Terminal selbst per Signatur geprüft.
-3. Das Setup installiert für alle Benutzer nach `C:\Program Files\PDH-Terminal`, legt den Datenordner `C:\ProgramData\PDH-Terminal` an (Kopplung, Einstellungen, geladene Updates), trägt den Autostart ein (Registrierung `HKLM\...\Run`, startet `pdh-terminal-start.exe`), legt im Startmenü „PDH-Terminal“ und „PDH-Terminal Admin“ an, installiert das feste Skript `toast.ps1` für die Windows-Mitteilung in den Programmordner, setzt die Edge-Richtlinie `HideFirstRunExperience` unter HKLM (kein Erststart-Assistent im Terminal-Fenster; sie wird bei der Deinstallation nur entfernt, wenn das Setup sie angelegt hat; weitere Edge-Richtlinien, auch für lokale Netzzugriffe, setzt das Setup nicht) und öffnet in der Windows-Firewall TCP 8443 (Regel „PDH-Terminal Admin“, nur Profile Domäne und Privat, nicht Öffentlich) für die Admin-Seite aus dem Netz. Danach startet das Terminal.
+3. Das Setup fragt auf der Seite „Betriebsart“ nach „Zusatz“ (Vorgabe) oder „Kiosk“ (siehe „Betriebsart Kiosk“); die folgenden Angaben beschreiben Zusatz. Es installiert für alle Benutzer nach `C:\Program Files\PDH-Terminal`, legt den Datenordner `C:\ProgramData\PDH-Terminal` an (Kopplung, Einstellungen, geladene Updates), trägt den Autostart ein (Registrierung `HKLM\...\Run`, startet `pdh-terminal-start.exe`), legt im Startmenü „PDH-Terminal“ und „PDH-Terminal Admin“ an, installiert das feste Skript `toast.ps1` für die Windows-Mitteilung in den Programmordner, setzt die Edge-Richtlinie `HideFirstRunExperience` unter HKLM (kein Erststart-Assistent im Terminal-Fenster; sie wird bei der Deinstallation nur entfernt, wenn das Setup sie angelegt hat; weitere Edge-Richtlinien, auch für lokale Netzzugriffe, setzt das Setup nicht) und öffnet in der Windows-Firewall TCP 8443 (Regel „PDH-Terminal Admin“, nur Profile Domäne und Privat, nicht Öffentlich) für die Admin-Seite aus dem Netz. Danach startet das Terminal.
 4. Die Admin-Seite öffnet „PDH-Terminal Admin“ im Startmenü (`https://127.0.0.1:8443/admin/`) oder das Tray-Symbol; aus dem Netz `https://<PC>:8443`. Kopplung wie in der README, „PDH-Terminal einrichten“, Schritte 4 bis 6.
 
 Autostart und Startmenü starten immer den **Starter** `pdh-terminal-start.exe`, nie `pdh-terminal.exe`: Nach einem Update beendet sich das Programm mit Code 4, und nur der Starter startet es in der neuen Version neu.
@@ -607,10 +607,46 @@ Meldet eine Karte an, während das Terminal-Fenster nicht vorne ist (ein anderes
 
 Erfolg grün, Fehler rot, Abmeldung grau; Texte „Angemeldet: <Name>“, „Abgemeldet: <Name>“, bei einem Fehler die Meldung von PDH. Ist das Terminal-Fenster vorne, zeigt die PDH-Seite das Ergebnis selbst. Mehrere Werte lassen sich kombinieren. Ein PDH ohne diese Einstellung oder ein Terminal ohne den Endpunkt `/api/card/result` läuft ohne Fehler weiter, nur ohne Benachrichtigung.
 
+#### Betriebsart Kiosk
+
+Im Kiosk zeigt der PC nur das Terminal (zum Beispiel ein Gerät am Eingang): Ein eigener Standardbenutzer `PDH-Kiosk` meldet sich beim Start selbst an, und sein Windows hat statt des Explorers den Starter `pdh-terminal-start.exe -kiosk` als Shell. Es gibt keine Taskleiste, keinen Desktop und kein Tray-Symbol; Edge läuft im Vollbild (`--kiosk`) und startet nach einem Absturz sofort neu. Ein globales Terminal (Infobildschirm) zeigt hier seine Folien.
+
+**Einrichten.** Auf der Seite „Betriebsart“ des Setups „Kiosk – dieser PC zeigt nur das Terminal“ wählen oder still `PDH-Terminal-Setup-<Version>.exe /VERYSILENT /SUPPRESSMSGBOXES /MODE=kiosk /RESTART=yes` (als Administrator). Ohne `/MODE` bleibt die bisherige Betriebsart (bei Neuinstallation `zusatz`); `/RESTART=yes` startet nach gelungener Einrichtung still neu, interaktiv bietet das Setup den Neustart an. Das Setup ruft verborgen `pdh-terminal-kiosk.exe -setup -app "<Programmordner>"` auf (der Helfer ist nur für das Setup gedacht und wird nicht von Hand gestartet). Er
+
+1. legt den lokalen Standardbenutzer `PDH-Kiosk` (kein Administrator) mit einem zufälligen 32-Zeichen-Passwort an; das Passwort wird nirgends angezeigt oder in Dateien gespeichert, außer als LSA-Geheimnis für den Autologon;
+2. schaltet den Autologon ein (`AutoAdminLogon`, Benutzer `PDH-Kiosk`, Passwort als LSA-Geheimnis `DefaultPassword`, nicht im Klartext);
+3. setzt die Shell des Benutzers auf `"<Programmordner>\pdh-terminal-start.exe" -kiosk`;
+4. sperrt für `PDH-Kiosk` Task-Manager, Sperren des PCs, Kennwortänderung, „Ausführen“, Windows-Tasten und das Kontextmenü und schaltet die Bildschirmsperre aus (der Energiesparplan bleibt unverändert);
+5. gibt den Datenordner `C:\ProgramData\PDH-Terminal` nur noch den Administratoren, SYSTEM und `PDH-Kiosk` zum Schreiben (statt der Gruppe „Benutzer“): Die Kopplung ist damit nicht mehr für alle Benutzer des PCs lesbar.
+
+Der Autostart-Eintrag (`HKLM\...\Run`) entfällt im Kiosk, weil die Shell den Starter startet. Das Protokoll des Helfers steht in `C:\ProgramData\PDH-Terminal\log\kiosk.log`. **Scheitert** ein Schritt, nimmt der Helfer die schon gemachten zurück; das Setup meldet den Fehler (mit Verweis auf `kiosk.log`), bricht die Installation nicht ab, und der PC bleibt in der Betriebsart Zusatz (der Autostart-Eintrag bleibt bzw. wird wieder angelegt).
+
+**Edition.** Kiosk geht nur auf Windows 11 **Pro, Enterprise oder Education** (Edition aus `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\EditionID`: `Professional*`, `Enterprise*`, `Education*`). Auf anderen Editionen (zum Beispiel Home) ist „Kiosk“ auf der Seite gesperrt („Der Kioskbetrieb braucht Windows 11 Pro, Enterprise oder Education.“); ein stilles `/MODE=kiosk` bricht dort mit Fehlercode ab, ohne etwas zu ändern. Meldet der Helfer selbst den Exitcode 2 (Edition nicht unterstützt), behandelt das Setup das ebenso: Meldung, Zusatz bleibt. Ein unbekannter `/MODE`-Wert bricht ebenfalls ab.
+
+**Admin-Seite im Kiosk (Geste).** Es gibt kein Tray-Symbol. Das Feld **80 × 80 Pixel oben rechts 5 Sekunden lang halten** (Finger oder Maus) öffnet die lokale Admin-Seite (Admin-Passwort wie bisher); ein kurzes Antippen tut nichts, und wer den Finger aus dem Feld zieht, bricht ab. „Zurück“ auf der Admin-Seite führt zum Terminal. Die Admin-Seite hat im Kiosk den Abschnitt „Kiosk“ mit **„Kiosk-Benutzer abmelden“** (danach meldet sich `PDH-Kiosk` wieder an) und dem Hinweis zum Weg zu Windows.
+
+**An Windows kommen.** Am Gerät **Strg+Alt+Entf** drücken und **„Benutzer wechseln“** wählen, dann mit einem Administratorkonto anmelden. Der Kiosk-Benutzer bleibt dabei angemeldet; nach der Arbeit das Administratorkonto abmelden, dann steht der Kiosk wieder da. Aus dem Netz geht weiterhin die Admin-Seite über `https://<PC>:8443`.
+
+**Rückbau und Wechsel.** Das Setup erneut ausführen und „Zusatz“ wählen (still `/MODE=zusatz`): Es ruft `pdh-terminal-kiosk.exe -undo` auf und trägt den Autostart wieder ein. Ein erneutes Setup mit `/MODE=kiosk` richtet den Kiosk neu ein (der Helfer räumt zuerst selbst auf, die Einrichtung ist wiederholbar). Auch die Deinstallation ruft vor dem Löschen der Dateien `-undo` auf (es ist unschädlich, wenn nichts eingerichtet ist). Der Rückbau
+
+- schaltet den Autologon aus und löscht das LSA-Geheimnis; ein zuvor vorhandener Autologon, den der Helfer gesichert hat, wird wiederhergestellt;
+- entfernt Shell und Sperren, löscht den Benutzer `PDH-Kiosk` samt Profil;
+- stellt die Rechte des Datenordners wie in Zusatz her (Gruppe „Benutzer“: Ändern);
+- lässt die Daten des Terminals (Kopplung, Einstellungen, Updates) unberührt.
+
+**Grenzen im Kiosk.**
+
+- **Früherer Autologon:** War vorher ein Autologon mit einem **Klartext-Passwort** (Winlogon `DefaultPassword`) eingerichtet, löscht die Kiosk-Einrichtung dieses Passwort und stellt es beim Rückbau **nicht** wieder her (ein Klartext-Passwort wird nicht aufbewahrt). Ein früherer Autologon muss deshalb nach dem Rückbau von Hand neu eingegeben werden.
+- Das Setup sperrt nichts für Administratoren, die sich über „Benutzer wechseln“ anmelden.
+- Die Edge-Richtlinie `HideFirstRunExperience` aus der normalen Installation bleibt; weitere Richtlinien setzt das Setup nicht.
+- Kein Tray und keine Windows-Mitteilungen im Kiosk (das Terminal ist immer vorne): Die Einstellung „Benachrichtigung bei der Anmeldung“ wirkt nur in der Betriebsart Zusatz.
+- Endet der Starter (die Shell), meldet Windows `PDH-Kiosk` ab; es gibt deshalb kein „Beenden“. Fehlt Edge, zeigt das Programm eine eigene Fehlerseite „Edge nicht gefunden“ (mit Admin-Geste).
+- Ein Setup-Update über einen laufenden Kiosk beendet den Starter und damit die Sitzung von `PDH-Kiosk`; nach einem Neustart des PCs steht der Kiosk wieder. Programm-Updates per Paket (Abschnitt 2) laufen im Kiosk wie sonst von selbst.
+
 #### Grenzen unter Windows
 
 - **Ein Terminal je PC.** Es gehört der zuerst angemeldeten Sitzung. Ein zweiter Benutzer (schneller Benutzerwechsel) bekommt keine zweite Instanz; sein Starter endet still ohne Tray-Symbol.
-- **Der Datenordner ist für alle Benutzer des PCs lesbar** (die Gruppe „Benutzer“ hat „Ändern“, weil das Programm als angemeldeter Benutzer läuft), also auch das Gerätegeheimnis der Kopplung. In der Betriebsart Zusatz gelten die Benutzer des PCs als vertrauenswürdig. Auf gemeinsam genutzten PCs mit fremden Benutzern ist das Terminal deshalb nicht geeignet.
+- **Der Datenordner ist in der Betriebsart Zusatz für alle Benutzer des PCs lesbar** (im Kiosk nicht, siehe oben) (die Gruppe „Benutzer“ hat „Ändern“, weil das Programm als angemeldeter Benutzer läuft), also auch das Gerätegeheimnis der Kopplung. In der Betriebsart Zusatz gelten die Benutzer des PCs als vertrauenswürdig. Auf gemeinsam genutzten PCs mit fremden Benutzern ist das Terminal deshalb nicht geeignet.
 - **Setup ohne Code-Signatur:** SmartScreen zeigt „Unbekannter Herausgeber“ (siehe Installation).
 - **Fenster mit höheren Rechten:** Karten des Lesers landen dort im Fenster (Absatz „USB-Leser unter Windows (Hinweis)“).
 - Abschnitte der Admin-Seite, die den Helfer brauchen (Netzwerk, Zeit, Sicherung, Abbild), fehlen unter Windows.

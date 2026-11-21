@@ -110,8 +110,9 @@ Das PDH-Terminal läuft auch auf einem **Windows-11-PC** (64 Bit, Microsoft Edge
 2. Setup starten und die Abfrage der Benutzerkontensteuerung bestätigen. Das Setup ist nicht mit einem Zertifikat signiert: SmartScreen meldet „Unbekannter Herausgeber“ (**Weitere Informationen → Trotzdem ausführen**).
 3. Das Terminal startet danach und bei jeder Anmeldung von selbst. Admin-Seite: Startmenü „PDH-Terminal Admin“. Koppeln und Leser einstellen wie unter „PDH-Terminal einrichten“, Schritte 4 bis 7 (USB-Leser mit 13,56 MHz im Tastaturmodus; auf der Seite „Kartenleser“ den Knopf „Karte vorhalten“ nutzen).
 4. Verteilung ohne Fenster: `PDH-Terminal-Setup-<Version>.exe /VERYSILENT /SUPPRESSMSGBOXES`.
+5. **Betriebsart Kiosk:** Auf der Setup-Seite „Betriebsart“ (still `/MODE=kiosk /RESTART=yes`) macht das Setup den PC zum Kioskgerät: Ein eigener Benutzer `PDH-Kiosk` meldet sich selbst an und zeigt nur das Terminal, auch als **Infobildschirm** (globales Terminal mit Folien aus PDH). Nur auf Windows 11 Pro, Enterprise und Education. Admin-Seite: 5 Sekunden oben rechts halten; an Windows kommt man mit Strg+Alt+Entf → „Benutzer wechseln“. Ein erneutes Setup mit `/MODE=zusatz` baut den Kiosk zurück.
 
-Grenzen: ein Terminal je PC (es gehört der zuerst angemeldeten Sitzung), und der Datenordner `C:\ProgramData\PDH-Terminal` (mit der Kopplung) ist für alle Benutzer des PCs lesbar. Installation, Update, Deinstallation, Benachrichtigung bei der Anmeldung und Release-Ablauf: `docs/betrieb.md`, Abschnitt 4 „Windows“. Das Setup selbst wird mit `packaging/windows/build-setup.sh` gebaut.
+Grenzen: ein Terminal je PC (es gehört der zuerst angemeldeten Sitzung), und in der Betriebsart Zusatz ist der Datenordner `C:\ProgramData\PDH-Terminal` (mit der Kopplung) für alle Benutzer des PCs lesbar (im Kiosk nicht). Installation, Kiosk einrichten und zurückbauen, Update, Deinstallation, Benachrichtigung bei der Anmeldung und Release-Ablauf: `docs/betrieb.md`, Abschnitt 4 „Windows“. Das Setup selbst wird mit `packaging/windows/build-setup.sh` gebaut.
 
 ## Aktualisieren
 
@@ -280,8 +281,9 @@ The PDH-Terminal also runs on a **Windows 11 PC** (64-bit, Microsoft Edge) and l
 2. Run the setup and confirm the User Account Control prompt. The setup is not code-signed: SmartScreen shows "Unbekannter Herausgeber" (unknown publisher) (**More info → Run anyway**).
 3. The terminal then starts, and again at every logon. Admin page: Start menu entry "PDH-Terminal Admin". Pair it and set up the reader as in "Set up PDH-Terminal", steps 4 to 7 (13.56 MHz USB reader in keyboard mode; use the "Karte vorhalten" button on the "Kartenleser" page).
 4. Silent deployment: `PDH-Terminal-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES`.
+5. **Kiosk mode:** On the setup page "Betriebsart" (silently `/MODE=kiosk /RESTART=yes`) the setup turns the PC into a kiosk device: a dedicated user `PDH-Kiosk` signs in automatically and shows only the terminal, also as an **info screen** (global terminal with slides from PDH). Windows 11 Pro, Enterprise and Education only. Admin page: hold the top-right corner for 5 seconds; to reach Windows press Ctrl+Alt+Del and choose "Switch user". Running the setup again with `/MODE=zusatz` removes the kiosk.
 
-Limits: one terminal per PC (it belongs to the first signed-in session), and the data folder `C:\ProgramData\PDH-Terminal` (with the pairing) is readable by all users of the PC. Installation, update, uninstall, the login notification and the release flow (German): `docs/betrieb.md`, section 4 "Windows". The setup is built with `packaging/windows/build-setup.sh`.
+Limits: one terminal per PC (it belongs to the first signed-in session), and in the "Zusatz" (add-on) mode the data folder `C:\ProgramData\PDH-Terminal` (with the pairing) is readable by all users of the PC (not in kiosk mode). Installation, kiosk setup and removal, update, uninstall, the login notification and the release flow (German): `docs/betrieb.md`, section 4 "Windows". The setup is built with `packaging/windows/build-setup.sh`.
 
 ## Updating
 

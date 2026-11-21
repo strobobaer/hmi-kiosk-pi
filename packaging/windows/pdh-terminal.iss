@@ -1,6 +1,10 @@
 ; Setup des PDH-Terminals für Windows 11 (Inno Setup 6). Gebaut von packaging/windows/build-setup.sh:
 ;   iscc /DAppVersion=x.y.z packaging\windows\pdh-terminal.iss
-; Erwartet dist\win\pdh-terminal.exe und dist\win\pdh-terminal-start.exe (gleiche Version, gleicher Schlüssel).
+; Erwartet dist\win\pdh-terminal.exe, pdh-terminal-start.exe und pdh-terminal-kiosk.exe (gleiche Version, gleicher Schlüssel).
+;
+; Betriebsart: "Zusatz" (Vorgabe, Autostart über HKLM Run) oder "Kiosk" (eigener Benutzer PDH-Kiosk mit Autologon, der
+; Starter ist dessen Shell, kein Run-Eintrag). Still: /MODE=zusatz|kiosk; Neustart nach Kiosk still nur mit /RESTART=yes.
+; Die Kiosk-Einrichtung macht pdh-terminal-kiosk.exe (-setup / -undo).
 ;
 ; Der Autostart und das Startmenü starten immer den Starter (pdh-terminal-start.exe), nie das Programm selbst:
 ; Nach einem Update beendet sich das Programm mit Code 4, und nur der Starter startet es (in der neuen Version) neu.
@@ -14,6 +18,8 @@
 #define AppName "PDH-Terminal"
 #define Starter "pdh-terminal-start.exe"
 #define FirewallRule "PDH-Terminal Admin"
+#define KioskHelper "pdh-terminal-kiosk.exe"
+#define ModeKey "SOFTWARE\PDH-Terminal"
 
 [Setup]
 ; Feste Kennung: Ein Setup mit derselben Kennung ist ein Update über die vorhandene Installation.
@@ -43,6 +49,8 @@ Name: "de"; MessagesFile: "compiler:Languages\German.isl"
 [Files]
 Source: "{#BinDir}\pdh-terminal.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinDir}\pdh-terminal-start.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Kiosk-Helfer: richtet den Kioskbetrieb ein (-setup) und nimmt ihn zurück (-undo); läuft nur aus dem Setup.
+Source: "{#BinDir}\pdh-terminal-kiosk.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Skript der Windows-Mitteilung (Toast): fest, ohne Text; das Programm startet es mit -File aus diesem Ordner.
 Source: "toast.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -55,8 +63,9 @@ Name: "{commonappdata}\PDH-Terminal"; Permissions: users-modify; Flags: uninsnev
 ; Ein vorhandener Wert eines Administrators bleibt unberührt, und nur ein vom Setup angelegter Wert wird bei der
 ; Deinstallation entfernt. Eine Richtlinie für lokale Netzzugriffe oder unter HKCU gibt es bewusst nicht.
 Root: HKLM; Subkey: "SOFTWARE\Policies\Microsoft\Edge"; ValueType: dword; ValueName: "HideFirstRunExperience"; ValueData: 1; Flags: uninsdeletevalue createvalueifdoesntexist
-; Autostart für alle Benutzer: der Starter, nicht das Programm.
-Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PDH-Terminal"; ValueData: """{app}\pdh-terminal-start.exe"""; Flags: uninsdeletevalue
+; Autostart für alle Benutzer: der Starter, nicht das Programm. Im Kiosk entfällt er (der Starter ist dort die Shell des
+; Benutzers PDH-Kiosk); [Code] entfernt einen vorhandenen Eintrag und legt ihn beim Fehlschlag der Kiosk-Einrichtung wieder an.
+Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PDH-Terminal"; ValueData: """{app}\pdh-terminal-start.exe"""; Flags: uninsdeletevalue; Check: WantRunKey
 
 [Icons]
 ; Die Verknüpfung mit AppUserModelID braucht Windows für die Benachrichtigungen (Toast).
@@ -73,7 +82,7 @@ Type: files; Name: "{commonprograms}\PDH-Terminal Admin.url"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#FirewallRule}"""; Flags: runhidden; StatusMsg: "Firewall-Regel wird erneuert ..."
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""{#FirewallRule}"" dir=in action=allow protocol=TCP localport=8443 profile=domain,private"; Flags: runhidden; StatusMsg: "Firewall-Regel wird angelegt ..."
 ; Nach der Installation startet der Starter im Benutzerkonto des Installierenden, außer bei /VERYSILENT.
-Filename: "{app}\{#Starter}"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: NotVerySilent
+Filename: "{app}\{#Starter}"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: StartAfterInstall
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""{#FirewallRule}"""; Flags: runhidden; RunOnceId: "DelFirewallRule"
@@ -81,6 +90,14 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 [Code]
 const
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B2F6C1E-4D7A-4E53-9A0B-5C3D1F7E2A94}_is1';
+  RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+
+var
+  ModePage: TInputOptionWizardPage;
+  KioskWanted: Boolean;   // gewählte Betriebsart: Kiosk
+  PrevKiosk: Boolean;     // das Setup hat zuvor Kiosk eingerichtet
+  KioskActive: Boolean;   // Kiosk-Einrichtung in diesem Lauf gelungen
+  EditionOk: Boolean;
 
 // WizardSilent gilt für /SILENT und /VERYSILENT; hier zählt nur /VERYSILENT (stille Verteilung ohne Programmstart).
 function NotVerySilent(): Boolean;
@@ -91,6 +108,55 @@ begin
   for i := 1 to ParamCount do
     if CompareText(ParamStr(i), '/VERYSILENT') = 0 then
       Result := False;
+end;
+
+// Autostart über Run nur in der Betriebsart Zusatz.
+function WantRunKey(): Boolean;
+begin
+  Result := not KioskWanted;
+end;
+
+// Im Kiosk startet die Shell des Kiosk-Benutzers das Terminal (nach dem Neustart), nicht das Setup.
+function StartAfterInstall(): Boolean;
+begin
+  Result := NotVerySilent() and not KioskWanted;
+end;
+
+// Kiosk braucht Windows Pro, Enterprise oder Education (EditionID: Professional*, Enterprise*, Education*).
+function KioskEditionSupported(): Boolean;
+var
+  ed: String;
+begin
+  Result := False;
+  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows NT\CurrentVersion', 'EditionID', ed) then
+    Result := (Pos('Professional', ed) = 1) or (Pos('Enterprise', ed) = 1) or (Pos('Education', ed) = 1);
+end;
+
+function HelperPath(): String;
+begin
+  Result := ExpandConstant('{app}\{#KioskHelper}');
+end;
+
+function KioskLogPath(): String;
+begin
+  Result := ExpandConstant('{commonappdata}\PDH-Terminal\log\kiosk.log');
+end;
+
+// Führt den Kiosk-Helfer verborgen aus und gibt seinen Exitcode zurück (-1: nicht startbar).
+function RunHelper(const args: String): Integer;
+var
+  rc: Integer;
+begin
+  Result := -1;
+  if not FileExists(HelperPath()) then
+    Exit;
+  if Exec(HelperPath(), args, '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    Result := rc;
+end;
+
+procedure SaveMode(const m: String);
+begin
+  RegWriteStringValue(HKLM, '{#ModeKey}', 'Betriebsart', m);
 end;
 
 procedure StopTerminal();
@@ -104,7 +170,7 @@ end;
 
 function InitializeSetup(): Boolean;
 var
-  oldText: String;
+  oldText, prev, m: String;
   oldVer, newVer: Int64;
 begin
   Result := True;
@@ -116,7 +182,54 @@ begin
       begin
         SuppressibleMsgBox('Es ist schon die neuere Version ' + oldText + ' installiert. Dieses Setup (Version {#AppVersion}) ändert nichts.', mbError, MB_OK, IDOK);
         Result := False;
+        Exit;
       end;
+
+  // Betriebsart: /MODE=zusatz|kiosk. Ohne Angabe bleibt es bei der bisherigen (ein stilles Update ändert sie nicht).
+  PrevKiosk := RegQueryStringValue(HKLM, '{#ModeKey}', 'Betriebsart', prev) and (CompareText(prev, 'kiosk') = 0);
+  EditionOk := KioskEditionSupported();
+  m := ExpandConstant('{param:MODE|}');
+  if m = '' then
+    KioskWanted := PrevKiosk and EditionOk
+  else if CompareText(m, 'kiosk') = 0 then
+    KioskWanted := True
+  else if CompareText(m, 'zusatz') = 0 then
+    KioskWanted := False
+  else
+  begin
+    SuppressibleMsgBox('Unbekannte Betriebsart /MODE=' + m + '. Erlaubt: zusatz oder kiosk.', mbError, MB_OK, IDOK);
+    Result := False;
+    Exit;
+  end;
+  if KioskWanted and not EditionOk then
+  begin
+    // Mit /MODE=kiosk auf einer nicht unterstützten Edition: Abbruch mit Fehlercode (still ohne Fenster).
+    SuppressibleMsgBox('Der Kioskbetrieb braucht Windows 11 Pro, Enterprise oder Education.', mbError, MB_OK, IDOK);
+    Result := False;
+  end;
+end;
+
+procedure InitializeWizard();
+begin
+  ModePage := CreateInputOptionPage(wpWelcome, 'Betriebsart', 'Wie wird dieser PC verwendet?',
+    'Wählen Sie die Betriebsart. Sie lässt sich später durch ein erneutes Setup wechseln.', True, False);
+  ModePage.Add('Zusatz – neben normaler Arbeit');
+  ModePage.Add('Kiosk – dieser PC zeigt nur das Terminal');
+  if not EditionOk then
+  begin
+    ModePage.CheckListBox.ItemEnabled[1] := False;
+    ModePage.CheckListBox.ItemCaption[1] := 'Kiosk – nicht verfügbar: Der Kioskbetrieb braucht Windows 11 Pro, Enterprise oder Education.';
+  end;
+  ModePage.SelectedValueIndex := 0;
+  if KioskWanted then
+    ModePage.SelectedValueIndex := 1;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if CurPageID = ModePage.ID then
+    KioskWanted := (ModePage.SelectedValueIndex = 1) and EditionOk;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -126,11 +239,91 @@ begin
   Result := '';
 end;
 
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  rc: Integer;
+  msg: String;
+begin
+  if CurStep = ssInstall then
+  begin
+    // Kiosk: kein Autostart über Run (die Shell startet das Terminal). In Zusatz legt der [Registry]-Eintrag ihn an.
+    if KioskWanted then
+      RegDeleteValue(HKLM, RunKey, 'PDH-Terminal');
+  end;
+  if CurStep = ssPostInstall then
+  begin
+    KioskActive := False;
+    if KioskWanted then
+    begin
+      // Der Helfer macht zuerst -undo (wiederholbar) und rollt bei einem Fehler selbst zurück.
+      rc := RunHelper('-setup -app "' + ExpandConstant('{app}') + '"');
+      if rc = 0 then
+      begin
+        KioskActive := True;
+        SaveMode('kiosk');
+      end
+      else
+      begin
+        // Es bleibt bei Zusatz: Autostart wieder an, Setup nicht abbrechen.
+        KioskWanted := False;
+        RegWriteStringValue(HKLM, RunKey, 'PDH-Terminal', '"' + ExpandConstant('{app}\{#Starter}') + '"');
+        SaveMode('zusatz');
+        if rc = 2 then
+          msg := 'Der Kioskbetrieb braucht Windows 11 Pro, Enterprise oder Education. Der PC bleibt in der Betriebsart Zusatz.'
+        else
+          msg := 'Die Kiosk-Einrichtung ist fehlgeschlagen (Code ' + IntToStr(rc) + '). Der PC bleibt in der Betriebsart Zusatz. Einzelheiten: ' + KioskLogPath();
+        Log(msg);
+        SuppressibleMsgBox(msg, mbError, MB_OK, IDOK);
+      end;
+    end
+    else
+    begin
+      // Zusatz nach Kiosk: erst zurückbauen (Benutzer, Autologon, Shell, Rechte des Datenordners).
+      if PrevKiosk then
+      begin
+        rc := RunHelper('-undo');
+        if rc <> 0 then
+        begin
+          msg := 'Der Rückbau des Kiosks ist fehlgeschlagen (Code ' + IntToStr(rc) + '). Einzelheiten: ' + KioskLogPath();
+          Log(msg);
+          SuppressibleMsgBox(msg, mbError, MB_OK, IDOK);
+        end;
+      end;
+      SaveMode('zusatz');
+    end;
+  end;
+end;
+
+// Nach gelungener Kiosk-Einrichtung neu starten: interaktiv als Angebot, still nur mit /RESTART=yes.
+function NeedRestart(): Boolean;
+begin
+  Result := False;
+  if KioskActive then
+  begin
+    if WizardSilent then
+      Result := CompareText(ExpandConstant('{param:RESTART|}'), 'yes') = 0
+    else
+      Result := True;
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  rc: Integer;
 begin
   if CurUninstallStep = usUninstall then
+  begin
+    // Kiosk zuerst zurücknehmen, solange der Helfer noch da ist (-undo ist unschädlich, wenn nichts eingerichtet ist).
+    if FileExists(ExpandConstant('{app}\{#KioskHelper}')) then
+      Exec(ExpandConstant('{app}\{#KioskHelper}'), '-undo', '', SW_HIDE, ewWaitUntilTerminated, rc);
     StopTerminal();
+    RegDeleteValue(HKLM, RunKey, 'PDH-Terminal');
+  end;
   if CurUninstallStep = usPostUninstall then
+  begin
+    RegDeleteValue(HKLM, '{#ModeKey}', 'Betriebsart');
+    RegDeleteKeyIfEmpty(HKLM, '{#ModeKey}');
     if not UninstallSilent then
       MsgBox('Kopplung und Einstellungen bleiben in C:\ProgramData\PDH-Terminal.', mbInformation, MB_OK);
+  end;
 end;
