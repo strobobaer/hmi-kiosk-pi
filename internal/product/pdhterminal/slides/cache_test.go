@@ -10,6 +10,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -277,4 +278,121 @@ func TestSaveAccepts49MBOfImages(t *testing.T) {
 		t.Fatalf("49 MB Bilder: %v", err)
 	}
 	mustVersion(t, s, "gross")
+}
+
+// payloadTwoImages: zwei Bildfolien (s-img und s-other) mit den gegebenen Bildern.
+func payloadTwoImages(t testing.TB, version string, images map[string][]byte) []byte {
+	t.Helper()
+	imgs := map[string]string{}
+	for k, v := range images {
+		imgs[k] = base64.StdEncoding.EncodeToString(v)
+	}
+	b, err := json.Marshal(map[string]any{
+		"version": version,
+		"slides": []any{
+			map[string]any{"id": "s-img", "kind": "image", "duration": 10},
+			map[string]any{"id": "s-other", "kind": "image", "duration": 10},
+		},
+		"images": imgs,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// Ein unveränderter Stand schreibt kein Bild neu: derselbe Inhalt kommt per Hardlink (gleiche Datei) oder, wenn
+// Verknüpfen nicht geht, als Kopie; nur ein geändertes Bild wird geschrieben.
+func TestCommitReusesUnchangedImages(t *testing.T) {
+	s := newStore(t)
+	a := pngBytes(t)
+	b := padPNG(t, len(a)+10) // anderer Inhalt
+	two := map[string][]byte{"s-img": a, "s-other": b}
+	if err := s.Save(payloadTwoImages(t, "v1", two)); err != nil {
+		t.Fatal(err)
+	}
+	if s.written != 2 || s.linked != 0 {
+		t.Fatalf("erster Stand: geschrieben %d, verknüpft %d", s.written, s.linked)
+	}
+	first, _ := s.current()
+	fiFirst, err := os.Stat(filepath.Join(first, imgDir, "s-img"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gleiche Bilder, neue Version
+	if err := s.Save(payloadTwoImages(t, "v2", two)); err != nil {
+		t.Fatal(err)
+	}
+	if s.written != 0 || s.linked != 2 {
+		t.Errorf("unverändert: geschrieben %d, verknüpft %d (erwartet 0 und 2)", s.written, s.linked)
+	}
+	second, _ := s.current()
+	if second == first {
+		t.Fatal("kein neuer Stand")
+	}
+	// Dieselbe Datei (Inode) lässt sich nur unter Linux prüfen: Go liest die Dateikennung unter Windows erst beim
+	// Vergleich vom Pfad, und der alte Stand ist dann schon entfernt. Dort gelten die Zähler.
+	if runtime.GOOS != "windows" {
+		fiSecond, err := os.Stat(filepath.Join(second, imgDir, "s-img"))
+		if err != nil || !os.SameFile(fiFirst, fiSecond) {
+			t.Errorf("Bild wurde neu geschrieben statt verknüpft: %v", err)
+		}
+	}
+	// ein Bild ändert sich: nur dieses wird geschrieben
+	c := padPNG(t, len(a)+20)
+	if err := s.Save(payloadTwoImages(t, "v3", map[string][]byte{"s-img": c, "s-other": b})); err != nil {
+		t.Fatal(err)
+	}
+	if s.written != 1 || s.linked != 1 {
+		t.Errorf("ein Bild geändert: geschrieben %d, verknüpft %d", s.written, s.linked)
+	}
+	got, _, err := s.Image("s-img")
+	if err != nil || !bytes.Equal(got, c) {
+		t.Errorf("geändertes Bild falsch: %v", err)
+	}
+	if got, _, err := s.Image("s-other"); err != nil || !bytes.Equal(got, b) {
+		t.Errorf("unverändertes Bild falsch nach Löschen des alten Standes: %v", err)
+	}
+	ents, _ := os.ReadDir(s.Dir)
+	if len(ents) != 2 {
+		t.Errorf("alte Stände nicht entfernt: %d Einträge", len(ents))
+	}
+}
+
+func TestCommitFallsBackToCopyWhenLinkFails(t *testing.T) {
+	s := newStore(t)
+	a := pngBytes(t)
+	if err := s.Save(payloadJSON(t, "v1", map[string][]byte{"s-img": a})); err != nil {
+		t.Fatal(err)
+	}
+	s.link = func(string, string) error { return errors.New("keine Hardlinks") }
+	if err := s.Save(payloadJSON(t, "v2", map[string][]byte{"s-img": a})); err != nil {
+		t.Fatal(err)
+	}
+	if s.copied != 1 || s.linked != 0 || s.written != 0 {
+		t.Errorf("Kopie erwartet: geschrieben %d, verknüpft %d, kopiert %d", s.written, s.linked, s.copied)
+	}
+	if got, _, err := s.Image("s-img"); err != nil || !bytes.Equal(got, a) {
+		t.Errorf("Bild nach Kopie: %v", err)
+	}
+}
+
+// Gleiche Größe, anderer Inhalt: wird neu geschrieben (SHA-256 entscheidet, nicht die Größe).
+func TestCommitSameSizeDifferentContentIsRewritten(t *testing.T) {
+	s := newStore(t)
+	a := pngBytes(t)
+	a2 := bytes.Clone(a)
+	a2[len(a2)-1] ^= 0xFF
+	if err := s.Save(payloadJSON(t, "v1", map[string][]byte{"s-img": a})); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(payloadJSON(t, "v2", map[string][]byte{"s-img": a2})); err != nil {
+		t.Fatal(err)
+	}
+	if s.written != 1 || s.linked != 0 {
+		t.Errorf("geschrieben %d, verknüpft %d", s.written, s.linked)
+	}
+	if got, _, _ := s.Image("s-img"); !bytes.Equal(got, a2) {
+		t.Error("alter Inhalt geliefert")
+	}
 }

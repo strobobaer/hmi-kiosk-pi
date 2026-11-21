@@ -4,7 +4,9 @@
 package slides
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -62,6 +64,31 @@ type Store struct {
 
 	mu     sync.Mutex
 	rename func(oldpath, newpath string) error // von Tests ersetzbar
+	link   func(oldpath, newpath string) error // von Tests ersetzbar (Vorgabe: os.Link)
+
+	// Zähler des letzten commit (Tests): neu geschriebene, verknüpfte und kopierte Bilder.
+	written, linked, copied int
+}
+
+func (s *Store) lnk(a, b string) error {
+	if s.link != nil {
+		return s.link(a, b)
+	}
+	return os.Link(a, b)
+}
+
+// sameImage sagt, ob die Datei path dieselben Bytes wie raw enthält (Größe, dann SHA-256 der Inhalte).
+func sameImage(path string, raw []byte) bool {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() != int64(len(raw)) {
+		return false
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	a, b := sha256.Sum256(old), sha256.Sum256(raw)
+	return bytes.Equal(a[:], b[:])
 }
 
 func (s *Store) ren(a, b string) error {
@@ -205,10 +232,30 @@ func (s *Store) commit(meta []byte, imgs map[string][]byte) (err error) {
 			return err
 		}
 	}
+	// Unveränderte Bilder (gleiche SHA-256) kommen aus dem bisherigen Stand: Hardlink, sonst Kopie. Bei jedem
+	// Foliensignal alle Bilder neu zu schreiben belastete die Platte (SD-Karte, Festplatte) ohne Grund.
+	oldDir, _ := s.current()
+	s.written, s.linked, s.copied = 0, 0, 0
 	for id, raw := range imgs {
-		if err = writeSynced(filepath.Join(dir, imgDir, id), raw); err != nil {
+		np := filepath.Join(dir, imgDir, id)
+		if oldDir != "" {
+			if op := filepath.Join(oldDir, imgDir, id); sameImage(op, raw) {
+				if s.lnk(op, np) == nil {
+					s.linked++
+					continue
+				}
+				// Verknüpfen geht nicht (z. B. Dateisystem ohne Hardlinks): Kopie des unveränderten Bildes.
+				if err = copyFileSynced(op, np); err != nil {
+					return err
+				}
+				s.copied++
+				continue
+			}
+		}
+		if err = writeSynced(np, raw); err != nil {
 			return err
 		}
+		s.written++
 	}
 	if err = writeSynced(filepath.Join(dir, metaFile), meta); err != nil {
 		return err
@@ -218,6 +265,15 @@ func (s *Store) commit(meta []byte, imgs map[string][]byte) (err error) {
 	}
 	s.prune(gen)
 	return nil
+}
+
+// copyFileSynced kopiert eine Datei (Inhalt unverändert) und synchronisiert sie.
+func copyFileSynced(from, to string) error {
+	b, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	return writeSynced(to, b)
 }
 
 func writeSynced(path string, data []byte) error {
