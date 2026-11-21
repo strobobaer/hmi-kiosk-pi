@@ -126,7 +126,7 @@ func (s *service) adminMux(admin http.Handler) http.Handler {
 	mux.Handle("/api/remote/", s.remoteAPI())
 	// Die kurze Adresse https://<Gerät>:8443 führt zur Admin-Seite.
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
+		http.Redirect(w, r, "/admin/", http.StatusFound)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "Seite nicht gefunden", http.StatusNotFound)

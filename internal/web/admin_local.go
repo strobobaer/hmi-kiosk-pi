@@ -60,7 +60,7 @@ func (a *admin) buildLocal() http.Handler {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(b)
 	})
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { redirect(w, r, "/admin/") })
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/admin/", http.StatusFound) })
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { notFound(w) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !localAdminHosts[r.Host] {

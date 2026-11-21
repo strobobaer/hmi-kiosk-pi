@@ -347,7 +347,7 @@ func TestLocalAdminHasNoPeerAndRedirectsRoot(t *testing.T) {
 		t.Fatalf("/peer/: %d", w.Code)
 	}
 	w := serveLocal(e, localReq(http.MethodGet, "127.0.0.1:8081", "/", nil))
-	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/admin/" {
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/admin/" {
 		t.Fatalf("/: %d %q", w.Code, w.Header().Get("Location"))
 	}
 	if w := serveLocal(e, localReq(http.MethodGet, "127.0.0.1:8081", "/keyboard.js", nil)); w.Code != http.StatusOK {

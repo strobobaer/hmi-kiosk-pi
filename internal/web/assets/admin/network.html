@@ -1,12 +1,12 @@
 {{define "content"}}
+{{with .Body}}
 {{if $.NoHelper}}
 <section class="panel stack">
   <h2>Netzwerk und Zeit</h2>
   <p>Unter Windows über die Windows-Einstellungen</p>
 </section>
-{{else}}
-{{with .Body}}
-{{with .Eth}}
+{{end}}
+{{if not $.NoHelper}}{{with .Eth}}
 <section class="panel stack">
   <h2>Ethernet (IPv4)</h2>
   {{if .Pending}}
@@ -67,7 +67,7 @@
   <p class="hint">Die Ethernet-Einstellung ist hier nicht verfügbar.</p>
   {{end}}
 </section>
-{{end}}
+{{end}}{{end}}
 {{if $.HMI}}
 <section class="panel stack">
   <h2>Fernsteuerung (PDH)</h2>
@@ -96,6 +96,7 @@
   </div>
 </section>
 {{end}}
+{{if not $.NoHelper}}
 <section class="panel stack">
   <h2>WLAN</h2>
   <p>Eingestellt: {{if .WifiOff}}dauerhaft aus{{else}}an{{end}}</p>

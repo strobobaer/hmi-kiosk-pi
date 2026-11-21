@@ -308,7 +308,7 @@ func TestAdminPortRootLeadsToAdminPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther || resp.Header.Get("Location") != "/admin/" {
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/admin/" {
 		t.Fatalf("Wurzel %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	resp, err = c.Get("https://" + f.bound.Admin + "/gibt-es-nicht")
