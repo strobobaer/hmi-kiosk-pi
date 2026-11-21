@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -473,5 +474,17 @@ func TestOpenSignalNameDefaults(t *testing.T) {
 	}
 	if got := s.openSignalName(); got != want {
 		t.Errorf("Standardname %q, erwartet %q", got, want)
+	}
+}
+
+// Die Adresse https://<Gerät>:8443/ führt (GET und HEAD) zur Admin-Seite.
+func TestAdminRootRedirectsToAdmin(t *testing.T) {
+	h := adminRootMux(http.NotFoundHandler())
+	for _, m := range []string{http.MethodGet, http.MethodHead} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(m, "/", nil))
+		if w.Code != http.StatusFound || w.Header().Get("Location") != "/admin/" {
+			t.Errorf("%s /: %d %q", m, w.Code, w.Header().Get("Location"))
+		}
 	}
 }

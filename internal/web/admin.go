@@ -591,7 +591,9 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 	v.Nav, v.ProductName, v.HMI = a.product.Nav, a.product.Name, a.product.HMI
 	if a.noHelper {
 		v.NoHelper = true
-		v.Nav = navWithoutNetwork(v.Nav)
+		if !a.product.HMI { // mit HMI bleibt die Seite wegen Fingerabdruck und Schlüssel
+			v.Nav = navWithoutNetwork(v.Nav)
+		}
 	}
 	var buf bytes.Buffer
 	if err := a.pages[page].Execute(&buf, v); err != nil {

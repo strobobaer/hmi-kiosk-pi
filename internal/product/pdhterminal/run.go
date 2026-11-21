@@ -712,6 +712,19 @@ func (s *service) retryAdmin(ctx context.Context, wg *sync.WaitGroup, h http.Han
 	}
 }
 
+// adminRootMux: Die kurze Adresse https://<Gerät>:8443 führt zur Admin-Seite.
+func adminRootMux(h http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/admin/", h)
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusFound)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "Seite nicht gefunden", http.StatusNotFound)
+	})
+	return mux
+}
+
 func (s *service) listenAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminListener, quiet bool) string {
 	l, err := net.Listen("tcp", s.o.AdminAddr)
 	if err != nil {
@@ -723,16 +736,8 @@ func (s *service) listenAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminList
 	}
 	src := web.NewCertSource(adm.dir, adm.cert)
 	s.certSrc.Store(src)
-	mux := http.NewServeMux()
-	mux.Handle("/admin/", h)
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/admin/", http.StatusSeeOther)
-	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "Seite nicht gefunden", http.StatusNotFound)
-	})
 	srv := &http.Server{
-		Handler:           mux,
+		Handler:           adminRootMux(h),
 		TLSConfig:         &tls.Config{GetCertificate: src.GetCertificate, MinVersion: tls.VersionTLS12},
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       5 * time.Minute, // das Hochladen eines Updates
