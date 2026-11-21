@@ -41,6 +41,10 @@ const (
 	toastTimeout = 20 * time.Second
 	clockLineH   = 34 // Höhe der Zeile mit der Uhrzeit in der Überlagerung
 	maxQueue     = 8  // so viele offene Wünsche an den Fensterthread; weitere fallen weg
+	hintW        = 760
+	hintH        = 190
+	kindHint     = "hint"     // dauerhafter Hinweis (Edge fehlt): ohne Zeitablauf, nicht per Klick schließbar
+	kindHintOff  = "hint-off" // Wunsch: den Hinweis schließen
 )
 
 const (
@@ -151,7 +155,7 @@ type popup struct {
 }
 
 // request ist ein Wunsch an den Fensterthread.
-type request struct{ kind, text, tone string }
+type request struct{ kind, text, tone, detail string }
 
 // Rückruf und Zustand des Fensterthreads: genau einmal je Prozess.
 var (
@@ -192,10 +196,18 @@ func (s *shower) Show(kinds []string, text, tone string) {
 	}
 	for _, k := range []string{KindOverlay, KindBanner} {
 		if slices.Contains(kinds, k) {
-			enqueue(request{k, text, tone})
+			enqueue(request{kind: k, text: text, tone: tone})
 		}
 	}
 }
+
+// ShowHint zeigt einen dauerhaften Hinweis in der Mitte des Bildschirms (immer oben, ohne den Fokus zu nehmen), bis
+// HideHint ihn schließt. Er nutzt dieselbe Fensterklasse und denselben Thread wie die Benachrichtigungen. Ein neuer
+// Aufruf ersetzt den offenen Hinweis.
+func ShowHint(title, detail string) { enqueue(request{kindHint, title, ToneError, detail}) }
+
+// HideHint schließt den Hinweis (ohne Wirkung, wenn keiner offen ist).
+func HideHint() { enqueue(request{kind: kindHintOff}) }
 
 // toast startet das feste Skript toast.ps1; der Text geht Base64-kodiert über stdin.
 func toast(text string) {
@@ -303,12 +315,12 @@ func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
 			return 0
 		}
 	case wmLButtonDown:
-		if popups[hwnd] != nil {
+		if p := popups[hwnd]; p != nil && p.kind != kindHint { // der Hinweis bleibt
 			pDestroyWindow.Call(hwnd)
 			return 0
 		}
 	case wmTimer:
-		if popups[hwnd] != nil {
+		if p := popups[hwnd]; p != nil && p.kind != kindHint {
 			pDestroyWindow.Call(hwnd)
 			return 0
 		}
@@ -337,6 +349,12 @@ func drain() {
 
 // open öffnet das Fenster der Art; ein noch offenes derselben Art wird ersetzt.
 func open(r request) {
+	if r.kind == kindHintOff {
+		if old := current[kindHint]; old != 0 {
+			pDestroyWindow.Call(old)
+		}
+		return
+	}
 	if old := current[r.kind]; old != 0 {
 		pDestroyWindow.Call(old)
 	}
@@ -345,6 +363,9 @@ func open(r request) {
 	w, h, x, y := int32(overlayW), int32(overlayH), (int32(sw)-overlayW)/2, (int32(sh)-overlayH)/2
 	if r.kind == KindBanner {
 		w, h, x, y = int32(sw), bannerHeight, 0, 0
+	}
+	if r.kind == kindHint {
+		w, h, x, y = int32(hintW), int32(hintH), (int32(sw)-hintW)/2, (int32(sh)-hintH)/2
 	}
 	hInst, _, _ := pGetModuleHandleW.Call(0)
 	hwnd, _, _ := pCreateWindowExW.Call(wsExTopmost|wsExToolWindow|wsExNoActivate,
@@ -356,9 +377,14 @@ func open(r request) {
 	if r.kind == KindOverlay {
 		p.clock = ClockText(time.Now())
 	}
+	if r.kind == kindHint {
+		p.clock = r.detail // zweite, kleinere Zeile
+	}
 	popups[hwnd] = p
 	current[r.kind] = hwnd
-	pSetTimer.Call(hwnd, timerClose, uintptr(showDuration/time.Millisecond), 0)
+	if r.kind != kindHint {
+		pSetTimer.Call(hwnd, timerClose, uintptr(showDuration/time.Millisecond), 0)
+	}
 	pSetWindowPos.Call(hwnd, hwndTopmost, uintptr(x), uintptr(y), uintptr(w), uintptr(h), swpNoActivate)
 	pShowWindow.Call(hwnd, swShowNoActive)
 }
@@ -389,7 +415,7 @@ func paint(hwnd uintptr, p *popup) {
 	pDeleteObject.Call(br)
 
 	height := 22
-	if p.kind == KindOverlay {
+	if p.kind == KindOverlay || p.kind == kindHint {
 		height = 28
 	}
 	neg := ^uintptr(height - 1) // -height: Zeichenhöhe in Pixeln

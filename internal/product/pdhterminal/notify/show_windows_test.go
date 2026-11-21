@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unsafe"
 )
 
 func TestToneColor(t *testing.T) {
@@ -54,5 +56,49 @@ func TestToastScriptFile(t *testing.T) {
 	}
 	if !strings.HasPrefix(s, "\xef\xbb\xbf") {
 		t.Error("Skript braucht die UTF-8-Marke, sonst liest Windows PowerShell 5.1 das ö falsch")
+	}
+}
+
+// Der Hinweis (Edge fehlt) ist dauerhaft: ein Klick schließt ihn nicht, erst HideHint. Ein echtes Fenster, kurz sichtbar.
+func TestHintWindowPersistsUntilHidden(t *testing.T) {
+	pFindWindowEx := user32.NewProc("FindWindowExW")
+	pIsVisible := user32.NewProc("IsWindowVisible")
+	// Das (unsichtbare) Nachrichtenfenster hat dieselbe Klasse: gesucht wird das sichtbare Fenster.
+	find := func() uintptr {
+		var prev uintptr
+		for {
+			h, _, _ := pFindWindowEx.Call(0, prev, uintptr(unsafe.Pointer(className)), 0)
+			if h == 0 {
+				return 0
+			}
+			if v, _, _ := pIsVisible.Call(h); v != 0 {
+				return h
+			}
+			prev = h
+		}
+	}
+	waitFor := func(want bool) uintptr {
+		for i := 0; i < 100; i++ {
+			if h := find(); (h != 0) == want {
+				return h
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return find()
+	}
+	ShowHint(HintEdgeTitle, HintEdgeDetail)
+	h := waitFor(true)
+	if h == 0 {
+		t.Fatal("Hinweisfenster erscheint nicht")
+	}
+	defer HideHint()
+	pPostMessageW.Call(h, wmLButtonDown, 0, 0) // ein Klick darf ihn nicht schließen
+	time.Sleep(300 * time.Millisecond)
+	if find() == 0 {
+		t.Fatal("Klick schloss den Hinweis")
+	}
+	HideHint()
+	if waitFor(false) != 0 {
+		t.Error("HideHint schloss das Fenster nicht")
 	}
 }

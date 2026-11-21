@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/browser"
+	"hmikiosk/internal/product/pdhterminal/notify"
 	"hmikiosk/internal/web"
 )
 
@@ -24,6 +25,22 @@ const (
 	windowWaitStep = 100 * time.Millisecond
 )
 
+// Nähte für den dauerhaften Hinweis „Edge nicht gefunden“ (im Test ersetzt).
+var (
+	showHint = notify.ShowHint
+	hideHint = notify.HideHint
+)
+
+// edgeMissingHint setzt den Hinweis nach dem Stand von Edge: Im Kiosk steht er, solange Edge fehlt, und verschwindet,
+// sobald Edge gefunden ist.
+func edgeMissingHint(kiosk, missing bool) {
+	if notify.EdgeHint(kiosk, missing) {
+		showHint(notify.HintEdgeTitle, notify.HintEdgeDetail)
+	} else if kiosk {
+		hideHint()
+	}
+}
+
 // startEdge zeigt die Startseite im Edge-App-Fenster und startet Edge nach dem Schließen
 // neu, dann minimiert und ohne Fokus. Der Kanal schließt, sobald Edge beendet ist. Fehlt Edge,
 // meldet das Terminal es einmal (Selbstprüfung „edge“ rot) und versucht es alle 30 s neu.
@@ -37,8 +54,10 @@ func (s *service) startEdge(ctx context.Context, startURL string) <-chan struct{
 			} else {
 				s.setProblem(problemEdge, "")
 			}
+			edgeMissingHint(s.o.Kiosk, missing)
 		})
 		if !ok {
+			edgeMissingHint(s.o.Kiosk, false) // Ende des Programms: den Hinweis nicht stehen lassen
 			return
 		}
 		profile := edgeProfileDir()

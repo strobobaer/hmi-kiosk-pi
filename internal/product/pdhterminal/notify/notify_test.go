@@ -94,3 +94,16 @@ func TestToastScriptPath(t *testing.T) {
 		}
 	}
 }
+
+func TestEdgeHintDecision(t *testing.T) {
+	for _, c := range []struct{ kiosk, missing, want bool }{
+		{true, true, true}, {true, false, false}, {false, true, false}, {false, false, false},
+	} {
+		if got := EdgeHint(c.kiosk, c.missing); got != c.want {
+			t.Errorf("EdgeHint(kiosk=%v, missing=%v) = %v", c.kiosk, c.missing, got)
+		}
+	}
+	if HintEdgeTitle != "Edge nicht gefunden" || !strings.Contains(HintEdgeDetail, "Strg+Alt+Entf") || !strings.Contains(HintEdgeDetail, "Benutzer wechseln") {
+		t.Errorf("Hinweistexte: %q %q", HintEdgeTitle, HintEdgeDetail)
+	}
+}

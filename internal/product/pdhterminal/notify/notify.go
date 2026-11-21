@@ -91,6 +91,17 @@ func Clean(s string) string {
 	return strings.TrimSpace(b.String())
 }
 
+// Der dauerhafte Hinweis des Kiosks, wenn Edge fehlt (kein Browser-Fenster, kein Tray, keine Bedienung): Er bleibt, bis
+// Edge startet, und sagt, wie ein Administrator an den PC kommt.
+const (
+	HintEdgeTitle  = "Edge nicht gefunden"
+	HintEdgeDetail = "Strg+Alt+Entf → Benutzer wechseln (Administrator)"
+)
+
+// EdgeHint entscheidet, ob der Hinweis steht: nur im Kiosk und nur, solange Edge fehlt. In der Betriebsart Zusatz
+// gibt es das Tray-Symbol (rot) und die Selbstprüfung; ein Fenster würde dort die Arbeit stören.
+func EdgeHint(kiosk, edgeMissing bool) bool { return kiosk && edgeMissing }
+
 // ToastScriptName ist das feste Skript der Windows-Mitteilung; das Setup legt es in den Programmordner.
 const ToastScriptName = "toast.ps1"
 
