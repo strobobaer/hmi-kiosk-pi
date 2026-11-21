@@ -4,6 +4,7 @@ package platform
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 	"unsafe"
@@ -32,19 +33,30 @@ func TestFeedMouseGesture(t *testing.T) {
 }
 
 func TestMouseHookProcQueuesWithoutBlocking(t *testing.T) {
-	ch := make(chan mouseEvent, 1)
-	hookSink.Store(&ch)
+	hs := &hookState{keys: make(chan mouseEvent, 1), wake: make(chan struct{}, 1)}
+	hookSink.Store(hs)
 	defer hookSink.Store(nil)
 	ms := msllHook{X: 1900, Y: 3}
 	lp := uintptr(unsafe.Pointer(&ms))
 	mouseHookProc(0, wmLButtonDown, lp)
-	mouseHookProc(0, wmMouseMove, lp) // Warteschlange voll: darf nicht blockieren
+	mouseHookProc(0, wmLButtonUp, lp) // Kanal voll: darf nicht blockieren
 	mouseHookProc(0, 0x0204, lp)      // rechte Taste: ignoriert
-	if len(ch) != 1 {
-		t.Fatalf("Warteschlange: %d", len(ch))
+	if len(hs.keys) != 1 {
+		t.Fatalf("Warteschlange: %d", len(hs.keys))
 	}
-	if e := <-ch; e.kind != 'd' || e.x != 1900 || e.y != 3 {
+	if e := <-hs.keys; e.kind != 'd' || e.x != 1900 || e.y != 3 {
 		t.Fatalf("Ereignis: %+v", e)
+	}
+	// Bewegungen werden zusammengefasst und stauen nie den Tastenkanal.
+	for i := 0; i < 1000; i++ {
+		ms.X = int32(i)
+		mouseHookProc(0, wmMouseMove, lp)
+	}
+	if len(hs.keys) != 0 {
+		t.Fatalf("Bewegungen im Tastenkanal: %d", len(hs.keys))
+	}
+	if mv := hs.move.Load(); mv == nil || mv.x != 999 {
+		t.Fatalf("letzte Bewegung: %+v", mv)
 	}
 }
 
@@ -59,7 +71,6 @@ func TestWatchCornerInstallsAndStops(t *testing.T) {
 	if hookSink.Load() == nil {
 		t.Fatal("Hook nicht angelegt")
 	}
-	time.Sleep(100 * time.Millisecond)
 	cancel()
 	select {
 	case err := <-done:
@@ -78,5 +89,23 @@ func TestWatchCornerInstallsAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("zweiter Lauf endet nicht")
+	}
+}
+
+// Sofortiges Beenden nach dem Start darf nie hängen (die Nachrichtenschlange des Hook-Threads entsteht früh genug).
+func TestWatchCornerImmediateCancelNeverHangs(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- WatchCorner(ctx, "", CornerCfg{}, func() {}) }()
+		if i%2 == 0 {
+			runtime.Gosched()
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Durchlauf %d hängt", i)
+		}
 	}
 }

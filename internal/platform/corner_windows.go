@@ -36,6 +36,8 @@ var (
 	procGetMessageW         = user32.NewProc("GetMessageW")
 	procPostThreadMessageW  = user32.NewProc("PostThreadMessageW")
 	procGetSystemMetrics    = user32.NewProc("GetSystemMetrics")
+	procPeekMessageW        = user32.NewProc("PeekMessageW")
+	procGetAsyncKeyState    = user32.NewProc("GetAsyncKeyState")
 )
 
 // msllHook ist MSLLHOOKSTRUCT.
@@ -54,8 +56,17 @@ type mouseEvent struct {
 	at   time.Time
 }
 
-// hookSink nimmt die Ereignisse des Hooks an. Die Hook-Prozedur schreibt nur nicht blockierend hinein.
-var hookSink atomic.Pointer[chan mouseEvent]
+// hookState nimmt die Ereignisse des Hooks an. Die Hook-Prozedur schreibt nur nicht blockierend hinein.
+// Tasten (d/u) laufen über den Kanal und gehen nur bei einem gestauten Kanal von 256 Einträgen verloren
+// (der Takt gleicht das über GetAsyncKeyState aus); Bewegungen werden zusammengefasst: Nur die letzte
+// Lage zählt, ein Weckruf holt die Auswertung.
+type hookState struct {
+	keys chan mouseEvent
+	wake chan struct{}
+	move atomic.Pointer[mouseEvent] // jüngste, noch nicht ausgewertete Bewegung
+}
+
+var hookSink atomic.Pointer[hookState]
 
 // mouseHookCB wird genau einmal je Prozess angelegt (syscall.NewCallback ist nicht freigebbar und auf
 // 2000 Aufrufe begrenzt); WatchCorner darf also beliebig oft laufen.
@@ -75,10 +86,19 @@ func mouseHookProc(code int32, wparam, lparam uintptr) uintptr {
 			kind = 'm'
 		}
 		if kind != 0 {
-			if ch := hookSink.Load(); ch != nil {
+			if hs := hookSink.Load(); hs != nil {
 				ms := (*msllHook)(*(*unsafe.Pointer)(unsafe.Pointer(&lparam))) // Zeiger des Systems, gültig während des Aufrufs
+				ev := mouseEvent{kind: kind, x: ms.X, y: ms.Y, at: time.Now()}
+				if kind == 'm' {
+					hs.move.Store(&ev)
+				} else {
+					select {
+					case hs.keys <- ev:
+					default:
+					}
+				}
 				select {
-				case *ch <- mouseEvent{kind: kind, x: ms.X, y: ms.Y, at: time.Now()}:
+				case hs.wake <- struct{}{}:
 				default:
 				}
 			}
@@ -130,8 +150,8 @@ func cornerGestureFor(cfg CornerCfg, w int) *cornerGesture {
 func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) error {
 	w, _ := screenSize()
 	g := cornerGestureFor(cfg, w)
-	events := make(chan mouseEvent, hookQueue)
-	if !hookSink.CompareAndSwap(nil, &events) {
+	hs := &hookState{keys: make(chan mouseEvent, hookQueue), wake: make(chan struct{}, 1)}
+	if !hookSink.CompareAndSwap(nil, hs) {
 		return errors.New("Maus-Hook läuft schon")
 	}
 	defer hookSink.Store(nil)
@@ -151,8 +171,11 @@ func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) 
 			ready <- started{err: err}
 			return
 		}
-		ready <- started{tid: windows.GetCurrentThreadId()}
 		var msg [48]byte // MSG; GetMessage liefert 0 bei WM_QUIT
+		// Die Nachrichtenschlange des Threads entsteht erst mit dem ersten Nachrichten-Aufruf; ohne sie
+		// ginge ein früh gesendetes WM_QUIT verloren.
+		procPeekMessageW.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0, 0) // PM_NOREMOVE
+		ready <- started{tid: windows.GetCurrentThreadId()}
 		for {
 			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0)
 			if int32(r) <= 0 {
@@ -170,21 +193,54 @@ func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) 
 	t := time.NewTicker(cornerTick)
 	defer t.Stop()
 	defer func() {
-		procPostThreadMessageW.Call(uintptr(st.tid), wmQuit, 0, 0)
-		<-stopped
+		// Das Senden kann nur scheitern, solange der Thread noch keine Schlange hat; begrenzt wiederholen.
+		for i := 0; i < 500; i++ {
+			if r, _, _ := procPostThreadMessageW.Call(uintptr(st.tid), wmQuit, 0, 0); r != 0 {
+				break
+			}
+			select {
+			case <-stopped:
+				return
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+		select {
+		case <-stopped:
+		case <-time.After(5 * time.Second):
+		}
 	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case ev := <-events:
-			if feedMouse(g, ev) {
+		case <-hs.wake:
+			for drained := false; !drained; {
+				select {
+				case ev := <-hs.keys:
+					if feedMouse(g, ev) {
+						hit()
+					}
+				default:
+					drained = true
+				}
+			}
+			if mv := hs.move.Swap(nil); mv != nil && feedMouse(g, *mv) {
 				hit()
 			}
 		case now := <-t.C:
-			if g.Tick(now) {
+			if g.TickSynced(now, leftButtonDown()) {
 				hit()
 			}
 		}
 	}
+}
+
+// leftButtonDown fragt die tatsächliche linke (logische) Maustaste ab.
+func leftButtonDown() bool {
+	vk := uintptr(0x01)                                   // VK_LBUTTON
+	if r, _, _ := procGetSystemMetrics.Call(23); r != 0 { // SM_SWAPBUTTON: vertauschte Tasten
+		vk = 0x02
+	}
+	r, _, _ := procGetAsyncKeyState.Call(vk)
+	return r&0x8000 != 0
 }

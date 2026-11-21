@@ -87,3 +87,19 @@ func TestGestureMoveWithinFieldKeepsHold(t *testing.T) {
 		t.Fatal("Bewegen im Feld darf die Haltezeit nicht zurücksetzen")
 	}
 }
+
+// Ging das Loslassen verloren, darf der Takt bei tatsächlich losgelassener Taste nicht auslösen.
+func TestGestureLostUpResyncedByTick(t *testing.T) {
+	g := testGesture()
+	g.Down(1900, 10, t0)
+	if g.TickSynced(t0.Add(6*time.Second), false) {
+		t.Fatal("verlorenes Loslassen löste aus")
+	}
+	if g.TickSynced(t0.Add(20*time.Second), false) {
+		t.Fatal("ohne Taste kein Treffer")
+	}
+	g.Down(1900, 10, t0.Add(30*time.Second))
+	if g.TickSynced(t0.Add(34*time.Second), true) || !g.TickSynced(t0.Add(35*time.Second), true) {
+		t.Fatal("gehaltene Taste muss nach 5 s auslösen")
+	}
+}

@@ -112,6 +112,15 @@ func (g *cornerGesture) Up(now time.Time) bool {
 	return g.evaluate(now)
 }
 
+// TickSynced wie Tick, gleicht aber vorher mit dem tatsächlichen Tastenzustand ab: Ist die Taste nicht mehr
+// gedrückt, obwohl das Loslassen verloren ging, gilt das als Up (kein falsches Auslösen nach der Haltezeit).
+func (g *cornerGesture) TickSynced(now time.Time, buttonDown bool) bool {
+	if g.down && !buttonDown {
+		g.Up(now)
+	}
+	return g.Tick(now)
+}
+
 // Tick prüft die Haltezeit, ohne dass sich etwas bewegt hat.
 func (g *cornerGesture) Tick(now time.Time) bool { return g.evaluate(now) }
 
