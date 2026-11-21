@@ -166,3 +166,26 @@ func TestProductIdleSecondsAndFrame(t *testing.T) {
 	}
 	wantContains(t, tb.get("/admin/pdh").Body.String(), `data-idle="120"`)
 }
+
+// Die Landeseite nach der Anmeldung hängt vom Produkt ab.
+func TestLoginLandingPerProduct(t *testing.T) {
+	for name, tc := range map[string]struct {
+		p    *AdminProduct
+		want string
+	}{"pdh-terminal": {pdhProduct(), "/admin/pdh"}, "hmi-kiosk": {HMIKioskAdmin(), "/admin/hmis"}} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			d := e.a.d
+			d.Product = tc.p
+			e.a = newAdmin(d)
+			b := e.browser()
+			r := b.postPage("/admin/login", url.Values{"password": {testAdminPassword}})
+			if r.Code != http.StatusSeeOther || r.Header().Get("Location") != tc.want {
+				t.Errorf("Anmeldung: %d %q, erwartet %q", r.Code, r.Header().Get("Location"), tc.want)
+			}
+			if r := b.get("/admin/login"); r.Header().Get("Location") != tc.want {
+				t.Errorf("Login-Seite angemeldet: %q", r.Header().Get("Location"))
+			}
+		})
+	}
+}

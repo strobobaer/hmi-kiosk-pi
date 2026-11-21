@@ -180,7 +180,7 @@ func (a *admin) finishMaintenance(w http.ResponseWriter, r *http.Request, s sess
 		log.Printf("Wartungsmodus: Dienst nicht neu gestartet: %v", err)
 		msg = fmt.Sprintf("Gespeichert. Der Dienst konnte nicht neu gestartet werden (%v); bitte das Terminal neu starten.", err)
 	}
-	a.done(w, r, s, "/admin/hmis", msg)
+	a.done(w, r, s, a.product.Home, msg)
 }
 
 // renewCert löscht das Zertifikat und legt ein neues an; der Dienst lädt es beim
