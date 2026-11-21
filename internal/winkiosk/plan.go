@@ -35,6 +35,8 @@ const (
 	policiesExpl = `Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`
 	desktopKey   = `Control Panel\Desktop`
 	pushKey      = `Software\Microsoft\Windows\CurrentVersion\PushNotifications`
+	// backupKey sichert ein fremdes Autologon, solange der Kiosk eingerichtet ist.
+	backupKey = `SOFTWARE\PDH-Terminal\KioskBackup`
 )
 
 // ErrNotFound meldet, dass das Ziel nicht (mehr) existiert. Exec-Umsetzungen liefern es für "gibt es nicht";
@@ -47,13 +49,18 @@ type Exec interface {
 	CreateUser(name string, password []byte) error
 	DeleteUser(name string) error // ErrNotFound, wenn es den Benutzer nicht gibt
 	CreateProfile(user string) (profilePath string, err error)
-	DeleteProfile(user string) error // ErrNotFound, wenn es Benutzer oder Profil nicht gibt
+	// DeleteProfile und ProfilePath finden das Profil auch ohne Benutzerkonto (über die ProfileList).
+	DeleteProfile(user string) error // ErrNotFound, wenn es kein Profil gibt
 	ProfilePath(user string) (string, error)
 	LoadHive(profilePath, key string) error
 	UnloadHive(key string) error // ErrNotFound, wenn nicht geladen
 	SetRegString(root, path, name, value string) error
 	SetRegDWORD(root, path, name string, value uint32) error
 	GetRegString(root, path, name string) (string, error)
+	GetRegDWORD(root, path, name string) (uint32, error)
+	DeleteRegKey(root, path string) error // ErrNotFound, wenn der Schlüssel fehlt
+	// LogoffUser meldet alle Sitzungen des Benutzers ab; Fehler, wenn danach noch eine besteht.
+	LogoffUser(user string) error
 	DeleteRegValue(root, path, name string) error // ErrNotFound, wenn Wert oder Schlüssel fehlt
 	StoreLSASecret(name string, value []byte) error
 	DeleteLSASecret(name string) error
@@ -123,6 +130,10 @@ func ShellValue(app string) string {
 	return `"` + strings.TrimRight(app, `\/`) + `\pdh-terminal-start.exe" -kiosk`
 }
 
+const logonCount = "AutoLogonCount"
+
+var logonStrings = []string{"AutoAdminLogon", "DefaultUserName", "DefaultDomainName"}
+
 type regValue struct {
 	path, name string
 }
@@ -160,20 +171,85 @@ func Plan(app string) []Step {
 		errs = append(errs, ignoreNotFound(e.DeleteRegValue(Kiosk, toast.path, toast.name)))
 		return errors.Join(errs...)
 	}
+	// Fremdes Autologon wird vor dem Setup gesichert (ohne Klartext-Passwort) und beim Rückbau wiederhergestellt.
+	backupLogon := func(e Exec) error {
+		if _, err := e.GetRegString(HKLM, backupKey, "Saved"); err == nil {
+			return nil // schon gesichert (frühere Einrichtung): das Original nicht überschreiben
+		} else if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if u, err := e.GetRegString(HKLM, winlogonKey, "DefaultUserName"); err == nil && strings.EqualFold(u, KioskUser) {
+			return nil // ist schon unseres
+		}
+		for _, n := range logonStrings {
+			v, err := e.GetRegString(HKLM, winlogonKey, n)
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("Autologon sichern: %w", err)
+			}
+			if err := e.SetRegString(HKLM, backupKey, n, v); err != nil {
+				return fmt.Errorf("Autologon sichern: %w", err)
+			}
+		}
+		if v, err := e.GetRegDWORD(HKLM, winlogonKey, logonCount); err == nil {
+			if err := e.SetRegDWORD(HKLM, backupKey, logonCount, v); err != nil {
+				return fmt.Errorf("Autologon sichern: %w", err)
+			}
+		} else if !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("Autologon sichern: %w", err)
+		}
+		return e.SetRegString(HKLM, backupKey, "Saved", "1") // zuletzt: erst damit gilt die Sicherung
+	}
+	restoreLogon := func(e Exec) error {
+		if _, err := e.GetRegString(HKLM, backupKey, "Saved"); err != nil {
+			return ignoreNotFound(err)
+		}
+		var errs []error
+		for _, n := range logonStrings {
+			v, err := e.GetRegString(HKLM, backupKey, n)
+			if err == nil {
+				errs = append(errs, e.SetRegString(HKLM, winlogonKey, n, v))
+			} else if errors.Is(err, ErrNotFound) {
+				errs = append(errs, ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, n)))
+			} else {
+				errs = append(errs, err)
+			}
+		}
+		if v, err := e.GetRegDWORD(HKLM, backupKey, logonCount); err == nil {
+			errs = append(errs, e.SetRegDWORD(HKLM, winlogonKey, logonCount, v))
+		} else if errors.Is(err, ErrNotFound) {
+			errs = append(errs, ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, logonCount)))
+		} else {
+			errs = append(errs, err)
+		}
+		if err := errors.Join(errs...); err != nil {
+			return err // Sicherung bleibt für einen neuen Versuch
+		}
+		return ignoreNotFound(e.DeleteRegKey(HKLM, backupKey))
+	}
 	// Autologon gehört nur dann uns, wenn DefaultUserName PDH-Kiosk ist; fremde Einstellungen bleiben.
 	delLogon := func(e Exec) error {
 		u, err := e.GetRegString(HKLM, winlogonKey, "DefaultUserName")
-		if errors.Is(err, ErrNotFound) || (err == nil && !strings.EqualFold(u, KioskUser)) {
-			return nil
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		errs := []error{ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, "AutoAdminLogon"))}
-		errs = append(errs, ignoreNotFound(e.DeleteLSASecret(SecretName)))
-		errs = append(errs, ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, "DefaultDomainName")))
-		errs = append(errs, ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, "DefaultUserName")))
-		return errors.Join(errs...)
+		var errs []error
+		if err == nil && strings.EqualFold(u, KioskUser) {
+			errs = append(errs, ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, "AutoAdminLogon")))
+			errs = append(errs, ignoreNotFound(e.DeleteLSASecret(SecretName)))
+			errs = append(errs, ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, "DefaultDomainName")))
+			// DefaultUserName zuletzt und nur bei Erfolg: Es ist das Merkmal, an dem ein späteres -undo das Autologon als unseres erkennt.
+			if err := errors.Join(errs...); err != nil {
+				return err
+			}
+			errs = []error{ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, "DefaultUserName"))}
+		}
+		if len(errs) > 0 && errors.Join(errs...) != nil {
+			return errors.Join(errs...)
+		}
+		return restoreLogon(e)
 	}
 
 	return []Step{
@@ -185,7 +261,16 @@ func Plan(app string) []Step {
 				}
 				return e.CreateUser(KioskUser, pw)
 			},
-			func(e Exec) error { wipe(); return ignoreNotFound(e.DeleteUser(KioskUser)) }},
+			func(e Exec) error {
+				wipe()
+				// Ist das Profil noch da (z. B. in Benutzung), bleibt das Konto: Nach Abmeldung erneut -undo.
+				if _, err := e.ProfilePath(KioskUser); err == nil {
+					return errors.New("Rückbau unvollständig: Profil noch vorhanden oder in Benutzung, Benutzer bleibt; nach Abmeldung erneut -undo")
+				} else if !errors.Is(err, ErrNotFound) {
+					return fmt.Errorf("Profil nicht prüfbar, Benutzer bleibt: %w", err)
+				}
+				return ignoreNotFound(e.DeleteUser(KioskUser))
+			}},
 		{StepProfile,
 			func(e Exec) error { _, err := e.CreateProfile(KioskUser); return err },
 			func(e Exec) error { return ignoreNotFound(e.DeleteProfile(KioskUser)) }},
@@ -233,10 +318,23 @@ func Plan(app string) []Step {
 			func(e Exec) (err error) {
 				defer wipe()
 				defer func() {
-					if err != nil {
-						_ = delLogon(e) // halb eingerichtetes Autologon nicht stehen lassen
+					if err != nil { // halb eingerichtetes Autologon nicht stehen lassen
+						if rb := delLogon(e); rb != nil {
+							e.Logf("Rückbau Autologon gescheitert: %v", rb)
+							err = fmt.Errorf("%w (Rückbau unvollständig: %v)", err, rb)
+						}
 					}
 				}()
+				if err = backupLogon(e); err != nil {
+					_ = e.DeleteRegKey(HKLM, backupKey) // halbe Sicherung (ohne Marke) nicht liegen lassen
+					return err
+				}
+				// Ein Klartext-Passwort und ein Zähler würden das Autologon stören; das Passwort wird nicht gesichert.
+				for _, n := range []string{"DefaultPassword", logonCount} {
+					if err = ignoreNotFound(e.DeleteRegValue(HKLM, winlogonKey, n)); err != nil {
+						return err
+					}
+				}
 				if err = e.SetRegString(HKLM, winlogonKey, "DefaultUserName", KioskUser); err != nil {
 					return err
 				}
@@ -273,7 +371,13 @@ func Run(steps []Step, e Exec) error {
 
 // Undo nimmt alle Schritte rückwärts zurück. Fehlendes ist kein Fehler, daher ist Undo wiederholbar; andere
 // Fehler stoppen den Rückbau nicht, werden aber gesammelt gemeldet.
-func Undo(steps []Step, e Exec) error { return undoAll(steps, e) }
+func Undo(steps []Step, e Exec) error {
+	// Eine noch angemeldete Kiosk-Sitzung hält Profil und Hive fest.
+	if err := e.LogoffUser(KioskUser); err != nil && !errors.Is(err, ErrNotFound) {
+		e.Logf("Abmelden von %s: %v", KioskUser, err)
+	}
+	return undoAll(steps, e)
+}
 
 func undoAll(steps []Step, e Exec) error {
 	var errs []error

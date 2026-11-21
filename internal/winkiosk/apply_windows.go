@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -20,6 +22,11 @@ import (
 // Zielgerät laufen, nie auf dem Entwicklungsrechner; getestet wird die Logik in plan.go mit einem Fake.
 
 var (
+	wtsapi32                = windows.NewLazySystemDLL("wtsapi32.dll")
+	procWTSFreeMemory       = wtsapi32.NewProc("WTSFreeMemory")
+	procWTSQuerySessionInfo = wtsapi32.NewProc("WTSQuerySessionInformationW")
+	procWTSLogoffSession    = wtsapi32.NewProc("WTSLogoffSession")
+
 	netapi32 = windows.NewLazySystemDLL("netapi32.dll")
 	userenv  = windows.NewLazySystemDLL("userenv.dll")
 	advapi32 = windows.NewLazySystemDLL("advapi32.dll")
@@ -48,6 +55,7 @@ const (
 	errFileNotFound    = 2
 	errAlreadyExists   = 0x800700B7 // HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
 	errNoneMapped      = 1332
+	wtsUserName        = 5
 	accessFullControl  = 0x1F01FF // FILE_ALL_ACCESS
 	accessModify       = 0x1301BF // Ändern: lesen, schreiben, ausführen, löschen
 	profileListKey     = `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\`
@@ -192,12 +200,9 @@ func (s *System) CreateProfile(user string) (string, error) {
 	return windows.UTF16ToString(buf), nil
 }
 
-func (s *System) ProfilePath(user string) (string, error) {
-	sid, err := userSID(user)
-	if err != nil {
-		return "", err
-	}
-	k, err := registry.OpenKey(registry.LOCAL_MACHINE, profileListKey+sid.String(), registry.QUERY_VALUE|registry.WOW64_64KEY)
+// profileImagePath liest ProfileImagePath des Profils mit der SID sid; ErrNotFound, wenn es ihn nicht gibt.
+func profileImagePath(sid string) (string, error) {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, profileListKey+sid, registry.QUERY_VALUE|registry.WOW64_64KEY)
 	if err != nil {
 		if errors.Is(err, registry.ErrNotExist) {
 			return "", ErrNotFound
@@ -215,23 +220,113 @@ func (s *System) ProfilePath(user string) (string, error) {
 	return registry.ExpandString(v)
 }
 
+// profileSIDs liefert die SIDs der Profile des Benutzers: die des Kontos (falls es Profil hat) und alle
+// ProfileList-Einträge, deren Ordner so heißt wie der Benutzer. So lässt sich ein Profil auch nach dem Löschen
+// des Kontos noch aufräumen.
+func profileSIDs(user string) ([]string, error) {
+	var out []string
+	if sid, err := userSID(user); err == nil {
+		if _, err := profileImagePath(sid.String()); err == nil {
+			out = append(out, sid.String())
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	pl, err := registry.OpenKey(registry.LOCAL_MACHINE, strings.TrimSuffix(profileListKey, `\`), registry.ENUMERATE_SUB_KEYS|registry.WOW64_64KEY)
+	if err != nil {
+		return out, nil
+	}
+	defer pl.Close()
+	names, _ := pl.ReadSubKeyNames(-1)
+	for _, n := range names {
+		if !strings.HasPrefix(n, "S-1-5-21-") || slices.Contains(out, n) {
+			continue
+		}
+		p, err := profileImagePath(n)
+		if err != nil {
+			continue
+		}
+		base := filepath.Base(strings.ReplaceAll(p, `/`, `\`))
+		if strings.EqualFold(base, user) || strings.HasPrefix(strings.ToLower(base), strings.ToLower(user)+".") {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+func (s *System) ProfilePath(user string) (string, error) {
+	sids, err := profileSIDs(user)
+	if err != nil {
+		return "", err
+	}
+	if len(sids) == 0 {
+		return "", ErrNotFound
+	}
+	return profileImagePath(sids[0])
+}
+
 func (s *System) DeleteProfile(user string) error {
-	sid, err := userSID(user)
+	sids, err := profileSIDs(user)
 	if err != nil {
 		return err
 	}
-	if _, err := s.ProfilePath(user); err != nil {
+	if len(sids) == 0 {
+		return ErrNotFound
+	}
+	var errs []error
+	for _, sid := range sids {
+		p, _ := windows.UTF16PtrFromString(sid)
+		r, _, e := procDeleteProfile.Call(uintptr(unsafe.Pointer(p)), 0, 0)
+		if r == 0 && !errors.Is(e, syscall.Errno(errFileNotFound)) && !errors.Is(e, syscall.Errno(errPathNotFound)) {
+			errs = append(errs, fmt.Errorf("DeleteProfile: %w", e))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// sessionUsers sind die Sitzungen (ID), in denen user angemeldet ist.
+func sessionsOf(user string) ([]uint32, error) {
+	var info *windows.WTS_SESSION_INFO
+	var n uint32
+	if err := windows.WTSEnumerateSessions(0, 0, 1, &info, &n); err != nil {
+		return nil, fmt.Errorf("WTSEnumerateSessions: %w", err)
+	}
+	defer procWTSFreeMemory.Call(uintptr(unsafe.Pointer(info)))
+	var out []uint32
+	for _, si := range unsafe.Slice(info, n) {
+		var buf *uint16
+		var size uint32
+		r, _, _ := procWTSQuerySessionInfo.Call(0, uintptr(si.SessionID), wtsUserName, uintptr(unsafe.Pointer(&buf)), uintptr(unsafe.Pointer(&size)))
+		if r == 0 {
+			continue
+		}
+		name := windows.UTF16PtrToString(buf)
+		procWTSFreeMemory.Call(uintptr(unsafe.Pointer(buf)))
+		if strings.EqualFold(name, user) {
+			out = append(out, si.SessionID)
+		}
+	}
+	return out, nil
+}
+
+func (s *System) LogoffUser(user string) error {
+	ids, err := sessionsOf(user)
+	if err != nil {
 		return err
 	}
-	sidStr, _ := windows.UTF16PtrFromString(sid.String())
-	r, _, e := procDeleteProfile.Call(uintptr(unsafe.Pointer(sidStr)), 0, 0)
-	if r == 0 {
-		if errors.Is(e, syscall.Errno(errFileNotFound)) || errors.Is(e, syscall.Errno(errPathNotFound)) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("DeleteProfile: %w", e)
+	for _, id := range ids {
+		procWTSLogoffSession.Call(0, uintptr(id), 1) // wartet auf das Ende
 	}
-	return nil
+	for try := 0; try < 20 && len(ids) > 0; try++ {
+		if ids, err = sessionsOf(user); err != nil || len(ids) == 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if err == nil && len(ids) > 0 {
+		return fmt.Errorf("Sitzung von %s besteht noch", user)
+	}
+	return err
 }
 
 // enablePrivileges schaltet SE_RESTORE und SE_BACKUP ein, die RegLoadKey und RegUnLoadKey brauchen.
@@ -503,4 +598,31 @@ func (s *System) RestoreDataACL(dir string) error {
 	}
 	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
+}
+
+func (s *System) GetRegDWORD(root, path, name string) (uint32, error) {
+	k, err := regKey(root, path, false, registry.QUERY_VALUE)
+	if err != nil {
+		return 0, err
+	}
+	defer k.Close()
+	v, _, err := k.GetIntegerValue(name)
+	if errors.Is(err, registry.ErrNotExist) {
+		return 0, ErrNotFound
+	}
+	return uint32(v), err
+}
+
+func (s *System) DeleteRegKey(root, path string) error {
+	base, sub := registry.LOCAL_MACHINE, path
+	if root == Kiosk {
+		base, sub = registry.USERS, HiveKey+`\`+path
+	}
+	if err := registry.DeleteKey(base, sub); err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
 }

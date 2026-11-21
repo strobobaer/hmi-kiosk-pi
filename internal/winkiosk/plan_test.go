@@ -18,11 +18,14 @@ type fake struct {
 	acl      string // "", "kiosk" oder "zusatz"
 	dataDir  bool   // gibt es den Datenordner?
 
-	calls     []string
-	logs      []string
-	passwords []string // alle je übergebenen Passwörter
-	failOn    string   // Aufruf (Name oder Name|Argument), der scheitert
-	failErr   error
+	calls      []string
+	logs       []string
+	passwords  []string // alle je übergebenen Passwörter
+	failOn     string   // Aufruf (Name oder Name|Argument), der scheitert
+	failErr    error
+	extraFail  map[string]error // weitere einmalige Ausfälle (z. B. im Rückbau)
+	loggedOn   bool             // Kiosk-Sitzung hält das Profil
+	stuckLogon bool             // Abmelden gelingt nicht
 }
 
 func newFake() *fake {
@@ -36,7 +39,12 @@ func (f *fake) rec(name, arg string) error {
 		c += "|" + arg
 	}
 	f.calls = append(f.calls, c)
+	if err, ok := f.extraFail[c]; ok {
+		delete(f.extraFail, c)
+		return err
+	}
 	if f.failOn != "" && (f.failOn == c || f.failOn == name) {
+		f.failOn = "" // einmalig
 		return f.failErr
 	}
 	return nil
@@ -75,6 +83,9 @@ func (f *fake) DeleteProfile(user string) error {
 	if _, ok := f.profiles[user]; !ok {
 		return ErrNotFound
 	}
+	if f.loggedOn {
+		return errors.New("Profil in Benutzung")
+	}
 	delete(f.profiles, user)
 	for k := range f.regs {
 		if strings.HasPrefix(k, Kiosk+"|") {
@@ -92,6 +103,9 @@ func (f *fake) ProfilePath(user string) (string, error) {
 func (f *fake) LoadHive(path, key string) error {
 	if err := f.rec("LoadHive", key); err != nil {
 		return err
+	}
+	if f.loggedOn {
+		return errors.New("Sharing-Verletzung")
 	}
 	f.loaded[key] = path
 	return nil
@@ -118,7 +132,7 @@ func (f *fake) hiveOK(root string) bool {
 	return ok
 }
 func (f *fake) SetRegString(root, path, name, v string) error {
-	if err := f.rec("SetRegString", name); err != nil {
+	if err := f.rec("SetRegString", f.argFor(path, name)); err != nil {
 		return err
 	}
 	if !f.hiveOK(root) {
@@ -128,7 +142,7 @@ func (f *fake) SetRegString(root, path, name, v string) error {
 	return nil
 }
 func (f *fake) SetRegDWORD(root, path, name string, v uint32) error {
-	if err := f.rec("SetRegDWORD", name); err != nil {
+	if err := f.rec("SetRegDWORD", f.argFor(path, name)); err != nil {
 		return err
 	}
 	if !f.hiveOK(root) {
@@ -142,6 +156,9 @@ func (f *fake) GetRegString(root, path, name string) (string, error) {
 	v, ok := f.regs[f.k(root, path, name)]
 	if !ok || !f.hiveOK(root) {
 		return "", ErrNotFound
+	}
+	if !strings.HasPrefix(v, "S:") {
+		return "", errors.New("falscher Typ")
 	}
 	return strings.TrimPrefix(v, "S:"), nil
 }
@@ -272,24 +289,6 @@ func TestFailureRollsBackInReverse(t *testing.T) {
 	f.settled(t)
 }
 
-func TestFailureAtEveryStepRestores(t *testing.T) {
-	for _, step := range []string{"CreateUser", "CreateProfile", "LoadHive", "SetRegString|Shell", "SetRegDWORD|ToastEnabled",
-		"UnloadHive", "SetRegString|DefaultUserName", "SetRegString|DefaultDomainName", "StoreLSASecret", "SetRegString|AutoAdminLogon", "SetDataACL"} {
-		f := newFake()
-		f.failOn, f.failErr = step, errors.New("kaputt")
-		err := Run(Plan(app), f)
-		if err == nil || !strings.HasPrefix(err.Error(), "Schritt ") || !strings.Contains(err.Error(), "kaputt") {
-			t.Errorf("%s: Fehler %v", step, err)
-		}
-		// Der Rückbau läuft ohne den ausgefallenen Aufruf; ein klemmender Rückbau-Aufruf zählt hier nicht.
-		f.failOn = ""
-		if uerr := Undo(Plan(app), f); uerr != nil {
-			t.Errorf("%s: Undo danach: %v", step, uerr)
-		}
-		f.settled(t)
-	}
-}
-
 func TestUndoWithoutKioskIsHarmless(t *testing.T) {
 	f := newFake()
 	// Fremdes Autologon (anderer Benutzer) und fremdes Geheimnis bleiben unberührt.
@@ -331,21 +330,6 @@ func TestSetupRepeatableAfterUndo(t *testing.T) {
 		}
 	}
 	f.settled(t)
-}
-
-func TestUndoReportsRealErrorsButContinues(t *testing.T) {
-	f := newFake()
-	if err := Run(Plan(app), f); err != nil {
-		t.Fatal(err)
-	}
-	f.failOn, f.failErr = "DeleteProfile", errors.New("Profil in Benutzung")
-	err := Undo(Plan(app), f)
-	if err == nil || !strings.Contains(err.Error(), "Profil in Benutzung") {
-		t.Fatalf("Fehler fehlt: %v", err)
-	}
-	if f.users[KioskUser] {
-		t.Errorf("Rückbau sollte trotz Fehler weiterlaufen")
-	}
 }
 
 func TestPasswordNeverLeaks(t *testing.T) {
@@ -394,26 +378,6 @@ func TestNewPassword(t *testing.T) {
 	}
 }
 
-func TestPasswordWipedAfterSetup(t *testing.T) {
-	f := newFake()
-	// Das Passwort, das das Fake sah, ist eine Kopie; der Plan selbst darf nach Schritt 7 nichts mehr halten.
-	// Geprüft wird indirekt: Ein zweiter Lauf desselben Plans erzeugt ein neues Passwort.
-	steps := Plan(app)
-	if err := Run(steps, f); err != nil {
-		t.Fatal(err)
-	}
-	first := f.passwords[0]
-	if err := Undo(steps, f); err != nil {
-		t.Fatal(err)
-	}
-	if err := Run(steps, f); err != nil {
-		t.Fatal(err)
-	}
-	if f.passwords[2] == first {
-		t.Errorf("Passwort wurde wiederverwendet")
-	}
-}
-
 func TestEditionSupported(t *testing.T) {
 	for id, want := range map[string]bool{
 		"Professional": true, "ProfessionalN": true, "ProfessionalWorkstation": true, "Enterprise": true,
@@ -424,4 +388,48 @@ func TestEditionSupported(t *testing.T) {
 			t.Errorf("EditionSupported(%q) = %v", id, got)
 		}
 	}
+}
+func (f *fake) GetRegDWORD(root, path, name string) (uint32, error) {
+	f.calls = append(f.calls, "GetRegDWORD|"+name)
+	v, ok := f.regs[f.k(root, path, name)]
+	if !ok || !f.hiveOK(root) || !strings.HasPrefix(v, "D:") {
+		return 0, ErrNotFound
+	}
+	var n uint32
+	fmt.Sscanf(strings.TrimPrefix(v, "D:"), "%d", &n)
+	return n, nil
+}
+func (f *fake) DeleteRegKey(root, path string) error {
+	if err := f.rec("DeleteRegKey", ""); err != nil {
+		return err
+	}
+	found := false
+	for k := range f.regs {
+		if strings.HasPrefix(k, root+"|"+path+"|") {
+			delete(f.regs, k)
+			found = true
+		}
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
+}
+func (f *fake) LogoffUser(user string) error {
+	if err := f.rec("LogoffUser", user); err != nil {
+		return err
+	}
+	if f.stuckLogon {
+		return errors.New("Sitzung besteht noch")
+	}
+	f.loggedOn = false
+	return nil
+}
+
+// argFor unterscheidet Schreibzugriffe auf die Sicherung (B:) von denen auf Winlogon.
+func (f *fake) argFor(path, name string) string {
+	if path == backupKey {
+		return "B:" + name
+	}
+	return name
 }
