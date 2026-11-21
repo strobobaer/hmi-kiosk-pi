@@ -243,6 +243,7 @@ func localDomainSID() (string, error) {
 		return "", lsaErr("LsaQueryInformationPolicy", r)
 	}
 	defer procLsaFreeMemory.Call(uintptr(unsafe.Pointer(info)))
+	if info == nil || info.DomainSid == nil {
 		return "", errors.New("keine lokale Domänen-SID")
 	}
 	return info.DomainSid.String(), nil
