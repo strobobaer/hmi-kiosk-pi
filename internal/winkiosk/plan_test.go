@@ -23,14 +23,15 @@ type fake struct {
 	passwords  []string // alle je übergebenen Passwörter
 	failOn     string   // Aufruf (Name oder Name|Argument), der scheitert
 	failErr    error
-	extraFail  map[string]error // weitere einmalige Ausfälle (z. B. im Rückbau)
-	loggedOn   bool             // Kiosk-Sitzung hält das Profil
-	stuckLogon bool             // Abmelden gelingt nicht
+	extraFail  map[string]error  // weitere einmalige Ausfälle (z. B. im Rückbau)
+	loggedOn   bool              // Kiosk-Sitzung hält das Profil
+	accounts   map[string]string // SID -> Domäne, für auflösbare Fremdkonten (z. B. CORP)
+	stuckLogon bool              // Abmelden gelingt nicht
 }
 
 func newFake() *fake {
 	return &fake{users: map[string]bool{}, profiles: map[string]string{}, loaded: map[string]string{},
-		regs: map[string]string{}, secrets: map[string]string{}, acl: "zusatz", dataDir: true}
+		accounts: map[string]string{}, regs: map[string]string{}, secrets: map[string]string{}, acl: "zusatz", dataDir: true}
 }
 
 func (f *fake) rec(name, arg string) error {
@@ -56,6 +57,7 @@ func (f *fake) CreateUser(name string, pw []byte) error {
 		return err
 	}
 	f.users[name] = true
+	f.accounts[sidOf(name)] = "HOST"
 	return nil
 }
 func (f *fake) DeleteUser(name string) error {
@@ -66,39 +68,70 @@ func (f *fake) DeleteUser(name string) error {
 		return ErrNotFound
 	}
 	delete(f.users, name)
+	delete(f.accounts, sidOf(name)) // ab jetzt unauflösbar
 	return nil
 }
+func sidOf(user string) string { return "S-1-5-21-1-" + user }
+
+const foreignSID = "S-1-5-21-9-1000" // Domänenkonto CORP\PDH-Kiosk mit Profil PDH-Kiosk.CORP
+
 func (f *fake) CreateProfile(user string) (string, error) {
 	if err := f.rec("CreateProfile", user); err != nil {
 		return "", err
 	}
 	p := `C:\Users\` + user
-	f.profiles[user] = p
+	f.profiles[sidOf(user)] = p
 	return p, nil
 }
-func (f *fake) DeleteProfile(user string) error {
-	if err := f.rec("DeleteProfile", user); err != nil {
+func (f *fake) UserSID(user string) (string, error) {
+	if !f.users[user] {
+		return "", ErrNotFound
+	}
+	return sidOf(user), nil
+}
+func (f *fake) DeleteProfileBySID(sid string) error {
+	if err := f.rec("DeleteProfileBySID", sid); err != nil {
 		return err
 	}
-	if _, ok := f.profiles[user]; !ok {
+	if _, ok := f.profiles[sid]; !ok {
 		return ErrNotFound
 	}
-	if f.loggedOn {
+	if f.loggedOn && sid == sidOf(KioskUser) {
 		return errors.New("Profil in Benutzung")
 	}
-	delete(f.profiles, user)
-	for k := range f.regs {
-		if strings.HasPrefix(k, Kiosk+"|") {
-			delete(f.regs, k)
+	delete(f.profiles, sid)
+	if sid == sidOf(KioskUser) {
+		for k := range f.regs {
+			if strings.HasPrefix(k, Kiosk+"|") {
+				delete(f.regs, k)
+			}
 		}
 	}
 	return nil
 }
-func (f *fake) ProfilePath(user string) (string, error) {
-	if p, ok := f.profiles[user]; ok {
+func (f *fake) ProfilePathBySID(sid string) (string, error) {
+	if p, ok := f.profiles[sid]; ok {
 		return p, nil
 	}
 	return "", ErrNotFound
+}
+
+// FindOrphanProfiles bildet die Auswahl der Windows-Umsetzung nach: Namenstreffer, aber nur eigene oder
+// unauflösbare SIDs.
+func (f *fake) FindOrphanProfiles(user string) ([]string, error) {
+	f.calls = append(f.calls, "FindOrphanProfiles")
+	var out []string
+	for sid, p := range f.profiles {
+		base := p[strings.LastIndex(p, `\`)+1:]
+		if base != user && !strings.HasPrefix(base, user+".") {
+			continue
+		}
+		dom, resolved := f.accounts[sid]
+		if OwnProfileSID(resolved, user, dom, user, "HOST") {
+			out = append(out, sid)
+		}
+	}
+	return out, nil
 }
 func (f *fake) LoadHive(path, key string) error {
 	if err := f.rec("LoadHive", key); err != nil {
@@ -218,7 +251,7 @@ func (f *fake) Logf(format string, args ...any) {
 // settled: nach Rückbau ist alles wie vorher.
 func (f *fake) settled(t *testing.T) {
 	t.Helper()
-	if len(f.users) != 0 || len(f.profiles) != 0 || len(f.loaded) != 0 || len(f.regs) != 0 || len(f.secrets) != 0 || f.acl != "zusatz" {
+	if len(f.users) != 0 || len(f.profiles) != f.foreignCount() || len(f.loaded) != 0 || len(f.regs) != 0 || len(f.secrets) != 0 || f.acl != "zusatz" {
 		t.Errorf("Rückbau unvollständig: users=%v profiles=%v loaded=%v regs=%v secrets=%d acl=%s",
 			f.users, f.profiles, f.loaded, f.regs, len(f.secrets), f.acl)
 	}
@@ -281,8 +314,13 @@ func TestFailureRollsBackInReverse(t *testing.T) {
 	}
 	// Nach dem Fehlschlag: 4, 3, 2, 1 zurück.
 	i := slices.Index(f.calls, "SetRegDWORD|DisableLockWorkstation")
-	got := f.calls[i+1:]
-	want := []string{"DeleteRegValue|Shell", "UnloadHive|" + HiveKey, "DeleteProfile|" + KioskUser, "DeleteUser|" + KioskUser}
+	var got []string
+	for _, c := range f.calls[i+1:] {
+		if !strings.HasPrefix(c, "GetReg") && c != "FindOrphanProfiles" {
+			got = append(got, c)
+		}
+	}
+	want := []string{"DeleteRegValue|Shell", "UnloadHive|" + HiveKey, "DeleteProfileBySID|" + sidOf(KioskUser), "DeleteUser|" + KioskUser, "DeleteRegValue|" + sidName}
 	if !slices.Equal(got, want) {
 		t.Errorf("Rückbau: %v, erwartet %v", got, want)
 	}
@@ -432,4 +470,11 @@ func (f *fake) argFor(path, name string) string {
 		return "B:" + name
 	}
 	return name
+}
+
+func (f *fake) foreignCount() int {
+	if _, ok := f.profiles[foreignSID]; ok {
+		return 1
+	}
+	return 0
 }

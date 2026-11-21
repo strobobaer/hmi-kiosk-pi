@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -56,6 +55,7 @@ const (
 	errAlreadyExists   = 0x800700B7 // HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)
 	errNoneMapped      = 1332
 	wtsUserName        = 5
+	wtsDomainName      = 7
 	accessFullControl  = 0x1F01FF // FILE_ALL_ACCESS
 	accessModify       = 0x1301BF // Ändern: lesen, schreiben, ausführen, löschen
 	profileListKey     = `SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\`
@@ -192,7 +192,7 @@ func (s *System) CreateProfile(user string) (string, error) {
 	r, _, _ := procCreateProfile.Call(uintptr(unsafe.Pointer(sidStr)), uintptr(unsafe.Pointer(name)),
 		uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 	if r == errAlreadyExists {
-		return s.ProfilePath(user)
+		return profileImagePath(sid.String())
 	}
 	if r != 0 { // HRESULT
 		return "", fmt.Errorf("CreateProfile: HRESULT 0x%08X", uint32(r))
@@ -220,89 +220,101 @@ func profileImagePath(sid string) (string, error) {
 	return registry.ExpandString(v)
 }
 
-// profileSIDs liefert die SIDs der Profile des Benutzers: die des Kontos (falls es Profil hat) und alle
-// ProfileList-Einträge, deren Ordner so heißt wie der Benutzer. So lässt sich ein Profil auch nach dem Löschen
-// des Kontos noch aufräumen.
-func profileSIDs(user string) ([]string, error) {
-	var out []string
-	if sid, err := userSID(user); err == nil {
-		if _, err := profileImagePath(sid.String()); err == nil {
-			out = append(out, sid.String())
-		}
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
+// localAccountResolves prüft eine SID: ok, wenn sie zum lokalen Konto user gehört oder gar nicht mehr aufgelöst
+// werden kann (Waise); Domänen- und andere Konten sind nie unsere.
+func ownOrOrphanSID(sid, user string) bool {
+	p, err := windows.StringToSid(sid)
+	if err != nil {
+		return false
 	}
+	account, domain, _, err := p.LookupAccount("")
+	if err != nil {
+		return OwnProfileSID(!errors.Is(err, syscall.Errno(errNoneMapped)), "", "", user, "") // nur unauflösbar = Waise
+	}
+	host, herr := windows.ComputerName()
+	return herr == nil && OwnProfileSID(true, account, domain, user, host)
+}
+
+func (s *System) UserSID(user string) (string, error) {
+	sid, err := userSID(user)
+	if err != nil {
+		return "", err
+	}
+	return sid.String(), nil
+}
+
+func (s *System) ProfilePathBySID(sid string) (string, error) { return profileImagePath(sid) }
+
+func (s *System) DeleteProfileBySID(sid string) error {
+	if _, err := profileImagePath(sid); err != nil {
+		return err
+	}
+	p, err := windows.UTF16PtrFromString(sid)
+	if err != nil {
+		return err
+	}
+	r, _, e := procDeleteProfile.Call(uintptr(unsafe.Pointer(p)), 0, 0)
+	if r == 0 {
+		if errors.Is(e, syscall.Errno(errFileNotFound)) || errors.Is(e, syscall.Errno(errPathNotFound)) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("DeleteProfile: %w", e)
+	}
+	return nil
+}
+
+// FindOrphanProfiles durchsucht die ProfileList nach Ordnern PDH-Kiosk oder PDH-Kiosk.*, behält aber nur SIDs,
+// die zum lokalen Konto gehören oder unauflösbar sind.
+func (s *System) FindOrphanProfiles(user string) ([]string, error) {
 	pl, err := registry.OpenKey(registry.LOCAL_MACHINE, strings.TrimSuffix(profileListKey, `\`), registry.ENUMERATE_SUB_KEYS|registry.WOW64_64KEY)
 	if err != nil {
-		return out, nil
+		return nil, nil
 	}
 	defer pl.Close()
 	names, _ := pl.ReadSubKeyNames(-1)
+	var out []string
 	for _, n := range names {
-		if !strings.HasPrefix(n, "S-1-5-21-") || slices.Contains(out, n) {
+		if !strings.HasPrefix(n, "S-1-5-21-") {
 			continue
 		}
 		p, err := profileImagePath(n)
 		if err != nil {
 			continue
 		}
-		base := filepath.Base(strings.ReplaceAll(p, `/`, `\`))
-		if strings.EqualFold(base, user) || strings.HasPrefix(strings.ToLower(base), strings.ToLower(user)+".") {
+		base := strings.ToLower(filepath.Base(strings.ReplaceAll(p, `/`, `\`)))
+		if (base == strings.ToLower(user) || strings.HasPrefix(base, strings.ToLower(user)+".")) && ownOrOrphanSID(n, user) {
 			out = append(out, n)
 		}
 	}
 	return out, nil
 }
 
-func (s *System) ProfilePath(user string) (string, error) {
-	sids, err := profileSIDs(user)
-	if err != nil {
-		return "", err
-	}
-	if len(sids) == 0 {
-		return "", ErrNotFound
-	}
-	return profileImagePath(sids[0])
-}
-
-func (s *System) DeleteProfile(user string) error {
-	sids, err := profileSIDs(user)
-	if err != nil {
-		return err
-	}
-	if len(sids) == 0 {
-		return ErrNotFound
-	}
-	var errs []error
-	for _, sid := range sids {
-		p, _ := windows.UTF16PtrFromString(sid)
-		r, _, e := procDeleteProfile.Call(uintptr(unsafe.Pointer(p)), 0, 0)
-		if r == 0 && !errors.Is(e, syscall.Errno(errFileNotFound)) && !errors.Is(e, syscall.Errno(errPathNotFound)) {
-			errs = append(errs, fmt.Errorf("DeleteProfile: %w", e))
-		}
-	}
-	return errors.Join(errs...)
-}
-
-// sessionUsers sind die Sitzungen (ID), in denen user angemeldet ist.
+// sessionsOf sind die Sitzungen (ID), in denen das lokale Konto user angemeldet ist; ein Domänenkonto gleichen
+// Namens zählt nicht.
 func sessionsOf(user string) ([]uint32, error) {
+	host, err := windows.ComputerName()
+	if err != nil {
+		return nil, fmt.Errorf("Computername: %w", err)
+	}
 	var info *windows.WTS_SESSION_INFO
 	var n uint32
 	if err := windows.WTSEnumerateSessions(0, 0, 1, &info, &n); err != nil {
 		return nil, fmt.Errorf("WTSEnumerateSessions: %w", err)
 	}
 	defer procWTSFreeMemory.Call(uintptr(unsafe.Pointer(info)))
-	var out []uint32
-	for _, si := range unsafe.Slice(info, n) {
+	query := func(id uint32, class uintptr) string {
 		var buf *uint16
 		var size uint32
-		r, _, _ := procWTSQuerySessionInfo.Call(0, uintptr(si.SessionID), wtsUserName, uintptr(unsafe.Pointer(&buf)), uintptr(unsafe.Pointer(&size)))
+		r, _, _ := procWTSQuerySessionInfo.Call(0, uintptr(id), class, uintptr(unsafe.Pointer(&buf)), uintptr(unsafe.Pointer(&size)))
 		if r == 0 {
-			continue
+			return ""
 		}
-		name := windows.UTF16PtrToString(buf)
-		procWTSFreeMemory.Call(uintptr(unsafe.Pointer(buf)))
-		if strings.EqualFold(name, user) {
+		defer procWTSFreeMemory.Call(uintptr(unsafe.Pointer(buf)))
+		return windows.UTF16PtrToString(buf)
+	}
+	var out []uint32
+	for _, si := range unsafe.Slice(info, n) {
+		if LocalAccount(query(si.SessionID, wtsUserName), query(si.SessionID, wtsDomainName), user, host) {
 			out = append(out, si.SessionID)
 		}
 	}

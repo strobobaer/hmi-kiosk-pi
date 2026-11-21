@@ -11,7 +11,7 @@ import (
 func TestRunRollsBackItselfAtEveryStep(t *testing.T) {
 	for _, step := range []string{"CreateUser", "CreateProfile", "LoadHive", "SetRegString|Shell", "SetRegDWORD|ToastEnabled",
 		"UnloadHive", "SetRegString|DefaultUserName", "SetRegString|DefaultDomainName", "StoreLSASecret", "SetRegString|AutoAdminLogon",
-		"SetRegString|B:DefaultUserName", "SetRegString|B:Saved", "SetDataACL"} {
+		"SetRegString|KioskSID", "SetRegString|B:DefaultUserName", "SetRegString|B:Saved", "SetDataACL"} {
 		f := newFake()
 		f.regs[f.k(HKLM, winlogonKey, "DefaultUserName")] = "S:Hans" // fremdes Autologon muss danach wieder da sein
 		f.regs[f.k(HKLM, winlogonKey, "AutoAdminLogon")] = "S:1"

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -49,9 +50,14 @@ type Exec interface {
 	CreateUser(name string, password []byte) error
 	DeleteUser(name string) error // ErrNotFound, wenn es den Benutzer nicht gibt
 	CreateProfile(user string) (profilePath string, err error)
-	// DeleteProfile und ProfilePath finden das Profil auch ohne Benutzerkonto (über die ProfileList).
-	DeleteProfile(user string) error // ErrNotFound, wenn es kein Profil gibt
-	ProfilePath(user string) (string, error)
+	// Profile werden über die SID angesprochen: Ein Domänenkonto CORP\PDH-Kiosk hat ebenfalls ein Profil
+	// PDH-Kiosk.CORP und darf nie angefasst werden.
+	UserSID(user string) (string, error)         // SID des lokalen Kontos; ErrNotFound, wenn es fehlt
+	ProfilePathBySID(sid string) (string, error) // ErrNotFound, wenn es kein Profil gibt
+	DeleteProfileBySID(sid string) error         // ErrNotFound, wenn es kein Profil gibt
+	// FindOrphanProfiles sucht Profile des Namens ohne erinnerte SID: nur solche, deren SID zum lokalen Konto
+	// PDH-Kiosk gehört oder gar nicht mehr aufgelöst werden kann; Domänen- und andere Konten bleiben außen vor.
+	FindOrphanProfiles(user string) ([]string, error)
 	LoadHive(profilePath, key string) error
 	UnloadHive(key string) error // ErrNotFound, wenn nicht geladen
 	SetRegString(root, path, name, value string) error
@@ -153,6 +159,55 @@ func ignoreNotFound(err error) error {
 		return nil
 	}
 	return err
+}
+
+const (
+	sidPath = `SOFTWARE\PDH-Terminal`
+	sidName = "KioskSID"
+)
+
+// kioskSIDs sind die SIDs, deren Profile zu uns gehören: die beim Setup gemerkte SID. Fehlt sie (Setup brach vor
+// dem Merken ab, oder ältere Einrichtung), gelten die SID des lokalen Kontos und die vom Exec geprüften Waisen.
+func kioskSIDs(e Exec) ([]string, error) {
+	rec, err := e.GetRegString(HKLM, sidPath, sidName)
+	if err == nil && rec != "" {
+		return []string{rec}, nil
+	}
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	var out []string
+	if sid, err := e.UserSID(KioskUser); err == nil {
+		out = append(out, sid)
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	orphans, err := e.FindOrphanProfiles(KioskUser)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range orphans {
+		if !slices.Contains(out, o) {
+			out = append(out, o)
+		}
+	}
+	return out, nil
+}
+
+// profilePath ist der Ordner des Kiosk-Profils; ErrNotFound, wenn es keins gibt.
+func profilePath(e Exec) (string, error) {
+	sids, err := kioskSIDs(e)
+	if err != nil {
+		return "", err
+	}
+	for _, sid := range sids {
+		if p, err := e.ProfilePathBySID(sid); err == nil {
+			return p, nil
+		} else if !errors.Is(err, ErrNotFound) {
+			return "", err
+		}
+	}
+	return "", ErrNotFound
 }
 
 // Plan liefert die Schritte in der Reihenfolge der Einrichtung. app ist das Programmverzeichnis.
@@ -259,24 +314,53 @@ func Plan(app string) []Step {
 				if pw, err = NewPassword(); err != nil {
 					return err
 				}
-				return e.CreateUser(KioskUser, pw)
+				if err = e.CreateUser(KioskUser, pw); err != nil {
+					return err
+				}
+				// Die SID merken: Nur sie gilt später für Profil und Rückbau.
+				sid, err := e.UserSID(KioskUser)
+				if err == nil {
+					err = e.SetRegString(HKLM, sidPath, sidName, sid)
+				}
+				if err != nil { // das halb angelegte Konto nicht stehen lassen (der Rückbau erfasst diesen Schritt nicht)
+					err = fmt.Errorf("SID von %s merken: %w", KioskUser, err)
+					if derr := ignoreNotFound(e.DeleteUser(KioskUser)); derr != nil {
+						e.Logf("Konto entfernen gescheitert: %v", derr)
+						err = fmt.Errorf("%w (Rückbau unvollständig: %v)", err, derr)
+					}
+					_ = e.DeleteRegValue(HKLM, sidPath, sidName)
+				}
+				return err
 			},
 			func(e Exec) error {
 				wipe()
 				// Ist das Profil noch da (z. B. in Benutzung), bleibt das Konto: Nach Abmeldung erneut -undo.
-				if _, err := e.ProfilePath(KioskUser); err == nil {
+				if _, err := profilePath(e); err == nil {
 					return errors.New("Rückbau unvollständig: Profil noch vorhanden oder in Benutzung, Benutzer bleibt; nach Abmeldung erneut -undo")
 				} else if !errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("Profil nicht prüfbar, Benutzer bleibt: %w", err)
 				}
-				return ignoreNotFound(e.DeleteUser(KioskUser))
+				if err := ignoreNotFound(e.DeleteUser(KioskUser)); err != nil {
+					return err
+				}
+				return ignoreNotFound(e.DeleteRegValue(HKLM, sidPath, sidName)) // zuletzt
 			}},
 		{StepProfile,
 			func(e Exec) error { _, err := e.CreateProfile(KioskUser); return err },
-			func(e Exec) error { return ignoreNotFound(e.DeleteProfile(KioskUser)) }},
+			func(e Exec) error {
+				sids, err := kioskSIDs(e)
+				if err != nil {
+					return err
+				}
+				var errs []error
+				for _, sid := range sids {
+					errs = append(errs, ignoreNotFound(e.DeleteProfileBySID(sid)))
+				}
+				return errors.Join(errs...)
+			}},
 		{StepLoad,
 			func(e Exec) error {
-				p, err := e.ProfilePath(KioskUser)
+				p, err := profilePath(e)
 				if err != nil {
 					return err
 				}
@@ -308,7 +392,7 @@ func Plan(app string) []Step {
 			func(e Exec) error { return e.UnloadHive(HiveKey) },
 			// Rücknahme: Hive wieder laden, damit die Schritte davor ihre Werte entfernen können.
 			func(e Exec) error {
-				p, err := e.ProfilePath(KioskUser)
+				p, err := profilePath(e)
 				if err != nil {
 					return ignoreNotFound(err)
 				}
@@ -401,4 +485,16 @@ func EditionSupported(editionID string) bool {
 		}
 	}
 	return false
+}
+
+// LocalAccount sagt, ob domain\account das lokale Konto user dieses Rechners (host) ist; ein Domänenkonto
+// gleichen Namens ist es nicht.
+func LocalAccount(account, domain, user, host string) bool {
+	return strings.EqualFold(account, user) && strings.EqualFold(domain, host)
+}
+
+// OwnProfileSID entscheidet für die Suche nach Waisen-Profilen, ob eine SID unsere ist: unauflösbar (resolved ist
+// falsch) oder das lokale Konto user. Alles andere (Domäne, andere Benutzer) bleibt unberührt.
+func OwnProfileSID(resolved bool, account, domain, user, host string) bool {
+	return !resolved || LocalAccount(account, domain, user, host)
 }
