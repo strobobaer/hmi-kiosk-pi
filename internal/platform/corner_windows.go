@@ -39,7 +39,23 @@ var (
 	procGetSystemMetrics    = user32.NewProc("GetSystemMetrics")
 	procPeekMessageW        = user32.NewProc("PeekMessageW")
 	procGetAsyncKeyState    = user32.NewProc("GetAsyncKeyState")
+
+	procSetThreadDpiAwarenessContext = user32.NewProc("SetThreadDpiAwarenessContext") // ab Windows 10 1607
 )
+
+// dpiPerMonitorV2 ist DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4).
+const dpiPerMonitorV2 = ^uintptr(3)
+
+// setThreadPerMonitorDPI macht den aufrufenden Thread Per-Monitor-DPI-bewusst (V2), damit GetSystemMetrics und die
+// Koordinaten des WH_MOUSE_LL-Hooks in echten Bildschirmpixeln arbeiten, nicht in skalierten (125 %/150 %). Gibt den
+// bisherigen Kontext zurück (0: nicht verfügbar oder gescheitert; dann bleibt es beim Vorgefundenen).
+var setThreadPerMonitorDPI = func() (old uintptr) {
+	if procSetThreadDpiAwarenessContext.Find() != nil {
+		return 0
+	}
+	old, _, _ = procSetThreadDpiAwarenessContext.Call(dpiPerMonitorV2)
+	return old
+}
 
 // msllHook ist MSLLHOOKSTRUCT.
 type msllHook struct {
@@ -125,7 +141,8 @@ func feedMouse(g *cornerGesture, ev mouseEvent) bool {
 	return false
 }
 
-// screenSize ist die Größe des Hauptbildschirms in den Einheiten, in denen der Hook die Zeigerlage meldet.
+// screenSize ist die Größe des Hauptbildschirms in den Einheiten, in denen der Hook die Zeigerlage meldet:
+// Aufruf auf dem Hook-Thread nach setThreadPerMonitorDPI (dann echte Pixel).
 func screenSize() (w, h int) {
 	cx, _, _ := procGetSystemMetrics.Call(smCXScreen)
 	cy, _, _ := procGetSystemMetrics.Call(smCYScreen)
@@ -152,14 +169,13 @@ func cornerGestureFor(cfg CornerCfg, w int) *cornerGesture {
 // ist unter Windows ohne Bedeutung. Der Hook läuft auf einem eigenen, festen Thread mit Nachrichtenschleife; die
 // Auswertung geschieht in dieser Goroutine. Mit ctx endet alles.
 func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) (err error) {
-	w, _ := screenSize()
-	g := cornerGestureFor(cfg, w)
 	hs := &hookState{keys: make(chan mouseEvent, hookQueue), wake: make(chan struct{}, 1)}
 	if !hookSink.CompareAndSwap(nil, hs) {
 		return errors.New("Maus-Hook läuft schon")
 	}
 	type started struct {
 		tid uint32
+		w   int // Bildschirmbreite in den Einheiten des Hooks
 		err error
 	}
 	ready := make(chan started, 1)
@@ -168,6 +184,14 @@ func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) 
 		defer close(stopped)
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
+		// Messung und Hook auf demselben, Per-Monitor-bewussten Thread: Das Feld (80 x 80) liegt in echten Pixeln.
+		if old := setThreadPerMonitorDPI(); old == 0 {
+			log.Print("Maus-Hook: DPI-Kontext nicht setzbar, Feld in den Einheiten des Prozesses")
+		} else {
+			// Der Thread geht an Go zurück: den ursprünglichen Kontext wiederherstellen.
+			defer procSetThreadDpiAwarenessContext.Call(old)
+		}
+		w, _ := screenSize()
 		hook, _, err := procSetWindowsHookExW.Call(whMouseLL, mouseHookCB, 0, 0)
 		if hook == 0 {
 			ready <- started{err: err}
@@ -177,7 +201,7 @@ func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) 
 		// Die Nachrichtenschlange des Threads entsteht erst mit dem ersten Nachrichten-Aufruf; ohne sie
 		// ginge ein früh gesendetes WM_QUIT verloren.
 		procPeekMessageW.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0, 0) // PM_NOREMOVE
-		ready <- started{tid: windows.GetCurrentThreadId()}
+		ready <- started{tid: windows.GetCurrentThreadId(), w: w}
 		for {
 			r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg[0])), 0, 0, 0)
 			if int32(r) <= 0 {
@@ -193,6 +217,7 @@ func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) 
 		return st.err
 	}
 
+	g := cornerGestureFor(cfg, st.w)
 	t := time.NewTicker(cornerTick)
 	defer t.Stop()
 	defer func() {

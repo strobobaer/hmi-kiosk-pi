@@ -128,3 +128,35 @@ func TestWatchCornerImmediateCancelNeverHangs(t *testing.T) {
 		}
 	}
 }
+
+// Der Hook-Thread arbeitet Per-Monitor-DPI-bewusst (V2): Messung und Hook-Koordinaten sind echte Pixel, das Feld
+// 80 x 80 also auch bei 125 %/150 % Skalierung. Der vorige Kontext wird zurückgegeben und lässt sich wiederherstellen.
+func TestSetThreadPerMonitorDPI(t *testing.T) {
+	if procSetThreadDpiAwarenessContext.Find() != nil {
+		t.Skip("SetThreadDpiAwarenessContext fehlt (Windows vor 10 1607)")
+	}
+	pGet := user32.NewProc("GetThreadDpiAwarenessContext")
+	pEqual := user32.NewProc("AreDpiAwarenessContextsEqual")
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	old := setThreadPerMonitorDPI()
+	if old == 0 {
+		t.Fatal("DPI-Kontext nicht gesetzt")
+	}
+	defer procSetThreadDpiAwarenessContext.Call(old)
+	cur, _, _ := pGet.Call()
+	if eq, _, _ := pEqual.Call(cur, dpiPerMonitorV2); eq == 0 {
+		t.Errorf("Thread nicht Per-Monitor-V2 (Kontext %#x)", cur)
+	}
+	if w, h := screenSize(); w <= 0 || h <= 0 {
+		t.Errorf("Bildschirmgröße %dx%d", w, h)
+	}
+}
+
+// Das Feld liegt in den Pixeln, die der Hook meldet: die Breite kommt vom Hook-Thread (hier 3000 px bei 150 %).
+func TestCornerFieldFollowsHookThreadWidth(t *testing.T) {
+	g := cornerGestureFor(CornerCfg{}, 3000)
+	if g.minX != 3000-80 || g.maxY != 80 {
+		t.Errorf("Feld liegt nicht in den echten Pixeln: minX=%d maxY=%d", g.minX, g.maxY)
+	}
+}
