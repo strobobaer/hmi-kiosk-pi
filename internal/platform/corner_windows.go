@@ -5,6 +5,7 @@ package platform
 import (
 	"context"
 	"errors"
+	"log"
 	"runtime"
 	"sync/atomic"
 	"syscall"
@@ -64,6 +65,8 @@ type hookState struct {
 	keys chan mouseEvent
 	wake chan struct{}
 	move atomic.Pointer[mouseEvent] // jüngste, noch nicht ausgewertete Bewegung
+	// dropped zählt Tastenereignisse, für die kein Platz war; der Verbraucher meldet die Zahl einmal beim Ende.
+	dropped atomic.Uint32
 }
 
 var hookSink atomic.Pointer[hookState]
@@ -95,6 +98,7 @@ func mouseHookProc(code int32, wparam, lparam uintptr) uintptr {
 					select {
 					case hs.keys <- ev:
 					default:
+						hs.dropped.Add(1)
 					}
 				}
 				select {
@@ -147,15 +151,13 @@ func cornerGestureFor(cfg CornerCfg, w int) *cornerGesture {
 // WH_MOUSE_LL-Hook und ruft hit, wenn die linke Taste cfg.Hold lang im Feld oben rechts gehalten wird. devDir
 // ist unter Windows ohne Bedeutung. Der Hook läuft auf einem eigenen, festen Thread mit Nachrichtenschleife; die
 // Auswertung geschieht in dieser Goroutine. Mit ctx endet alles.
-func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) error {
+func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) (err error) {
 	w, _ := screenSize()
 	g := cornerGestureFor(cfg, w)
 	hs := &hookState{keys: make(chan mouseEvent, hookQueue), wake: make(chan struct{}, 1)}
 	if !hookSink.CompareAndSwap(nil, hs) {
 		return errors.New("Maus-Hook läuft schon")
 	}
-	defer hookSink.Store(nil)
-
 	type started struct {
 		tid uint32
 		err error
@@ -187,27 +189,28 @@ func WatchCorner(ctx context.Context, devDir string, cfg CornerCfg, hit func()) 
 	st := <-ready
 	if st.err != nil {
 		<-stopped
+		hookSink.Store(nil)
 		return st.err
 	}
 
 	t := time.NewTicker(cornerTick)
 	defer t.Stop()
 	defer func() {
-		// Das Senden kann nur scheitern, solange der Thread noch keine Schlange hat; begrenzt wiederholen.
-		for i := 0; i < 500; i++ {
-			if r, _, _ := procPostThreadMessageW.Call(uintptr(st.tid), wmQuit, 0, 0); r != 0 {
-				break
-			}
-			select {
-			case <-stopped:
-				return
-			case <-time.After(10 * time.Millisecond):
-			}
+		if n := hs.dropped.Load(); n > 0 {
+			log.Printf("Maus-Hook: %d Tastenereignisse verloren (Kanal voll), der Takt hat den Zustand abgeglichen", n)
 		}
-		select {
-		case <-stopped:
-		case <-time.After(5 * time.Second):
+		qerr := stopHook(st.tid, stopped)
+		if qerr == nil {
+			hookSink.Store(nil) // der Hook-Thread ist wirklich beendet
+			return
 		}
+		// Der Hook lebt noch: hookSink bleibt belegt, ein zweiter Hook wird abgelehnt, bis der Thread endet.
+		go func() {
+			<-stopped
+			hookSink.Store(nil)
+		}()
+		log.Printf("Maus-Hook: %v", qerr)
+		err = qerr
 	}()
 	for {
 		select {
@@ -243,4 +246,34 @@ func leftButtonDown() bool {
 	}
 	r, _, _ := procGetAsyncKeyState.Call(vk)
 	return r&0x8000 != 0
+}
+
+// stopHook beendet den Hook-Thread über WM_QUIT und wartet auf sein Ende. Senden kann nur scheitern, solange
+// der Thread noch keine Nachrichtenschlange hat (selten); es wird begrenzt wiederholt. Ein Fehler heißt: Der Thread
+// läuft womöglich noch.
+func stopHook(tid uint32, stopped <-chan struct{}) error {
+	for i := 0; ; i++ {
+		select {
+		case <-stopped:
+			return nil
+		default:
+		}
+		if r, _, _ := procPostThreadMessageW.Call(uintptr(tid), wmQuit, 0, 0); r != 0 {
+			break
+		}
+		if i >= 500 {
+			return errors.New("WM_QUIT an den Hook-Thread nicht zustellbar")
+		}
+		select {
+		case <-stopped:
+			return nil
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	select {
+	case <-stopped:
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("Hook-Thread endet nicht")
+	}
 }

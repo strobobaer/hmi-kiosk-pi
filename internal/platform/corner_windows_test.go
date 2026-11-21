@@ -83,10 +83,22 @@ func TestWatchCornerInstallsAndStops(t *testing.T) {
 	// Ein zweiter Lauf geht wieder (Callback nur einmal angelegt).
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	go func() { done <- WatchCorner(ctx2, "", CornerCfg{}, func() {}) }()
-	time.Sleep(300 * time.Millisecond)
+	for hookSink.Load() == nil && time.Now().Before(deadline.Add(5*time.Second)) {
+		time.Sleep(time.Millisecond)
+	}
+	if hookSink.Load() == nil {
+		t.Fatal("zweiter Hook nicht angelegt")
+	}
+	// Ein dritter Hook zugleich wird abgelehnt (kein doppelter Hook).
+	if err := WatchCorner(context.Background(), "", CornerCfg{}, func() {}); err == nil {
+		t.Fatal("zweiter gleichzeitiger Hook wurde zugelassen")
+	}
 	cancel2()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("zweiter Lauf: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("zweiter Lauf endet nicht")
 	}
@@ -103,7 +115,14 @@ func TestWatchCornerImmediateCancelNeverHangs(t *testing.T) {
 		}
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			// Nur ctx.Err() heißt: WM_QUIT kam an und der Hook-Thread ist beendet.
+			if err != context.Canceled {
+				t.Fatalf("Durchlauf %d: Beenden nicht sauber: %v", i, err)
+			}
+			if hookSink.Load() != nil {
+				t.Fatalf("Durchlauf %d: Hook noch belegt", i)
+			}
 		case <-time.After(10 * time.Second):
 			t.Fatalf("Durchlauf %d hängt", i)
 		}
