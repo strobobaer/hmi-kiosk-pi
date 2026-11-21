@@ -233,17 +233,16 @@ func localDomainSID() (string, error) {
 		return "", err
 	}
 	defer procLsaClose.Call(h)
-	var buf uintptr
-	r, _, _ := procLsaQueryInfoPolicy.Call(h, policyAccountDomainInfo, uintptr(unsafe.Pointer(&buf)))
+	type domainInfo struct {
+		DomainName windows.NTUnicodeString
+		DomainSid  *windows.SID
+	}
+	var info *domainInfo // LSA legt hier den Zeiger auf seinen Puffer ab
+	r, _, _ := procLsaQueryInfoPolicy.Call(h, policyAccountDomainInfo, uintptr(unsafe.Pointer(&info)))
 	if r != 0 {
 		return "", lsaErr("LsaQueryInformationPolicy", r)
 	}
-	defer procLsaFreeMemory.Call(buf)
-	info := (*struct {
-		DomainName windows.NTUnicodeString
-		DomainSid  *windows.SID
-	})(unsafe.Pointer(buf))
-	if info.DomainSid == nil {
+	defer procLsaFreeMemory.Call(uintptr(unsafe.Pointer(info)))
 		return "", errors.New("keine lokale Domänen-SID")
 	}
 	return info.DomainSid.String(), nil
