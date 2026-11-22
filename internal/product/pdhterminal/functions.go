@@ -219,7 +219,14 @@ func (s *funcStore) ApplyRemote(remote FuncSet) (changed []string) {
 		rv.UpdatedAt = rv.UpdatedAt.UTC()
 		cur := s.getLocked(k)
 		if rv.UpdatedAt.Before(cur.UpdatedAt) {
-			continue // lokal jünger: bleibt und geht an PDH
+			if s.pending[k] && rv.Enabled == cur.Enabled {
+				// Gleicher Wert, aber älterer (geklemmter) Zeitpunkt: PDH führt den Wert. Bestätigt wird nach Wert,
+				// der Zeitpunkt von PDH gilt (Uhrenabweichung).
+				s.funcs[k] = rv
+				delete(s.pending, k)
+				dirty = true
+			}
+			continue // lokal jünger mit anderem Wert: bleibt und geht an PDH
 		}
 		old, had := s.funcs[k]
 		if had && old.Enabled == rv.Enabled && old.UpdatedAt.Equal(rv.UpdatedAt) && !s.pending[k] {
@@ -535,6 +542,9 @@ func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Accept", "text/event-stream")
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req = req.WithContext(ctx)
 	hc := f.client.client()
 	hc.Timeout = 0 // Dauerverbindung
 	resp, err := hc.Do(req)
@@ -545,8 +555,29 @@ func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
 		return false
 	}
-	f.consumeEvents(resp.Body)
+	// Ist der Kanal eventIdle lang still (tote Verbindung), wird er abgebrochen und neu aufgebaut.
+	idle := time.AfterFunc(eventIdle, cancel)
+	defer idle.Stop()
+	f.consumeEvents(&idleReader{r: resp.Body, t: idle})
 	return true
+}
+
+// eventIdle: So lange ohne Daten gilt der Ereigniskanal als tot. PDH muss keine Herzschläge senden; der
+// Neuaufbau ist harmlos, die Statusabfrage bleibt der Rückfall.
+var eventIdle = 90 * time.Second
+
+// idleReader setzt die Frist bei jedem Lesen mit Daten zurück.
+type idleReader struct {
+	r io.Reader
+	t *time.Timer
+}
+
+func (i *idleReader) Read(p []byte) (int, error) {
+	n, err := i.r.Read(p)
+	if n > 0 {
+		i.t.Reset(eventIdle)
+	}
+	return n, err
 }
 
 // consumeEvents liest Server-Sent Events; „settings“ wird angewendet.

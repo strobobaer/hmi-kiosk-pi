@@ -25,6 +25,7 @@ type funcPDH struct {
 	theme     map[string]string
 	noPut     bool // ältere Version: PUT endet mit 404
 	down      bool // nicht erreichbar (503)
+	clamp     bool // klemmt Zeitpunkte auf die PDH-Zeit (wie der Vertrag)
 	putCalls  int
 	getCalls  int
 	srv       *httptest.Server
@@ -76,6 +77,9 @@ func (p *funcPDH) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for k, v := range parseFuncs(in.Functions) {
+			if p.clamp && v.UpdatedAt.After(time.Now().Add(5*time.Minute)) {
+				v.UpdatedAt = time.Now().UTC()
+			}
 			if cur, ok := p.funcs[k]; !ok || v.UpdatedAt.After(cur.UpdatedAt) { // nur strikt jüngere gelten
 				p.funcs[k] = v
 			}
@@ -362,5 +366,64 @@ func TestStartPageUsesPDHBackground(t *testing.T) {
 	}
 	if b := get(); !strings.Contains(b, "--bg:#f3f3f3") {
 		t.Fatalf("Startseite mit hellem Theme: %s", b)
+	}
+}
+
+func TestSyncClockAheadConfirmedByValue(t *testing.T) {
+	p := newFuncPDH(t)
+	f, _ := newSyncEnv(t, p)
+	f.now = func() time.Time { return time.Now().Add(10 * time.Minute) } // Geräteuhr 10 Minuten vor
+	f.Set(FuncTicket, false)
+	// PDH klemmt auf seine Zeit: bei strikt jüngerer Anfrage speichert es den geklemmten Zeitpunkt.
+	p.mu.Lock()
+	p.clamp = true
+	p.mu.Unlock()
+	f.SyncOnce(context.Background())
+	if f.Pending(FuncTicket) {
+		t.Fatal("gleicher Wert bei älterem Zeitpunkt muss bestätigen")
+	}
+	if v := f.Get(FuncTicket); v.Enabled || v.UpdatedAt.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("PDH-Zeitpunkt gilt: %+v", v)
+	}
+	f.SyncOnce(context.Background())
+	f.SyncOnce(context.Background())
+	if p.putCalls != 1 {
+		t.Fatalf("nur ein PUT erwartet, %d", p.putCalls)
+	}
+	// Eine spätere Änderung in PDH gewinnt.
+	p.mu.Lock()
+	p.funcs[FuncTicket] = FuncValue{Enabled: true, UpdatedAt: time.Now().Add(time.Minute)}
+	p.mu.Unlock()
+	f.SyncOnce(context.Background())
+	if !f.Get(FuncTicket).Enabled || p.putCalls != 1 {
+		t.Fatalf("spätere PDH-Änderung muss gelten: %+v, %d PUT", f.Get(FuncTicket), p.putCalls)
+	}
+}
+
+func TestEventIdleReconnect(t *testing.T) {
+	old := eventIdle
+	eventIdle = 50 * time.Millisecond
+	defer func() { eventIdle = old }()
+	hits := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		hits <- struct{}{}
+		<-r.Context().Done() // stumm: keine Daten
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	SaveDevice(dir, Device{DeviceID: "d", Secret: "s", URL: srv.URL, PairedAt: t0})
+	f := NewFuncSync(dir, Client{})
+	done := make(chan bool)
+	go func() { done <- f.readEvents(context.Background(), Device{DeviceID: "d", Secret: "s", URL: srv.URL}) }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("Kanal stand")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("tote Verbindung wurde nicht bemerkt")
 	}
 }

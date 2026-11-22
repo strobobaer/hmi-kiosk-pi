@@ -44,6 +44,14 @@ Gerät: Ein Abgleich eines Geräts gilt für alle Geräte dieses Benutzers (wie 
      nimmt bei gleichem Zeitpunkt den Wert des Terminals **nicht** an.)
   3. Die Regel gilt je Schlüssel, nicht für das ganze Paket: Ein Aufruf kann einen Schalter übernehmen und
      einen anderen ablehnen.
+* **Bestätigung nach Wert (geändert 2026-11-22):** Antwortet PDH mit demselben `enabled`, aber einem **älteren**
+  `updated_at` (etwa wegen der Klemme), übernimmt das Terminal den Zeitpunkt von PDH für diesen Schlüssel und gilt
+  als bestätigt; es sendet ihn nicht erneut. Bei anderem `enabled` und älterem PDH-Zeitpunkt bleibt der lokale
+  Wert und wird (weiter) gesendet.
+* **Vergangene Zeitpunkte (geändert 2026-11-22):** PDH nimmt `updated_at` in der Vergangenheit **so wie gesendet** an
+  (nach der Regel: ist er nicht strikt jünger, verliert die Änderung einfach, ohne Fehler). Ein Terminal mit
+  unplausibler Uhr (vor 2025 oder ohne NTP-Abgleich) verliert deshalb lokale Änderungen gegen PDH; die
+  Admin-Seite des Terminals zeigt dazu einen Hinweis auf dem Reiter „Funktionen“.
 * **Uhrenabweichung:** Ist ein vom Terminal gesendetes `updated_at` mehr als 5 Minuten **nach** der PDH-Zeit, setzt
   PDH es auf die PDH-Zeit (Klemme). Das Terminal stellt seine Zeitpunkte nie zurück: Ein neuer Wert hat immer
   einen größeren Zeitpunkt als der vorige Stand desselben Schalters.
@@ -172,6 +180,8 @@ data: {"manual_login":"card_pin", …, "saver_slides":false,
 
 * Das Feld `saver_slides` (Boolean) bleibt unverändert bestehen (ältere Terminalseiten lesen es), auch wenn
   es nun zusätzlich unter `functions.saver_slides` steht.
+* **Herzschläge (geändert 2026-11-22):** PDH muss auf diesem Kanal keine Herzschläge senden. Das Terminal baut den
+  Kanal nach 90 Sekunden ohne Daten neu auf (Lesefrist); die Statusabfrage alle 30 Sekunden bleibt der Rückfall.
 * Der Kanal wird **auch mit dem Geräte-Geheimnis** angenommen: Die Terminal-Software liest ihn mit
   `Authorization: Bearer <Geräte-Geheimnis>` (zusätzlich zur Sitzung der Terminalseite im Browser, `cardTerminal`).
   Fehlt dies oder antwortet PDH nicht mit **200** und `Content-Type: text/event-stream`, bleibt es bei der
@@ -185,6 +195,9 @@ data: {"manual_login":"card_pin", …, "saver_slides":false,
 
 * Speicherort: `<Datenordner>/pdh/functions.json` mit je Schlüssel `enabled`, `updated_at` und dem Merker
   `pending` für „noch nicht an PDH übertragen“; Farben in `<Datenordner>/pdh/theme.json`.
+* Admin-Seite (geändert 2026-11-22): Das Formular sendet je Schalter den angezeigten Stand (`was_<Schlüssel>`);
+  nur Schalter, die die Person gegenüber diesem Stand geändert hat, gelten als lokale Änderung (kein
+  Überschreiben von PDH-Änderungen, die nach dem Öffnen der Seite kamen).
 * Lokale Änderung: Wert und `updated_at = jetzt` (UTC, Millisekunden) speichern, `pending` setzen, sofort
   Abgleich: erst Stand holen (5.1, anwenden), dann alle `pending`-Schlüssel per 5.2 senden, die Antwort
   anwenden.

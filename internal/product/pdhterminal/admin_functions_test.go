@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAdminFunctions(t *testing.T) {
@@ -25,7 +26,11 @@ func TestAdminFunctions(t *testing.T) {
 		t.Error("Menüpunkt oder Farben fehlen")
 	}
 	// Nur Ticket und Wartungen angehakt, alle anderen aus; Störung, Rüsten, … werden damit ausgeschaltet.
-	r = e.post("/admin/functions", url.Values{"f_ticket": {"1"}, "f_wartungen": {"1"}})
+	v := url.Values{"f_ticket": {"1"}, "f_wartungen": {"1"}}
+	for _, d := range FuncDefs {
+		v.Set("was_"+d.Key, map[bool]string{true: "1", false: "0"}[d.Default])
+	}
+	r = e.post("/admin/functions", v)
 	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), "Gespeichert") {
 		t.Fatalf("POST: %d\n%s", r.Code, r.Body.String())
 	}
@@ -37,7 +42,11 @@ func TestAdminFunctions(t *testing.T) {
 	if !e.product.funcs.Pending(FuncFault) || e.product.funcs.Pending(FuncTicket) {
 		t.Error("nur geänderte Schalter sind vorgemerkt")
 	}
-	if r := e.post("/admin/functions", url.Values{"f_ticket": {"1"}, "f_wartungen": {"1"}}); !strings.Contains(r.Body.String(), "Keine Änderung") {
+	v2 := url.Values{"f_ticket": {"1"}, "f_wartungen": {"1"}}
+	for _, d := range FuncDefs {
+		v2.Set("was_"+d.Key, map[bool]string{true: "1", false: "0"}[e.product.funcs.Get(d.Key).Enabled])
+	}
+	if r := e.post("/admin/functions", v2); !strings.Contains(r.Body.String(), "Keine Änderung") {
 		t.Error("zweites Speichern ohne Änderung")
 	}
 }
@@ -99,5 +108,35 @@ func TestKeyboardPageHandler(t *testing.T) {
 	}
 	if strings.Join(kb.calls, ",") != "show,hide" {
 		t.Errorf("Aufrufe: %v", kb.calls)
+	}
+}
+
+func TestAdminFunctionsKeepsConcurrentPDHChange(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	// Die Seite wurde mit Ticket=an geöffnet; danach schaltet PDH Ticket aus (jüngerer Stand).
+	e.product.funcs.store.ApplyRemote(FuncSet{FuncTicket: {Enabled: false, UpdatedAt: time.Now().Add(time.Minute)}})
+	v := url.Values{}
+	for _, d := range FuncDefs {
+		v.Set("was_"+d.Key, map[bool]string{true: "1", false: "0"}[d.Default])
+		if d.Default {
+			v.Set("f_"+d.Key, "1") // alle angehakt, wie angezeigt
+		}
+	}
+	v.Del("f_" + FuncHMI) // die Person ändert nur HMI
+	if r := e.post("/admin/functions", v); r.Code != http.StatusOK {
+		t.Fatal(r.Code)
+	}
+	if e.product.funcs.Get(FuncTicket).Enabled || e.product.funcs.Pending(FuncTicket) {
+		t.Error("Der Wert von PDH (Ticket aus) darf nicht überschrieben werden")
+	}
+	if e.product.funcs.Get(FuncHMI).Enabled || !e.product.funcs.Pending(FuncHMI) {
+		t.Error("HMI wurde geändert und ist vorgemerkt")
+	}
+}
+
+func TestAdminFunctionsClockWarning(t *testing.T) {
+	e := newAdminEnv(t, newFakePDH(t).client())
+	if strings.Contains(e.get("/admin/functions").Body.String(), "unplausibel") {
+		t.Error("Warnung bei richtiger Uhr")
 	}
 }

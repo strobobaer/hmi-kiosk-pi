@@ -3,6 +3,7 @@ package pdhterminal
 import (
 	_ "embed"
 	"net/http"
+	"time"
 
 	"hmikiosk/internal/web"
 )
@@ -21,6 +22,7 @@ type functionsView struct {
 	Notice    string
 	Sync      string
 	SyncClass string
+	ClockWarn bool // Geräteuhr unplausibel (vor 2025)
 }
 
 // funcRows beschreibt jeden Schalter mit seinem Stand (Zeitpunkt der letzten Änderung, ob PDH ihn schon kennt).
@@ -54,7 +56,7 @@ func (p *adminProduct) syncText() (text, class string) {
 }
 
 func (p *adminProduct) renderFunctions(f web.AdminFrame, w http.ResponseWriter, status int, errMsg, notice string) {
-	v := functionsView{Rows: p.funcRows(), Notice: notice}
+	v := functionsView{Rows: p.funcRows(), Notice: notice, ClockWarn: time.Now().Year() < 2025}
 	v.Sync, v.SyncClass = p.syncText()
 	f.Render(w, status, "functions", "functions", "Funktionen", errMsg, v)
 }
@@ -67,6 +69,12 @@ func (p *adminProduct) functionsSave(f web.AdminFrame, w http.ResponseWriter, r 
 	changed := 0
 	for _, d := range FuncDefs {
 		on := r.PostFormValue("f_"+d.Key) != ""
+		// Nur Schalter, die die Person gegenüber der angezeigten Seite geändert hat, sind lokale Änderungen
+		// (sonst überschriebe das Speichern Änderungen aus PDH, die nach dem Öffnen der Seite kamen).
+		was := r.PostFormValue("was_" + d.Key)
+		if was == "" || (was == "1") == on {
+			continue
+		}
 		ch, err := p.funcs.Set(d.Key, on)
 		if err != nil {
 			p.renderFunctions(f, w, http.StatusInternalServerError, err.Error(), "")
