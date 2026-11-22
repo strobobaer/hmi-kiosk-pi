@@ -70,6 +70,11 @@ Alle Aufrufe tragen den Header `Authorization: Bearer <Geräte-Geheimnis>` (das 
 
 ## 5. HTTP-Schnittstelle
 
+**Freiwillige Kopfzeilen des Terminals (geändert 2026-11-22):** Jede Anfrage des Terminals an PDH (Kopplung,
+Statusabfrage, `PUT /functions`, `/terminal/events`) trägt `X-Terminal-Version: <Version>` (Build-Version, bei
+unbekannter `dev`) und `User-Agent: pdh-terminal/<Version>`. PDH darf sie für Anzeige/Protokoll nutzen und muss
+sie nicht auswerten; ihr Fehlen (ältere Terminals) ist kein Fehler.
+
 ### 5.1 Statusabfrage erweitern: `GET /api/terminal/v1/device`
 
 Die Antwort behält `device_id`, `user`, `name` und bekommt zwei neue **freiwillige** Felder:

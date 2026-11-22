@@ -427,3 +427,28 @@ func TestEventIdleReconnect(t *testing.T) {
 		t.Fatal("tote Verbindung wurde nicht bemerkt")
 	}
 }
+
+func TestVersionHeaders(t *testing.T) {
+	got := make(chan http.Header, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Clone()
+		if r.Method == http.MethodPut {
+			_, _ = w.Write([]byte(`{"functions":{}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	d := Device{DeviceID: "d", Secret: "s", URL: srv.URL}
+	c := Client{}
+	c.Check(context.Background(), d)
+	c.FetchRemote(context.Background(), d)
+	c.PushFunctions(context.Background(), d, FuncSet{})
+	c.Pair(context.Background(), srv.URL, "x", "n")
+	for i := 0; i < 4; i++ {
+		h := <-got
+		if h.Get("X-Terminal-Version") != "dev" || h.Get("User-Agent") != "pdh-terminal/dev" {
+			t.Errorf("Anfrage %d: %v", i, h)
+		}
+	}
+}

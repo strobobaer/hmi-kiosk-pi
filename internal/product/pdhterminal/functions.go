@@ -306,6 +306,7 @@ func (c Client) FetchRemote(ctx context.Context, d Device) (State, Remote, error
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Accept", "application/json")
+	setClientHeaders(req)
 	resp, err := c.client().Do(req)
 	if err != nil {
 		st, e := transportErr(err)
@@ -340,6 +341,7 @@ func (c Client) PushFunctions(ctx context.Context, d Device, set FuncSet) (State
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	setClientHeaders(req)
 	resp, err := c.client().Do(req)
 	if err != nil {
 		st, e := transportErr(err)
@@ -542,6 +544,7 @@ func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Accept", "text/event-stream")
+	setClientHeaders(req)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req = req.WithContext(ctx)

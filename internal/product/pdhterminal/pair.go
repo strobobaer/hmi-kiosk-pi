@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hmikiosk/internal/release"
 	"io"
 	"net/http"
 	"regexp"
@@ -111,6 +112,7 @@ func (c Client) Pair(ctx context.Context, baseURL, code, name string) (Device, e
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	setClientHeaders(req)
 	resp, err := c.client().Do(req)
 	if err != nil {
 		_, e := transportErr(err)
@@ -151,6 +153,7 @@ func (c Client) Check(ctx context.Context, d Device) (State, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Accept", "application/json")
+	setClientHeaders(req)
 	resp, err := c.client().Do(req)
 	if err != nil {
 		return transportErr(err)
@@ -164,4 +167,14 @@ func (c Client) Check(ctx context.Context, d Device) (State, error) {
 		return StateRevoked, nil
 	}
 	return StateUnreachable, errUnreachable
+}
+
+// setClientHeaders trägt die Version des Terminals in jede Anfrage an PDH ein (freiwillige Kopfzeilen für PDH).
+func setClientHeaders(req *http.Request) {
+	v := release.Version
+	if v == "" {
+		v = "dev"
+	}
+	req.Header.Set("X-Terminal-Version", v)
+	req.Header.Set("User-Agent", "pdh-terminal/"+v)
 }
