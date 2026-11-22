@@ -6,6 +6,8 @@
 <title>{{.Title}} – {{.ProductName}}</title>
 {{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">
 {{end}}<link rel="stylesheet" href="/admin/admin.css">
+{{if .Theme}}<link rel="stylesheet" href="/admin/theme.css">
+{{end}}
 <script src="/admin/admin.js" defer></script>
 {{if .Terminal}}<script src="/admin/local.js" defer></script>
 <script src="/keyboard.js" defer></script>

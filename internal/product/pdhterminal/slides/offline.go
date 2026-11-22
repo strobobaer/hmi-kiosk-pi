@@ -1,6 +1,7 @@
 package slides
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -95,6 +96,12 @@ func CacheHandler(st *Store, origin func() string, changed func()) http.Handler 
 //	/slides/img/{id}   Bild einer Folie
 //	/slides/online     {"online":bool}: ist PDH wieder erreichbar (die Seite kehrt dann zu /start zurück)
 func Register(mux *http.ServeMux, st *Store, online func(context.Context) bool) {
+	RegisterThemed(mux, st, nil, online)
+}
+
+// RegisterThemed wie Register; theme (darf nil sein) liefert Farbvariablen als CSS-Regel, die die Grundfarben der
+// Seite ersetzen (Hintergrund wie PDH).
+func RegisterThemed(mux *http.ServeMux, st *Store, theme func() string, online func(context.Context) bool) {
 	mux.HandleFunc("/slides", func(w http.ResponseWriter, r *http.Request) {
 		if !st.Present() {
 			http.Redirect(w, r, "/start", http.StatusFound)
@@ -107,7 +114,11 @@ func Register(mux *http.ServeMux, st *Store, online func(context.Context) bool) 
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Content-Type", "text/html; charset=utf-8")
 		h.Set("Content-Security-Policy", offlineCSP)
-		_, _ = w.Write(offlinePage)
+		page := offlinePage
+		if theme != nil {
+			page = bytes.Replace(page, []byte("/*THEME*/"), []byte(theme()), 1)
+		}
+		_, _ = w.Write(page)
 	})
 	mux.HandleFunc("/slides/data.json", func(w http.ResponseWriter, r *http.Request) {
 		snap, err := st.Load()

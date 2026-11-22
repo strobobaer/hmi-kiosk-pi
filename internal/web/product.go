@@ -45,6 +45,9 @@ type AdminProduct struct {
 	IdleSeconds int
 	// HMI schaltet die HMI-Seiten, -Routen und -Teile der Kernseiten ein.
 	HMI bool
+	// Theme (darf nil sein) liefert Farbvariablen als CSS-Regel; sie liegen unter /admin/theme.css und
+	// überschreiben die Grundfarben von admin.css (Produkt-Farben, z. B. der Hintergrund von PDH).
+	Theme func() string
 }
 
 // HMIKioskAdmin ist das Produkt HMI-Kiosk mit dem bisherigen Menü.

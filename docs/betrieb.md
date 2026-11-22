@@ -662,9 +662,28 @@ Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 B
 - Läuft Edge nicht oder ist Port 8080 oder 8443 belegt, zeigt das Tray-Symbol rot („Port 8080 belegt“) und die Selbstprüfung den Grund. Das Terminal bleibt dabei oben (es endet nicht, der Starter zählt es nicht als Fehlstart) und versucht Edge und die Ports alle 30 Sekunden neu; ist ein Port wieder frei, wird er ohne Neustart gebunden. Die Gesundmeldung des Starters steht trotzdem, weil der Prozess selbst gesund ist.
 - Das Terminal ist ein Programm ohne Konsolenfenster. Beenden geht über das Tray-Symbol („Beenden“) oder im Task-Manager.
 
+### Funktionen, Tastatur und Farben (ab 0.4.3)
+
+**Reiter „Funktionen“ (Admin-Seite).** Schalter für Störung, Ticket, Rüsten, Stillstand, HMI, Wartungen und „Folienschau als Bildschirmschoner“. Es gilt die jüngere Änderung: Jede Änderung am Terminal bekommt einen Zeitstempel und geht an PDH (`PUT /api/terminal/v1/functions`); Änderungen in PDH kommen über die Statusabfrage (alle 30 Sekunden) oder das Ereignis `settings` und gelten, wenn ihr Zeitstempel jünger ist (bei Gleichstand gewinnt PDH). Ist PDH nicht erreichbar, bleibt der lokale Wert; er wird später übertragen („noch nicht an PDH übertragen“ steht dann neben dem Schalter, auch nach einem Neustart). Eine ältere PDH-Version ohne die Schnittstelle (404) gilt als „nur lokal“: Die Seite sagt es, das Terminal fragt erst nach einer Stunde wieder. Der genaue Vertrag steht in `docs/superpowers/specs/2026-11-22-funktionen-sync-contract.md`. Gespeichert wird unter `<Datenordner>/pdh/functions.json`.
+
+**Bildschirmtastatur nur auf Anforderung.**
+
+- *Raspberry Pi:* Die Tastatur ist wvkbd und startet verborgen (siehe „Bildschirmtastatur“); sie erscheint nur auf Anforderung. Auf den eigenen Seiten (Admin-Seite) zeigt `keyboard.js` sie beim Fokus auf ein Textfeld und verbirgt sie danach. Neu: Auf den PDH-Seiten rufen deren Skripte `POST http://127.0.0.1:8080/api/keyboard/show|hide` auf (nur mit dem Ursprung der PDH-Adresse); das Skript auf der PDH-Seite beschreibt Abschnitt 9 des Vertrags. Bis PDH es aufruft, bleibt die Tastatur auf PDH-Seiten aus.
+- *Windows:* Im Kiosk setzt die Einrichtung (`-setup`, nur dort) im Benutzer-Hive von PDH-Kiosk `HKCU\Software\Microsoft\TabletTip\1.7\TouchKeyboardTapInvoke = 2` und `EnableDesktopModeAutoInvoke = 1`: Die Windows-Tastatur erscheint beim Antippen eines Eingabefelds in Edge, auch mit angeschlossener Tastatur (der USB-Kartenleser meldet sich als Tastatur). Der Rückbau entfernt beide Werte. Außerhalb des Kiosks (Betriebsart Zusatz) ändert das Terminal nichts an den Windows-Einstellungen: dort gilt die Einstellung des Benutzers (Einstellungen › Zeit und Sprache › Eingabe › Bildschirmtastatur).
+
+**Farben.** Admin-Seite, Startseite/Meldeseiten und Offline-Folienschau haben den Hintergrund der Terminalseite von PDH (dunkel `#0f1117`, Flächen `#1a1d27`/`#222536`; hell `#f3f3f3`). Sendet PDH im Feld `theme` eigene Farben, gelten diese (gespeichert in `<Datenordner>/pdh/theme.json`).
+
+**Nur am echten Gerät prüfbar (Gerätetest vor dem Release):**
+
+1. Pi: Auf der Admin-Seite zeigt wvkbd sich beim Antippen eines Textfelds und verschwindet beim Verlassen; kein Flackern beim Wechsel zwischen zwei Feldern.
+2. Pi: Auf einer PDH-Seite mit Eingabefeld (Anmeldung mit PIN/Passwort) erscheint die Tastatur, sobald PDH das Skript mit `/api/keyboard/show|hide` liefert; Fehlermeldung „Ursprung nicht erlaubt“ erscheint nicht (PDH-Adresse stimmt mit dem Origin überein).
+3. Windows-Kiosk: Nach `-setup` und Neustart erscheint die Windows-Tastatur beim Antippen eines Feldes in Edge (Touch), und zwar auch mit angeschlossenem USB-Kartenleser; sie verschwindet beim Verlassen. Nach dem Rückbau sind die beiden TabletTip-Werte entfernt. (Der Wert `TouchKeyboardTapInvoke` und das Verhalten von Edge im Kiosk-Modus sind auf der Zielversion von Windows zu bestätigen.)
+4. Farben: Admin-Seite, Startseite, Meldeseiten und Offline-Folienschau zeigen denselben Hintergrund wie die PDH-Terminalseite (kein sichtbarer Sprung beim Wechsel).
+5. Abgleich gegen ein PDH mit der neuen Schnittstelle: am Terminal ändern, in PDH ändern (jünger gewinnt), PDH kurz trennen und wieder verbinden.
+
 ### Bekannte Einschränkungen
 
-- Die Bildschirmtastatur erscheint nur auf der Admin-Seite des Geräts, nicht auf den PDH-Seiten. Dafür braucht es ein Skript auf der PDH-Seite; das folgt in einer späteren Version.
+- Die Bildschirmtastatur erscheint auf den PDH-Seiten erst, wenn deren Skript die Tastatur-Schnittstelle des Geräts aufruft (Vertrag, Abschnitt 9); auf der Admin-Seite des Geräts funktioniert sie bereits.
 
 ## 5. Fehlersuche
 
