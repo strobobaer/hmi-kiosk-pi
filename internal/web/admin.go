@@ -251,6 +251,7 @@ func (a *admin) routes() []route {
 	}
 	rs := []route{
 		public(http.MethodGet, "/admin/admin.css", routeAsset, a.asset("admin.css", "text/css; charset=utf-8")),
+		public(http.MethodGet, "/admin/theme.css", routeAsset, a.themeCSS),
 		public(http.MethodGet, "/admin/admin.js", routeAsset, a.asset("admin.js", "text/javascript; charset=utf-8")),
 		public(http.MethodGet, "/admin/local.js", routeAsset, a.asset("local.js", "text/javascript; charset=utf-8")),
 		public(http.MethodGet, "/admin/setup", routeSetup, a.handleSetupForm),
@@ -572,7 +573,9 @@ type adminView struct {
 	// Nav ist das Menü, ProductName die Marke, HMI schaltet HMI-Teile der Kernseiten ein.
 	Nav         []NavItem
 	ProductName string
-	HMI         bool
+	// Theme: Das Produkt liefert eigene Farben (Verweis auf /admin/theme.css).
+	Theme bool
+	HMI   bool
 	// NoHelper: ohne root-Helfer (Windows); Netzwerk, Zeit, Sicherung und Neustart entfallen.
 	NoHelper bool
 	Body     any
@@ -589,6 +592,7 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 		v.IdleSeconds = a.product.IdleSeconds
 	}
 	v.Nav, v.ProductName, v.HMI = a.product.Nav, a.product.Name, a.product.HMI
+	v.Theme = a.product.Theme != nil
 	if a.noHelper {
 		v.NoHelper = true
 		if !a.product.HMI { // mit HMI bleibt die Seite wegen Fingerabdruck und Schlüssel
@@ -646,4 +650,13 @@ func (a *admin) tileURLs(on bool) []string {
 		return nil
 	}
 	return a.d.TileURLs()
+}
+
+// themeCSS liefert die Farben des Produkts (leer, wenn es keine hat).
+func (a *admin) themeCSS(w http.ResponseWriter, _ *http.Request, _ sessionRef) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if a.product.Theme != nil {
+		_, _ = w.Write([]byte(a.product.Theme()))
+	}
 }

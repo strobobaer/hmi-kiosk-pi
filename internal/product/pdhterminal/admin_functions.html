@@ -1,0 +1,20 @@
+{{define "content"}}
+{{with .Body}}
+<section class="panel stack">
+  <h2>Funktionen</h2>
+  {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
+  <p class="hint">Schaltet Funktionen dieses Terminals ein oder aus. Es gilt immer die jüngere Änderung: Was hier geändert wird, geht an PDH; was in PDH später geändert wird, gilt hier.</p>
+  {{if .ClockWarn}}<p class="msg warn" role="alert">Die Uhr dieses Geräts ist unplausibel (vor 2025 oder nicht synchronisiert). Änderungen an den Funktionen verlieren dann gegen PDH. Bitte Datum und Uhrzeit prüfen.</p>{{end}}
+  <p>Abgleich mit PDH: <span class="msg {{.SyncClass}}">{{.Sync}}</span></p>
+  <form method="post" action="/admin/functions" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    {{range .Rows}}
+    <input type="hidden" name="was_{{.Key}}" value="{{if .On}}1{{else}}0{{end}}">
+    <label class="check"><input type="checkbox" name="f_{{.Key}}" value="1"{{if .On}} checked{{end}}> {{.Label}}
+      <span class="hint">{{.State}}</span></label>
+    {{end}}
+    <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}

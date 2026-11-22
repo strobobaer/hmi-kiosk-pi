@@ -43,6 +43,7 @@ type pdhView struct {
 type adminProduct struct {
 	dataDir string
 	client  Client
+	funcs   *FuncSync
 	cards   *card.Service
 	display *oled.Service
 	// probe prüft das Statusdisplay (Variable für Tests).
@@ -57,7 +58,7 @@ type adminProduct struct {
 }
 
 func newAdminProduct(dataDir string, client Client, cards *card.Service, display *oled.Service) *adminProduct {
-	return &adminProduct{dataDir: dataDir, client: client, cards: cards, display: display, probe: oled.Probe}
+	return &adminProduct{dataDir: dataDir, client: client, funcs: NewFuncSync(dataDir, client), cards: cards, display: display, probe: oled.Probe}
 }
 
 // Admin beschreibt das PDH-Terminal für den Admin-Rahmen.
@@ -105,16 +106,22 @@ func (p *adminProduct) baseProduct() *web.AdminProduct {
 		ID: "pdh-terminal", Name: "PDH-Terminal", Home: "/admin/pdh", HMI: false, IdleSeconds: 120,
 		Nav: []web.NavItem{
 			{Section: "pdh", Label: "PDH", Path: "/admin/pdh"},
+			{Section: "functions", Label: "Funktionen", Path: "/admin/functions"},
 			{Section: "card", Label: "Kartenleser", Path: "/admin/card"},
 			{Section: "statusdisplay", Label: "Statusdisplay", Path: "/admin/statusdisplay"},
 			{Section: "network", Label: "Netzwerk", Path: "/admin/network"},
 			{Section: "system", Label: "System", Path: "/admin/system"},
 		},
-		Pages: map[string]string{"pdh": pdhPage, "card": cardPage, "statusdisplay": statusDisplayPage},
+		Pages: map[string]string{"pdh": pdhPage, "functions": functionsPage, "card": cardPage, "statusdisplay": statusDisplayPage},
+		Theme: func() string { return LoadTheme(p.dataDir).CSS() },
 		Routes: []web.ProductRoute{
 			{Method: http.MethodGet, Path: "/admin/pdh", Handle: func(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
 				p.render(f, w, r, http.StatusOK, "", "", nil)
 			}},
+			{Method: http.MethodGet, Path: "/admin/functions", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
+				p.renderFunctions(f, w, http.StatusOK, "", "")
+			}},
+			{Method: http.MethodPost, Path: "/admin/functions", Handle: p.functionsSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/settings", Handle: p.settings},
 			{Method: http.MethodPost, Path: "/admin/pdh/pair", Handle: p.pair},
 			{Method: http.MethodPost, Path: "/admin/pdh/unpair", Handle: p.unpair},

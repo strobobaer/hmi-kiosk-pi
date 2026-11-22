@@ -196,3 +196,20 @@ func TestOfflinePages(t *testing.T) {
 		t.Errorf("online: %s", w.Body)
 	}
 }
+
+func TestOfflinePageThemed(t *testing.T) {
+	st := newStore(t)
+	if err := st.Save(payloadJSON(t, "v1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterThemed(mux, st, func() string { return ":root{--bg:#f3f3f3}" }, func(context.Context) bool { return false })
+	body := get(mux, "/slides").Body.String()
+	if !strings.Contains(body, ":root{--bg:#f3f3f3}") || strings.Contains(body, "/*THEME*/") {
+		t.Fatal("Farben nicht eingesetzt")
+	}
+	// ohne Theme bleibt die Seite lauffähig (Grundfarben von PDH im Dunkeln)
+	if b := get(offlineMux(st, false), "/slides").Body.String(); !strings.Contains(b, "--bg:#0f1117") {
+		t.Fatal("Grundfarben fehlen")
+	}
+}

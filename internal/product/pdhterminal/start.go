@@ -23,6 +23,7 @@ type startView struct {
 	Secret  string
 	Message string
 	Refresh int
+	Theme   template.CSS // Farbvariablen (:root), gleich dem Hintergrund von PDH
 }
 
 const (
@@ -49,7 +50,7 @@ func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards
 		serveStart(w, r, dataDir, cfg(), client, store)
 	})
 	if store != nil {
-		slides.Register(mux, store, func(ctx context.Context) bool {
+		slides.RegisterThemed(mux, store, func() string { return LoadTheme(dataDir).CSS() }, func(ctx context.Context) bool {
 			return pdhOnline(ctx, dataDir, cfg(), client)
 		})
 	}
@@ -61,7 +62,7 @@ func StartHandler(dataDir string, cfg func() config.PDHCfg, client Client, cards
 		cardRoutes = web.LocalPeer(cards)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if cards != nil && (strings.HasPrefix(r.URL.Path, "/api/card/") || strings.HasPrefix(r.URL.Path, "/api/slides/")) {
+		if cards != nil && (strings.HasPrefix(r.URL.Path, "/api/card/") || strings.HasPrefix(r.URL.Path, "/api/slides/") || strings.HasPrefix(r.URL.Path, "/api/keyboard/")) {
 			cardRoutes.ServeHTTP(w, r)
 			return
 		}
@@ -82,28 +83,29 @@ func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config
 	h.Set("Content-Type", "text/html; charset=utf-8")
 
 	var v startView
+	theme := template.CSS(LoadTheme(dataDir).CSS())
 	csp := "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action 'none'"
 	d, err := LoadDevice(dataDir)
 	if p.URL == "" || config.ValidatePDH(p) != nil || err != nil || d == nil || d.URL != p.URL {
-		v = startView{Message: msgUnpaired, Refresh: 60}
+		v = startView{Message: msgUnpaired, Refresh: 60, Theme: theme}
 	} else {
 		ctx, cancel := context.WithTimeout(r.Context(), checkTimeout)
 		state, _ := client.Check(ctx, *d)
 		cancel()
 		switch state {
 		case StateOK:
-			v = startView{Form: true, Action: p.URL + "/terminal/geraet", Secret: d.Secret}
+			v = startView{Form: true, Action: p.URL + "/terminal/geraet", Secret: d.Secret, Theme: theme}
 			csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action " + p.URL
 		case StateRevoked:
-			v = startView{Message: msgRevoked, Refresh: 60}
+			v = startView{Message: msgRevoked, Refresh: 60, Theme: theme}
 		case StateUntrusted:
-			v = startView{Message: msgUntrusted, Refresh: 30}
+			v = startView{Message: msgUntrusted, Refresh: 30, Theme: theme}
 		default:
 			if store.Present() { // globales Terminal: lokale Folienschau statt der Offline-Meldung
 				http.Redirect(w, r, "/slides", http.StatusFound)
 				return
 			}
-			v = startView{Message: msgOffline, Refresh: 30}
+			v = startView{Message: msgOffline, Refresh: 30, Theme: theme}
 		}
 	}
 	h.Set("Content-Security-Policy", csp)

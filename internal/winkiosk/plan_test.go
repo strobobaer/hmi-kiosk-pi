@@ -276,19 +276,21 @@ func TestPlanOrderAndValues(t *testing.T) {
 	}
 	k := func(root, path, name string) string { return f.regs[f.k(root, path, name)] }
 	checks := map[string]string{
-		k(HKLM, winlogonKey, "AutoAdminLogon"):          "S:1",
-		k(HKLM, winlogonKey, "DefaultUserName"):         "S:PDH-Kiosk",
-		k(HKLM, winlogonKey, "DefaultDomainName"):       "S:.",
-		k(Kiosk, userWinlogon, "Shell"):                 `S:"C:\Program Files\PDH-Terminal\pdh-terminal-start.exe" -kiosk`,
-		k(Kiosk, policiesSys, "DisableTaskMgr"):         "D:1",
-		k(Kiosk, policiesSys, "DisableLockWorkstation"): "D:1",
-		k(Kiosk, policiesSys, "DisableChangePassword"):  "D:1",
-		k(Kiosk, policiesExpl, "NoRun"):                 "D:1",
-		k(Kiosk, policiesExpl, "NoWinKeys"):             "D:1",
-		k(Kiosk, policiesExpl, "NoViewContextMenu"):     "D:1",
-		k(Kiosk, desktopKey, "ScreenSaveActive"):        "S:0",
-		k(Kiosk, desktopKey, "ScreenSaveIsSecure"):      "S:0",
-		k(Kiosk, pushKey, "ToastEnabled"):               "D:0",
+		k(HKLM, winlogonKey, "AutoAdminLogon"):                "S:1",
+		k(HKLM, winlogonKey, "DefaultUserName"):               "S:PDH-Kiosk",
+		k(HKLM, winlogonKey, "DefaultDomainName"):             "S:.",
+		k(Kiosk, userWinlogon, "Shell"):                       `S:"C:\Program Files\PDH-Terminal\pdh-terminal-start.exe" -kiosk`,
+		k(Kiosk, policiesSys, "DisableTaskMgr"):               "D:1",
+		k(Kiosk, policiesSys, "DisableLockWorkstation"):       "D:1",
+		k(Kiosk, policiesSys, "DisableChangePassword"):        "D:1",
+		k(Kiosk, policiesExpl, "NoRun"):                       "D:1",
+		k(Kiosk, policiesExpl, "NoWinKeys"):                   "D:1",
+		k(Kiosk, policiesExpl, "NoViewContextMenu"):           "D:1",
+		k(Kiosk, desktopKey, "ScreenSaveActive"):              "S:0",
+		k(Kiosk, desktopKey, "ScreenSaveIsSecure"):            "S:0",
+		k(Kiosk, pushKey, "ToastEnabled"):                     "D:0",
+		k(Kiosk, tabletTipKey, "TouchKeyboardTapInvoke"):      "D:2",
+		k(Kiosk, tabletTipKey, "EnableDesktopModeAutoInvoke"): "D:1",
 	}
 	for got, want := range checks {
 		if got != want {

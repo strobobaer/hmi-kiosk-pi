@@ -114,6 +114,7 @@ type service struct {
 	presence  appcore.AdminPresence
 	client    Client
 	slides    *slides.Store                      // Zwischenspeicher der Folienschau (globales Terminal)
+	funcs     *FuncSync                          // Abgleich der Funktionen mit PDH
 	cards     *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
 	display   *oled.Service                      // OLED-Statusdisplay
 	sup       atomic.Pointer[browser.Supervisor] // ab startBrowser
@@ -157,6 +158,7 @@ func newService(o Options) (*service, error) {
 	}
 	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
 	s.slides = &slides.Store{Dir: filepath.Join(o.DataDir, slidesDirName)}
+	s.funcs = NewFuncSync(o.DataDir, s.client)
 	s.display = oled.NewService(log.Printf)
 
 	journal, err := appcore.NewJournal(filepath.Join(o.DataDir, logDirName))
@@ -343,6 +345,7 @@ func (s *service) serve(parent context.Context) error {
 	s.display.Apply(statusDisplaySettings(s.config().StatusDisplay))
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
+	background(func() { s.funcs.Run(ctx) })
 
 	// Die Startseite ist die Grundlage der Anzeige. Unter Linux endet der Dienst ohne sie (systemd startet ihn neu).
 	// Unter Windows läuft er mit rotem Symbol weiter und bindet alle 30 s neu: Ein belegter Port ist ein Problem der
@@ -359,6 +362,7 @@ func (s *service) serve(parent context.Context) error {
 	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
 	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, s.notifier()))
 	cardAPI.Handle("/api/slides/cache", slides.CacheHandler(s.slides, origin, s.applyCards))
+	cardAPI.Handle("/api/keyboard/{action}", keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI())))
 	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)
 	serveLocal := func(l net.Listener) *http.Server {
@@ -785,6 +789,14 @@ func (s *service) tlsFingerprint() string {
 	return ""
 }
 
+// keyboardAPI liefert die Bildschirmtastatur als Schnittstelle; ohne Tastatur eine nil-Schnittstelle.
+func (s *service) keyboardAPI() web.KeyboardAPI {
+	if s.kbd == nil {
+		return nil
+	}
+	return s.kbd
+}
+
 func (s *service) adminDeps() web.AdminDeps {
 	var kbd web.KeyboardAPI // nil-Schnittstelle, solange es keine Tastatur gibt
 	if s.kbd != nil {
@@ -846,6 +858,7 @@ func (s *service) adminDeps() web.AdminDeps {
 // adminProduct beschreibt das Terminal für den Admin-Rahmen; im Kiosk (Windows) mit dem Abschnitt „Kiosk“.
 func (s *service) adminProduct() *web.AdminProduct {
 	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
+	p.funcs = s.funcs
 	if s.o.Kiosk && onWindows {
 		p.kiosk, p.logoff = true, logoffUser
 	}

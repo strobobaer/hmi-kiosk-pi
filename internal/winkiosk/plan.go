@@ -38,6 +38,8 @@ const (
 	policiesExpl = `Software\Microsoft\Windows\CurrentVersion\Policies\Explorer`
 	desktopKey   = `Control Panel\Desktop`
 	pushKey      = `Software\Microsoft\Windows\CurrentVersion\PushNotifications`
+	// tabletTipKey steuert die Bildschirmtastatur von Windows (Benutzer-Hive).
+	tabletTipKey = `Software\Microsoft\TabletTip\1.7`
 	// backupKey sichert ein fremdes Autologon, solange der Kiosk eingerichtet ist.
 	backupKey = `SOFTWARE\PDH-Terminal\KioskBackup`
 )
@@ -162,6 +164,16 @@ var (
 	}
 	policyStrings = []regValue{{desktopKey, "ScreenSaveActive"}, {desktopKey, "ScreenSaveIsSecure"}}
 	toast         = regValue{pushKey, "ToastEnabled"}
+	// touchKeyboard: Die Windows-Bildschirmtastatur erscheint nur beim Antippen eines Eingabefelds, auch wenn
+	// eine Tastatur angeschlossen ist (der USB-Kartenleser meldet sich als Tastatur). TouchKeyboardTapInvoke 2 =
+	// immer beim Antippen eines Eingabefelds; EnableDesktopModeAutoInvoke 1 = auch im Desktopmodus.
+	touchKeyboard = []struct {
+		regValue
+		val uint32
+	}{
+		{regValue{tabletTipKey, "TouchKeyboardTapInvoke"}, 2},
+		{regValue{tabletTipKey, "EnableDesktopModeAutoInvoke"}, 1},
+	}
 )
 
 func ignoreNotFound(err error) error {
@@ -279,6 +291,9 @@ func Plan(app string) []Step {
 			errs = append(errs, ignoreNotFound(e.DeleteRegValue(Kiosk, v.path, v.name)))
 		}
 		errs = append(errs, ignoreNotFound(e.DeleteRegValue(Kiosk, toast.path, toast.name)))
+		for _, v := range touchKeyboard {
+			errs = append(errs, ignoreNotFound(e.DeleteRegValue(Kiosk, v.path, v.name)))
+		}
 		return errors.Join(errs...)
 	}
 	// Fremdes Autologon wird vor dem Setup gesichert (ohne Klartext-Passwort) und beim Rückbau wiederhergestellt.
@@ -450,6 +465,11 @@ func Plan(app string) []Step {
 				}
 				if err := e.SetRegDWORD(Kiosk, toast.path, toast.name, 0); err != nil {
 					return fmt.Errorf("%s: %w", toast.name, err)
+				}
+				for _, v := range touchKeyboard {
+					if err := e.SetRegDWORD(Kiosk, v.path, v.name, v.val); err != nil {
+						return fmt.Errorf("%s: %w", v.name, err)
+					}
 				}
 				return nil
 			},
