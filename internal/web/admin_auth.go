@@ -362,7 +362,7 @@ func (a *admin) handleSetup(w http.ResponseWriter, r *http.Request, _ sessionRef
 		a.renderSetup(w, r, formStatus(err), publicMessage(err))
 	default:
 		s := a.startSession(w, r)
-		a.done(w, r, s, "/admin/hmis", "Passwort gesetzt.")
+		a.done(w, r, s, a.product.Home, "Passwort gesetzt.")
 	}
 }
 
@@ -374,7 +374,7 @@ func (a *admin) renderLogin(w http.ResponseWriter, r *http.Request, status int, 
 
 func (a *admin) handleLoginForm(w http.ResponseWriter, r *http.Request, _ sessionRef) {
 	if _, ok := a.sessionFrom(r); ok {
-		redirect(w, r, "/admin/hmis")
+		redirect(w, r, a.product.Home)
 		return
 	}
 	a.renderLogin(w, r, http.StatusOK, "")
@@ -396,7 +396,7 @@ func (a *admin) handleLogin(w http.ResponseWriter, r *http.Request, _ sessionRef
 		return
 	}
 	a.startSession(w, r)
-	redirect(w, r, "/admin/hmis")
+	redirect(w, r, a.product.Home)
 }
 
 func loginMessage(err error) string {
