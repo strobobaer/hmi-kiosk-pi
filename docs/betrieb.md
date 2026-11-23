@@ -679,6 +679,10 @@ Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 B
 
 Koppelt man ein Terminal neu, während lokal noch eine Kopplung gespeichert ist (auch eine, die PDH widerrufen hat oder die nie funktionierte), sendet das Terminal im Koppelaufruf zusätzlich `"previous": {"device_id": ..., "secret": ...}`. PDH übernimmt das Terminal dann aus dem alten Benutzer und antwortet mit `"moved": true`; die Admin-Seite (Reiter PDH) zeigt „Terminal aus altem Benutzer übernommen“. Das alte Geheimnis geht nur an dieselbe PDH-Adresse, mit der das Gerät gekoppelt wurde, nie an eine geänderte. Nach Erfolg ersetzt die neue Kopplung die alte; schlägt das Koppeln fehl, bleibt die alte unverändert. Geheimnisse (alt wie neu) werden nicht protokolliert. Das braucht ein PDH mit Umzugsunterstützung; eine ältere PDH ignoriert `previous`, sendet kein `moved` und das Terminal verhält sich wie bisher: Dann das alte Gerät in PDH von Hand löschen.
 
+### Zahnrad in PDH (ab 0.4.5)
+
+Jede Anfrage an PDH trägt zusätzlich `X-Terminal-Admin-URL: https://<IP des Geräts>:<Admin-Port>/admin/` (IPv6 in eckigen Klammern). Die IP ist die, über die das Gerät PDH erreicht; sie wird höchstens alle 5 Minuten neu bestimmt. PDH zeigt damit am Terminal ein Zahnrad, das zur Admin-Seite führt. Lässt sich die Adresse nicht bestimmen, fehlt die Kopfzeile und PDH zeigt kein Zahnrad. Zugangsdaten sind nie enthalten. Das braucht ein PDH, das die Kopfzeile auswertet; ältere PDH ignorieren sie.
+
 **Nur am echten Gerät prüfbar (Gerätetest vor dem Release):**
 
 1. Pi: Auf der Admin-Seite zeigt wvkbd sich beim Antippen eines Textfelds und verschwindet beim Verlassen; kein Flackern beim Wechsel zwischen zwei Feldern.

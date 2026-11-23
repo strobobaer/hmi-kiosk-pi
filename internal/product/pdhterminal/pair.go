@@ -196,4 +196,5 @@ func setClientHeaders(req *http.Request) {
 	}
 	req.Header.Set("X-Terminal-Version", v)
 	req.Header.Set("User-Agent", "pdh-terminal/"+v)
+	setAdminURLHeader(req)
 }

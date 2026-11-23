@@ -761,6 +761,9 @@ func (s *service) listenAdmin(wg *sync.WaitGroup, h http.Handler, adm *adminList
 	}()
 	addr := l.Addr().String()
 	s.adminAddr.Store(&addr)
+	if _, port, err := net.SplitHostPort(addr); err == nil {
+		SetAdminPort(port)
+	}
 	return addr
 }
 
