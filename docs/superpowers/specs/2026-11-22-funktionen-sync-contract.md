@@ -21,6 +21,8 @@ Schalter den Zeitpunkt der letzten Änderung.
 | `stillstand`   | Stillstand                         | `true`                           |
 | `hmi`          | HMI                                | `true`                           |
 | `wartungen`    | Wartungen                          | `true`                           |
+| `vorgaenge`    | Vorgänge (geändert 2026-11-23)     | `true`                           |
+| `schichtplan`  | Schichtplan (geändert 2026-11-23)  | `true`                           |
 | `saver_slides` | Folienschau als Bildschirmschoner  | `false` (Migration 195)          |
 
 `enabled=false` heißt: Die Terminalseite von PDH zeigt die Funktion nicht an (Kachel/Knopf/Route entfällt bzw.
@@ -75,6 +77,8 @@ Statusabfrage, `PUT /functions`, `/terminal/events`) trägt `X-Terminal-Version:
 unbekannter `dev`) und `User-Agent: pdh-terminal/<Version>`. PDH darf sie für Anzeige/Protokoll nutzen und muss
 sie nicht auswerten; ihr Fehlen (ältere Terminals) ist kein Fehler.
 
+**Optionale Kopfzeile `X-Terminal-Admin-URL` (geändert 2026-11-23):** Zusätzlich trägt jede Anfrage des Terminals an PDH `X-Terminal-Admin-URL: https://<host>:<port>/admin/`, die Adresse der lokalen Admin-Seite des Geräts. `<host>` ist die lokale IP-Adresse, über die das Gerät den PDH-Server erreicht (IPv6 in eckigen Klammern, z. B. `https://[fd00::7]:8443/admin/`), `<port>` der tatsächlich gebundene Port der Admin-Seite (Standard 8443). Das Terminal ermittelt die Adresse zwischengespeichert (Neubestimmung spätestens alle 5 Minuten). Lässt sie sich nicht bestimmen (oder läuft die Admin-Seite nicht), fehlt die Kopfzeile. Sie enthält nie Zugangsdaten. PDH darf sie für den Zahnrad-Link zur Admin-Seite nutzen; ihr Fehlen ist kein Fehler.
+
 ### 5.1 Statusabfrage erweitern: `GET /api/terminal/v1/device`
 
 Die Antwort behält `device_id`, `user`, `name` und bekommt zwei neue **freiwillige** Felder:
@@ -91,6 +95,8 @@ Die Antwort behält `device_id`, `user`, `name` und bekommt zwei neue **freiwill
     "stillstand":   {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
     "hmi":          {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
     "wartungen":    {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
+    "vorgaenge":    {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
+    "schichtplan":  {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
     "saver_slides": {"enabled": false, "updated_at": "2026-11-20T08:00:00.000Z"}
   },
   "theme": {"scheme": "dark"}

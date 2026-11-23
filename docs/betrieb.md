@@ -664,7 +664,7 @@ Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 B
 
 ### Funktionen, Tastatur und Farben (ab 0.4.3)
 
-**Reiter „Funktionen“ (Admin-Seite).** Schalter für Störung, Ticket, Rüsten, Stillstand, HMI, Wartungen und „Folienschau als Bildschirmschoner“. Es gilt die jüngere Änderung: Jede Änderung am Terminal bekommt einen Zeitstempel und geht an PDH (`PUT /api/terminal/v1/functions`); Änderungen in PDH kommen über die Statusabfrage (alle 30 Sekunden) oder das Ereignis `settings` und gelten, wenn ihr Zeitstempel jünger ist (bei Gleichstand gewinnt PDH). Ist PDH nicht erreichbar, bleibt der lokale Wert; er wird später übertragen („noch nicht an PDH übertragen“ steht dann neben dem Schalter, auch nach einem Neustart). Eine ältere PDH-Version ohne die Schnittstelle (404) gilt als „nur lokal“: Die Seite sagt es, das Terminal fragt erst nach einer Stunde wieder. Der genaue Vertrag steht in `docs/superpowers/specs/2026-11-22-funktionen-sync-contract.md`. Gespeichert wird unter `<Datenordner>/pdh/functions.json`.
+**Reiter „Funktionen“ (Admin-Seite).** Schalter für Störung, Ticket, Rüsten, Stillstand, HMI, Wartungen, Vorgänge, Schichtplan (beide ab 0.4.5; eine ältere PDH sendet sie nicht, dann bleibt der lokale Wert) und „Folienschau als Bildschirmschoner“. Es gilt die jüngere Änderung: Jede Änderung am Terminal bekommt einen Zeitstempel und geht an PDH (`PUT /api/terminal/v1/functions`); Änderungen in PDH kommen über die Statusabfrage (alle 30 Sekunden) oder das Ereignis `settings` und gelten, wenn ihr Zeitstempel jünger ist (bei Gleichstand gewinnt PDH). Ist PDH nicht erreichbar, bleibt der lokale Wert; er wird später übertragen („noch nicht an PDH übertragen“ steht dann neben dem Schalter, auch nach einem Neustart). Eine ältere PDH-Version ohne die Schnittstelle (404) gilt als „nur lokal“: Die Seite sagt es, das Terminal fragt erst nach einer Stunde wieder. Der genaue Vertrag steht in `docs/superpowers/specs/2026-11-22-funktionen-sync-contract.md`. Gespeichert wird unter `<Datenordner>/pdh/functions.json`.
 
 **Bildschirmtastatur nur auf Anforderung.**
 
@@ -678,6 +678,10 @@ Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 B
 ### Umzug beim Neukoppeln (ab 0.4.4)
 
 Koppelt man ein Terminal neu, während lokal noch eine Kopplung gespeichert ist (auch eine, die PDH widerrufen hat oder die nie funktionierte), sendet das Terminal im Koppelaufruf zusätzlich `"previous": {"device_id": ..., "secret": ...}`. PDH übernimmt das Terminal dann aus dem alten Benutzer und antwortet mit `"moved": true`; die Admin-Seite (Reiter PDH) zeigt „Terminal aus altem Benutzer übernommen“. Das alte Geheimnis geht nur an dieselbe PDH-Adresse, mit der das Gerät gekoppelt wurde, nie an eine geänderte. Nach Erfolg ersetzt die neue Kopplung die alte; schlägt das Koppeln fehl, bleibt die alte unverändert. Geheimnisse (alt wie neu) werden nicht protokolliert. Das braucht ein PDH mit Umzugsunterstützung; eine ältere PDH ignoriert `previous`, sendet kein `moved` und das Terminal verhält sich wie bisher: Dann das alte Gerät in PDH von Hand löschen.
+
+### Zahnrad in PDH (ab 0.4.5)
+
+Jede Anfrage an PDH trägt zusätzlich `X-Terminal-Admin-URL: https://<IP des Geräts>:<Admin-Port>/admin/` (IPv6 in eckigen Klammern). Die IP ist die, über die das Gerät PDH erreicht; sie wird höchstens alle 5 Minuten neu bestimmt. PDH zeigt damit am Terminal ein Zahnrad, das zur Admin-Seite führt. Lässt sich die Adresse nicht bestimmen, fehlt die Kopfzeile und PDH zeigt kein Zahnrad. Zugangsdaten sind nie enthalten. Das braucht ein PDH, das die Kopfzeile auswertet; ältere PDH ignorieren sie.
 
 **Nur am echten Gerät prüfbar (Gerätetest vor dem Release):**
 

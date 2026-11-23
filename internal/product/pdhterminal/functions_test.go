@@ -452,3 +452,34 @@ func TestVersionHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestNewKeysVorgaengeSchichtplan(t *testing.T) {
+	// Geändert 2026-11-23: zwei neue Schalter, Grundwert an.
+	for _, k := range []string{"vorgaenge", "schichtplan"} {
+		if !knownFunc(k) {
+			t.Fatalf("Schlüssel %s unbekannt", k)
+		}
+	}
+	p := newFuncPDH(t)
+	p.funcs["vorgaenge"] = FuncValue{Enabled: false, UpdatedAt: t2}
+	f, _ := newSyncEnv(t, p)
+	f.Set("schichtplan", false) // lokal jung, PDH kennt es nicht (älteres PDH)
+	f.SyncOnce(context.Background())
+	if v := f.Get("vorgaenge"); v.Enabled || !v.UpdatedAt.Equal(t2) {
+		t.Errorf("Vorgänge von PDH nicht übernommen: %+v", v)
+	}
+	if v := f.Get("schichtplan"); v.Enabled {
+		t.Errorf("lokaler Wert ging verloren: %+v", v)
+	}
+}
+
+func TestNewKeysDefaultOn(t *testing.T) {
+	p := newFuncPDH(t)
+	f, _ := newSyncEnv(t, p) // PDH sendet die neuen Schlüssel nicht
+	f.SyncOnce(context.Background())
+	for _, k := range []string{"vorgaenge", "schichtplan"} {
+		if !f.Get(k).Enabled {
+			t.Errorf("%s: Grundwert muss an sein", k)
+		}
+	}
+}
