@@ -25,6 +25,8 @@ const (
 	FuncDowntime   = "stillstand"
 	FuncHMI        = "hmi"
 	FuncMaint      = "wartungen"
+	FuncCases      = "vorgaenge"
+	FuncShifts     = "schichtplan"
 	FuncSaverSlide = "saver_slides"
 )
 
@@ -43,6 +45,8 @@ var FuncDefs = []FuncDef{
 	{FuncDowntime, "Stillstand", true},
 	{FuncHMI, "HMI", true},
 	{FuncMaint, "Wartungen", true},
+	{FuncCases, "Vorgänge", true},
+	{FuncShifts, "Schichtplan", true},
 	{FuncSaverSlide, "Folienschau als Bildschirmschoner", false},
 }
 

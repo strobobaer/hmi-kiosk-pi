@@ -21,6 +21,8 @@ Schalter den Zeitpunkt der letzten Änderung.
 | `stillstand`   | Stillstand                         | `true`                           |
 | `hmi`          | HMI                                | `true`                           |
 | `wartungen`    | Wartungen                          | `true`                           |
+| `vorgaenge`    | Vorgänge (geändert 2026-11-23)     | `true`                           |
+| `schichtplan`  | Schichtplan (geändert 2026-11-23)  | `true`                           |
 | `saver_slides` | Folienschau als Bildschirmschoner  | `false` (Migration 195)          |
 
 `enabled=false` heißt: Die Terminalseite von PDH zeigt die Funktion nicht an (Kachel/Knopf/Route entfällt bzw.
@@ -93,6 +95,8 @@ Die Antwort behält `device_id`, `user`, `name` und bekommt zwei neue **freiwill
     "stillstand":   {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
     "hmi":          {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
     "wartungen":    {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
+    "vorgaenge":    {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
+    "schichtplan":  {"enabled": true,  "updated_at": "1970-01-01T00:00:00.000Z"},
     "saver_slides": {"enabled": false, "updated_at": "2026-11-20T08:00:00.000Z"}
   },
   "theme": {"scheme": "dark"}
