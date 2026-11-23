@@ -102,13 +102,31 @@ func pdhMessage(b []byte) string {
 
 // Pair koppelt das Terminal mit dem Code aus PDH. Der Code wird nicht aufgehoben.
 func (c Client) Pair(ctx context.Context, baseURL, code, name string) (Device, error) {
+	d, _, err := c.PairMove(ctx, baseURL, code, name, nil)
+	return d, err
+}
+
+// sameBase: wahr, wenn beide PDH-Adressen (ohne Schrägstrich am Ende) gleich sind.
+func sameBase(a, b string) bool {
+	return a != "" && strings.EqualFold(strings.TrimRight(a, "/"), strings.TrimRight(b, "/"))
+}
+
+// PairMove koppelt wie Pair. Ist prev die bisherige Kopplung dieses Terminals und gehört sie zur selben
+// PDH-Adresse, geht sie als "previous" mit, damit PDH das Terminal aus dem alten Benutzer übernimmt.
+// Bei einer anderen Adresse wird das alte Geheimnis nicht gesendet. moved ist wahr, wenn PDH
+// "moved": true meldet. Ältere PDH ignorieren "previous" und senden kein "moved".
+func (c Client) PairMove(ctx context.Context, baseURL, code, name string, prev *Device) (Device, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	base := strings.TrimRight(baseURL, "/")
-	body, _ := json.Marshal(map[string]string{"code": strings.TrimSpace(code), "name": name})
+	payload := map[string]any{"code": strings.TrimSpace(code), "name": name}
+	if prev != nil && prev.DeviceID != "" && prev.Secret != "" && sameBase(prev.URL, base) {
+		payload["previous"] = map[string]string{"device_id": prev.DeviceID, "secret": prev.Secret}
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/terminal/v1/pair", bytes.NewReader(body))
 	if err != nil {
-		return Device{}, errors.New("PDH-Adresse ungültig")
+		return Device{}, false, errors.New("PDH-Adresse ungültig")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -116,7 +134,7 @@ func (c Client) Pair(ctx context.Context, baseURL, code, name string) (Device, e
 	resp, err := c.client().Do(req)
 	if err != nil {
 		_, e := transportErr(err)
-		return Device{}, e
+		return Device{}, false, e
 	}
 	defer resp.Body.Close()
 	data := readBody(resp)
@@ -126,20 +144,21 @@ func (c Client) Pair(ctx context.Context, baseURL, code, name string) (Device, e
 			DeviceID string `json:"device_id"`
 			Secret   string `json:"secret"`
 			User     string `json:"user"`
+			Moved    bool   `json:"moved"`
 		}
 		if json.Unmarshal(data, &out) != nil || !deviceIDRe.MatchString(out.DeviceID) || out.Secret == "" || len(out.Secret) > 256 || strings.IndexFunc(out.Secret, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
-			return Device{}, errors.New("Ungültige Antwort von PDH")
+			return Device{}, false, errors.New("Ungültige Antwort von PDH")
 		}
-		return Device{DeviceID: out.DeviceID, Secret: out.Secret, User: cleanText(out.User), URL: base, PairedAt: time.Now().UTC()}, nil
+		return Device{DeviceID: out.DeviceID, Secret: out.Secret, User: cleanText(out.User), URL: base, PairedAt: time.Now().UTC()}, out.Moved, nil
 	case http.StatusUnprocessableEntity:
 		if m := pdhMessage(data); m != "" {
-			return Device{}, errors.New(m)
+			return Device{}, false, errors.New(m)
 		}
-		return Device{}, errors.New("PDH hat den Code abgelehnt")
+		return Device{}, false, errors.New("PDH hat den Code abgelehnt")
 	case http.StatusTooManyRequests:
-		return Device{}, errors.New("Zu viele Fehlversuche, bitte später noch einmal versuchen")
+		return Device{}, false, errors.New("Zu viele Fehlversuche, bitte später noch einmal versuchen")
 	}
-	return Device{}, fmt.Errorf("Unerwartete Antwort von PDH (Status %d)", resp.StatusCode)
+	return Device{}, false, fmt.Errorf("Unerwartete Antwort von PDH (Status %d)", resp.StatusCode)
 }
 
 // Check fragt PDH, ob die Kopplung noch gilt. Ein Fehler kommt nur mit

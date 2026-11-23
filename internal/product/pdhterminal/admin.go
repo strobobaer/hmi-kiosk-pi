@@ -256,7 +256,10 @@ func (p *adminProduct) pair(f web.AdminFrame, w http.ResponseWriter, r *http.Req
 	if name == "" {
 		name = defaultName()
 	}
-	dev, err := p.client.Pair(context.WithoutCancel(r.Context()), cfg.PDH.URL, code, name)
+	// Die bisherige Kopplung (auch eine widerrufene) geht mit, damit PDH das Terminal übernimmt.
+	// Unlesbar oder beschädigt: ohne "previous" koppeln.
+	prev, _ := LoadDevice(p.dataDir)
+	dev, moved, err := p.client.PairMove(context.WithoutCancel(r.Context()), cfg.PDH.URL, code, name, prev)
 	if err != nil {
 		f.Logf("PDH-Kopplung fehlgeschlagen")
 		p.render(f, w, r, http.StatusBadRequest, err.Error(), "", nil)
@@ -268,7 +271,11 @@ func (p *adminProduct) pair(f web.AdminFrame, w http.ResponseWriter, r *http.Req
 		return
 	}
 	f.Logf("PDH-Kopplung hergestellt")
-	p.render(f, w, r, http.StatusOK, "", "Gekoppelt als „"+dev.User+"“.", nil)
+	msg := "Gekoppelt als „" + dev.User + "“."
+	if moved {
+		msg += " Terminal aus altem Benutzer übernommen."
+	}
+	p.render(f, w, r, http.StatusOK, "", msg, nil)
 }
 
 func (p *adminProduct) unpair(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {

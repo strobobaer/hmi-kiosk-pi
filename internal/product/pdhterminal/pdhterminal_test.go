@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,8 @@ type fakePDH struct {
 	gotName atomic.Value
 	gotCode atomic.Value
 	user    atomic.Value // string: Benutzername in der Antwort von /pair
+	moved   atomic.Bool  // wahr: Antwort von /pair enthält "moved": true
+	gotBody atomic.Value // []byte: letzter Anfragetext von /pair
 }
 
 func newFakePDH(t *testing.T) *fakePDH {
@@ -45,7 +48,9 @@ func newFakePDH(t *testing.T) *fakePDH {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/terminal/v1/pair", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{ Code, Name string }
-		_ = json.NewDecoder(r.Body).Decode(&in)
+		raw, _ := io.ReadAll(r.Body)
+		p.gotBody.Store(raw)
+		_ = json.Unmarshal(raw, &in)
 		p.gotName.Store(in.Name)
 		p.gotCode.Store(in.Code)
 		if st := int(p.status.Load()); st != 0 {
@@ -63,7 +68,11 @@ func newFakePDH(t *testing.T) *fakePDH {
 		if u, ok := p.user.Load().(string); ok {
 			user = u
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"device_id": "a1-1", "secret": testSecret, "user": user})
+		resp := map[string]any{"device_id": "a1-1", "secret": testSecret, "user": user}
+		if p.moved.Load() {
+			resp["moved"] = true
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 	mux.HandleFunc("GET /api/terminal/v1/device", func(w http.ResponseWriter, r *http.Request) {
 		if p.revoked.Load() || r.Header.Get("Authorization") != "Bearer "+testSecret {
