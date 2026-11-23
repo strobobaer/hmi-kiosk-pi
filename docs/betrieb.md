@@ -675,6 +675,10 @@ Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 B
 
 **Farben.** Admin-Seite, Startseite/Meldeseiten und Offline-Folienschau haben den Hintergrund der Terminalseite von PDH (dunkel `#0f1117`, Flächen `#1a1d27`/`#222536`; hell `#f3f3f3`). Sendet PDH im Feld `theme` eigene Farben, gelten diese (gespeichert in `<Datenordner>/pdh/theme.json`).
 
+### Umzug beim Neukoppeln (ab 0.4.4)
+
+Koppelt man ein Terminal neu, während lokal noch eine Kopplung gespeichert ist (auch eine, die PDH widerrufen hat oder die nie funktionierte), sendet das Terminal im Koppelaufruf zusätzlich `"previous": {"device_id": ..., "secret": ...}`. PDH übernimmt das Terminal dann aus dem alten Benutzer und antwortet mit `"moved": true`; die Admin-Seite (Reiter PDH) zeigt „Terminal aus altem Benutzer übernommen“. Das alte Geheimnis geht nur an dieselbe PDH-Adresse, mit der das Gerät gekoppelt wurde, nie an eine geänderte. Nach Erfolg ersetzt die neue Kopplung die alte; schlägt das Koppeln fehl, bleibt die alte unverändert. Geheimnisse (alt wie neu) werden nicht protokolliert. Das braucht ein PDH mit Umzugsunterstützung; eine ältere PDH ignoriert `previous`, sendet kein `moved` und das Terminal verhält sich wie bisher: Dann das alte Gerät in PDH von Hand löschen.
+
 **Nur am echten Gerät prüfbar (Gerätetest vor dem Release):**
 
 1. Pi: Auf der Admin-Seite zeigt wvkbd sich beim Antippen eines Textfelds und verschwindet beim Verlassen; kein Flackern beim Wechsel zwischen zwei Feldern.
