@@ -321,7 +321,7 @@ begin
     DownloadTemporaryFile('https://pkgs.tailscale.com/stable/tailscale-setup-{#TailscaleVersion}-amd64.msi', 'tailscale.msi', '{#TailscaleSha256}', nil);
     msi := ExpandConstant('{tmp}\tailscale.msi');
     rc := -1;
-    if not Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + msi + '" /qn TS_UNATTENDEDMODE=always', '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    if not Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + msi + '" /qn /norestart TS_UNATTENDEDMODE=always', '', SW_HIDE, ewWaitUntilTerminated, rc) then
     begin
       Log('Tailscale: msiexec ließ sich nicht starten: ' + SysErrorMessage(rc));
       Exit;
@@ -333,7 +333,7 @@ begin
     begin
       Log('Tailscale: Installation fehlgeschlagen, Code=' + IntToStr(rc));
       if not WizardSilent then
-        MsgBox('Tailscale ließ sich nicht installieren (Code ' + IntToStr(rc) + '). Das PDH-Terminal ist installiert; Tailscale bitte später nachinstallieren.', mbInformation, MB_OK);
+        SuppressibleMsgBox('Tailscale ließ sich nicht installieren (Code ' + IntToStr(rc) + '). Das PDH-Terminal ist installiert; Tailscale bitte später nachinstallieren.', mbInformation, MB_OK, IDOK);
     end;
   except
     // Kein Netz, falsche Prüfsumme usw.: weiter installieren.
