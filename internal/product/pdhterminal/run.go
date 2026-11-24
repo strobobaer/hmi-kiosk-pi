@@ -146,8 +146,10 @@ type service struct {
 	markGood bool
 	hwID     string
 
-	port       int         // Port der Startseite, mit dem dieser Lauf gestartet ist (localport); ändert sich nur durch Neustart
-	portSwitch atomic.Bool // ein Wechsel auf einen anderen Port ist eingeplant
+	port         int         // Port der Startseite dieses Laufs (localport); ändert sich nur beim Start (Rückfall auf 8080)
+	portSwitch   atomic.Bool // ein Wechsel auf einen anderen Port ist eingeplant
+	derivedAddrs bool        // Adressen der lokalen Seiten stammen aus dem Port der Konfiguration (nicht ausdrücklich angegeben)
+	badPort      int         // gespeicherter Port, der sich nicht binden ließ (Rückfall auf 8080); kein Neustart deswegen
 }
 
 // Run führt den Dienst aus, bis ctx endet; ein geordnetes Ende ergibt nil.
@@ -194,6 +196,7 @@ func newService(o Options) (*service, error) {
 	// Der Port der Startseite kommt aus der Konfiguration (Grundwert 8080) und gilt für diesen Lauf.
 	localport.Set(s.config().LocalPort())
 	s.port = localport.Get()
+	s.derivedAddrs = o.LocalAddr == "" && o.LocalAdminAddr == ""
 	s.o.LocalAddr = orDefault(o.LocalAddr, localport.Addr())
 	s.o.LocalAdminAddr = orDefault(o.LocalAdminAddr, localport.AdminAddr())
 	s.hwID = s.detectHardwareID()
@@ -266,7 +269,39 @@ const policyPortTimeout = 15 * time.Second
 func (s *service) syncPolicyPort(ctx context.Context, port int) error {
 	cctx, cancel := context.WithTimeout(ctx, policyPortTimeout)
 	defer cancel()
-	return s.helperCall(cctx, helperSetLocalPort, strconv.Itoa(port))
+	if err := s.helperCall(cctx, helperSetLocalPort, strconv.Itoa(port)); err != nil {
+		return err
+	}
+	setPolicyPortMarker(s.o.DataDir, port)
+	return nil
+}
+
+// policyPortFile merkt sich den Port, den der Helfer zuletzt in die Richtlinie geschrieben hat. Der Dienst ruft den
+// Helfer beim Start nur, wenn der Port vom Grundwert abweicht oder die Richtlinie noch auf einem anderen steht.
+const policyPortFile = "policy-port"
+
+func policyPortMarker(dataDir string) (int, bool) {
+	b, err := os.ReadFile(filepath.Join(dataDir, policyPortFile))
+	if err != nil {
+		return 0, false
+	}
+	p, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	return p, err == nil
+}
+
+func setPolicyPortMarker(dataDir string, port int) {
+	if err := os.WriteFile(filepath.Join(dataDir, policyPortFile), []byte(strconv.Itoa(port)+"\n"), 0o600); err != nil {
+		log.Printf("Port der Richtlinie nicht vermerkt: %v", err)
+	}
+}
+
+// needsPolicySync: Beim Grundwert bleibt die Richtlinie des Pakets, solange nie ein anderer Port eingestellt war.
+func (s *service) needsPolicySync(port int) bool {
+	if port != localport.Default {
+		return true
+	}
+	m, ok := policyPortMarker(s.o.DataDir)
+	return ok && m != port
 }
 
 // portChanged: Hat die gespeicherte Konfiguration einen anderen Port als dieser Lauf, schreibt der Dienst die
@@ -274,7 +309,7 @@ func (s *service) syncPolicyPort(ctx context.Context, port int) error {
 // Misslingt das Schreiben der Richtlinie, läuft das Terminal auf dem alten Port weiter: Chromium bliebe sonst auf dem
 // neuen Port gesperrt.
 func (s *service) portChanged(want int) {
-	if want == s.port || !s.portSwitch.CompareAndSwap(false, true) {
+	if want == s.port || (want == s.badPort && s.badPort != 0) || !s.portSwitch.CompareAndSwap(false, true) {
 		return
 	}
 	time.AfterFunc(restartDelay, func() {
@@ -436,26 +471,40 @@ func (s *service) serve(parent context.Context) error {
 	s.cards.Apply(s.cardSettings(s.config().Card))
 	s.display.Apply(statusDisplaySettings(s.config().StatusDisplay))
 	background(func() { s.origins.Run(ctx) })
-	background(func() {
-		if err := s.syncPolicyPort(ctx, s.port); err != nil && ctx.Err() == nil {
-			if s.port == localport.Default {
-				log.Printf("Port der Startseite nicht in die Richtlinie geschrieben (Grundwert, die Richtlinie des Pakets gilt): %v", err)
-			} else {
-				s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", s.port, err))
-			}
-		}
-	})
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 	background(func() { s.funcs.Run(ctx) })
 
-	// Die Startseite ist die Grundlage der Anzeige. Unter Linux endet der Dienst ohne sie (systemd startet ihn neu).
-	// Unter Windows läuft er mit rotem Symbol weiter und bindet alle 30 s neu: Ein belegter Port ist ein Problem der
-	// Umgebung, der Prozess selbst ist gesund (ein Ende würde der Starter als Fehlstart der Version zählen).
+	// Die Startseite ist die Grundlage der Anzeige, aber nie Bedingung für die Admin-Seite über HTTPS: Ein nicht
+	// bindbarer Port (belegt, von Windows reserviert, vom Admin falsch eingestellt) ist ein Problem der Umgebung.
+	// Der Dienst läuft dann mit rotem Symbol bzw. Warnung weiter und bindet alle 30 s neu (ein Ende würde unter
+	// Windows der Starter als Fehlstart zählen, unter Linux startete systemd ohne Ende neu und die Admin-Seite käme nie hoch).
+	// Ein eingestellter Port, der sich nicht binden lässt, fällt auf 8080 zurück, wenn 8080 frei ist.
 	l, err := appcore.ListenLoopback(s.o.LocalAddr)
-	if err != nil && !staysUpWithoutStart {
-		cancel()
-		wg.Wait()
-		return fmt.Errorf("Startseite: %w", err)
+	fellBack := false
+	if err != nil && s.derivedAddrs && s.port != localport.Default {
+		if fl, ferr := appcore.ListenLoopback("127.0.0.1:" + strconv.Itoa(localport.Default)); ferr == nil {
+			s.warn(fmt.Sprintf("Eingestellter Port %d nicht verfügbar, läuft auf %d: %v", s.port, localport.Default, err))
+			s.badPort = s.port
+			s.mu.Lock()
+			s.port = localport.Default
+			s.mu.Unlock()
+			localport.Set(0)
+			s.o.LocalAddr, s.o.LocalAdminAddr = localport.Addr(), localport.AdminAddr()
+			l, err, fellBack = fl, nil, true
+		}
+	}
+	// Die Richtlinie folgt dem Port, mit dem dieser Lauf wirklich arbeitet (auch nach dem Rückfall).
+	if fellBack || s.needsPolicySync(s.port) {
+		port := s.port
+		background(func() {
+			if err := s.syncPolicyPort(ctx, port); err != nil && ctx.Err() == nil {
+				if port == localport.Default {
+					log.Printf("Port der Startseite nicht in die Richtlinie geschrieben: %v", err)
+				} else {
+					s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", port, err))
+				}
+			}
+		})
 	}
 	bound := Bound{}
 	origin := func() string { return cardOrigin(s.config().PDH) }
@@ -607,7 +656,8 @@ func (s *service) announce(ctx context.Context, bound Bound, background func(fun
 	}
 	// systemd bekommt sein Lebenszeichen nur, solange die Startseite antwortet.
 	background(func() {
-		if bound.Local == "" { // Startseite nicht gebunden (Windows, belegter Port): kein systemd-Takt
+		if bound.Local == "" { // Startseite nicht gebunden: Der Dienst lebt (HTTPS-Admin), systemd bekommt den Takt ohne Probe
+			appcore.Watchdog(ctx)
 			return
 		}
 		appcore.WatchdogProbe(ctx, func(pctx context.Context) error {
@@ -772,9 +822,6 @@ func (a *adminListener) server() *http.Server {
 	a.closed = true
 	return a.srv
 }
-
-// staysUpWithoutStart: Unter Windows läuft der Dienst ohne Startseite weiter (siehe serve); Tests schalten es auch unter Linux ein.
-var staysUpWithoutStart = onWindows
 
 // portRetryEvery ist die Frist, nach der ein belegter Port neu versucht wird; Tests verkürzen sie.
 var portRetryEvery = 30 * time.Second

@@ -16,6 +16,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/localport"
+	"hmikiosk/internal/release"
 )
 
 // freePortPair liefert einen Port P, bei dem P und P+1 auf 127.0.0.1 frei sind.
@@ -247,55 +248,6 @@ func TestApplyPortChangeHelperFailureKeepsRunning(t *testing.T) {
 	}
 }
 
-// Beim Start gleicht der Dienst die Richtlinie mit dem Port ab (auch auf den Grundwert zurück).
-func TestServeSyncsPolicyPortAtStart(t *testing.T) {
-	resetLocalPort(t)
-	for _, p := range []int{0, 18080} {
-		h := &helperLog{}
-		data := t.TempDir()
-		cfg := config.Default()
-		cfg.Kiosk.LocalPort = p
-		if p == 18080 {
-			p = freePortPair(t)
-			cfg.Kiosk.LocalPort = p
-		}
-		if err := config.Open(data).Save(cfg); err != nil {
-			t.Fatal(err)
-		}
-		rootFS = t.TempDir()
-		ready := make(chan Bound, 1)
-		ctx, cancel := context.WithCancel(context.Background())
-		done := make(chan error, 1)
-		go func() {
-			done <- Run(ctx, Options{
-				DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:0",
-				LocalAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
-				HelperCall: h.call, HardwareID: func() string { return "t" },
-				Ready: func(b Bound) { ready <- b },
-			})
-		}()
-		select {
-		case <-ready:
-		case err := <-done:
-			t.Fatalf("Ende: %v", err)
-		case <-time.After(20 * time.Second):
-			t.Fatal("Start")
-		}
-		want := "set-local-port " + strconv.Itoa(cfg.LocalPort())
-		waitUntil(t, "set-local-port beim Start", func() bool {
-			for _, c := range h.got() {
-				if c == want {
-					return true
-				}
-			}
-			return false
-		})
-		cancel()
-		<-done
-	}
-	rootFS = "/"
-}
-
 // Die Startseite bindet den Port aus der Konfiguration (ohne ausdrückliche Adresse) und nur ihn.
 func TestRunBindsConfiguredPort(t *testing.T) {
 	resetLocalPort(t)
@@ -470,5 +422,240 @@ func TestStartHandlerChecksConfiguredPort(t *testing.T) {
 		if w := startReq(t, h, "GET", "/start", host); w.Code != http.StatusForbidden {
 			t.Errorf("Host %s: %d, erwartet 403", host, w.Code)
 		}
+	}
+}
+
+// Der gespeicherte Port, der sich nicht binden ließ, löst bei späteren Speichervorgängen keinen Neustart aus.
+func TestPortChangedIgnoresFailedPort(t *testing.T) {
+	h := &helperLog{}
+	s := newPortService(t, h)
+	s.badPort = 18080
+	c := config.Default()
+	c.Kiosk.LocalPort = 18080
+	s.apply(c)
+	select {
+	case err := <-s.exit:
+		t.Fatalf("Neustart: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// Beim Start ruft der Dienst den Helfer nur, wenn der Port vom Grundwert abweicht oder die Richtlinie noch auf einem
+// anderen Port steht (Vermerk policy-port).
+func TestServeSyncsPolicyPortAtStart(t *testing.T) {
+	resetLocalPort(t)
+	cases := []struct {
+		name   string
+		port   int    // 0: Grundwert, -1: freies Paar
+		marker string // Inhalt des Vermerks, leer: keiner
+		want   string // erwarteter Aufruf, leer: keiner
+	}{
+		{"Grundwert ohne Vermerk", 0, "", ""},
+		{"Grundwert, Richtlinie stand auf anderem Port", 0, "18080", "set-local-port 8080"},
+		{"Grundwert, Vermerk gleich", 0, "8080", ""},
+		{"eingestellter Port", -1, "", "set-local-port %d"},
+	}
+	for _, tc := range cases {
+		h := &helperLog{}
+		data := t.TempDir()
+		cfg := config.Default()
+		if tc.port == -1 {
+			cfg.Kiosk.LocalPort = freePortPair(t)
+		}
+		if err := config.Open(data).Save(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if tc.marker != "" {
+			if err := os.WriteFile(filepath.Join(data, policyPortFile), []byte(tc.marker+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rootFS = t.TempDir()
+		ready := make(chan Bound, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			done <- Run(ctx, Options{
+				DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:0",
+				LocalAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+				HelperCall: h.call, HardwareID: func() string { return "t" },
+				Ready: func(b Bound) { ready <- b },
+			})
+		}()
+		select {
+		case <-ready:
+		case err := <-done:
+			t.Fatalf("%s: Ende: %v", tc.name, err)
+		case <-time.After(20 * time.Second):
+			t.Fatal("Start")
+		}
+		if tc.want != "" {
+			want := strings.Replace(tc.want, "%d", strconv.Itoa(cfg.LocalPort()), 1)
+			waitUntil(t, tc.name, func() bool {
+				for _, c := range h.got() {
+					if c == want {
+						return true
+					}
+				}
+				return false
+			})
+			waitUntil(t, tc.name+": Vermerk", func() bool {
+				m, ok := policyPortMarker(data)
+				return ok && m == cfg.LocalPort()
+			})
+		} else {
+			time.Sleep(200 * time.Millisecond)
+			for _, c := range h.got() {
+				if strings.HasPrefix(c, "set-local-port") {
+					t.Errorf("%s: unerwarteter Aufruf %v", tc.name, h.got())
+				}
+			}
+		}
+		cancel()
+		<-done
+	}
+	rootFS = "/"
+}
+
+// Ein eingestellter Port, der sich nicht binden lässt, darf die HTTPS-Admin-Seite nicht verhindern: Rückfall auf 8080,
+// wenn 8080 frei ist (Warnung, Richtlinie wieder auf 8080).
+func TestRunFallsBackTo8080WhenConfiguredPortBusy(t *testing.T) {
+	resetLocalPort(t)
+	probe, err := net.Listen("tcp", "127.0.0.1:8080")
+	if err != nil {
+		t.Skip("Port 8080 ist auf diesem Rechner nicht frei")
+	}
+	probe.Close()
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	bp := busy.Addr().(*net.TCPAddr).Port
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Kiosk.LocalPort = bp
+	if err := config.Open(data).Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	h := &helperLog{}
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:0",
+			HelperCall: h.call, HardwareID: func() string { return "t" },
+			Ready: func(b Bound) { ready <- b },
+		})
+	}()
+	var b Bound
+	select {
+	case b = <-ready:
+	case err := <-done:
+		t.Fatalf("Ende: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Start")
+	}
+	if b.Local != "127.0.0.1:8080" || b.Admin == "" || localport.Get() != 8080 {
+		t.Errorf("Local %q Admin %q Port %d", b.Local, b.Admin, localport.Get())
+	}
+	waitUntil(t, "Richtlinie auf 8080", func() bool {
+		for _, c := range h.got() {
+			if c == "set-local-port 8080" {
+				return true
+			}
+		}
+		return false
+	})
+	cancel()
+	<-done
+}
+
+// --- Speichern: Bindetest und Richtlinie zuerst ---
+
+func TestAdminLocalPortRejectsPortThatCannotBeOpened(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	for _, second := range []bool{false, true} {
+		p := freePortPair(t)
+		hold := p
+		if second {
+			hold = p + 1 // P selbst frei, P+1 belegt
+		}
+		l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(hold))
+		if err != nil {
+			t.Skip("Port nicht belegbar")
+		}
+		r := e.post("/admin/pdh/localport", url.Values{"localPort": {strconv.Itoa(p)}})
+		l.Close()
+		if r.Code != 400 || !strings.Contains(r.Body.String(), "lässt sich auf diesem Rechner nicht öffnen") {
+			t.Errorf("P+1 belegt=%v: %d\n%s", second, r.Code, r.Body.String())
+		}
+		if c, _, _ := e.store.Load(); c.Kiosk.LocalPort != 0 {
+			t.Errorf("trotz Fehler gespeichert: %d", c.Kiosk.LocalPort)
+		}
+	}
+}
+
+// Die Ports dieses Laufs gelten als frei (das Terminal hält sie selbst).
+func TestAdminLocalPortOwnPortsCountAsFree(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	e.product.bindProbe = func(addr string) error { return errors.New("belegt: " + addr) }
+	// Der Lauf hält 8080/8081; ein anderer Port wird geprüft und scheitert, der eigene nicht.
+	if r := e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}}); r.Code != 400 {
+		t.Fatalf("fremder Port: %d", r.Code)
+	}
+	localport.Set(18080)
+	if r := e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}}); r.Code != 200 {
+		t.Fatalf("eigener Port abgelehnt: %d %s", r.Code, r.Body.String())
+	}
+}
+
+// Schlägt set-local-port fehl, wird nichts gespeichert.
+func TestAdminLocalPortHelperFailureKeepsConfig(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	testHelperCall = func(string, string) error { return errors.New("Unbekannter Befehl") }
+	t.Cleanup(func() { testHelperCall = nil })
+	r := e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}})
+	if r.Code != 400 || !strings.Contains(r.Body.String(), "Browser-Richtlinie konnte nicht angepasst werden – Port nicht geändert (Systemteile aktualisieren)") {
+		t.Fatalf("%d\n%s", r.Code, r.Body.String())
+	}
+	if c, _, _ := e.store.Load(); c.Kiosk.LocalPort != 0 {
+		t.Fatalf("gespeichert: %d", c.Kiosk.LocalPort)
+	}
+	if _, ok := policyPortMarker(e.dir); ok {
+		t.Error("Vermerk trotz Fehler")
+	}
+}
+
+func TestAdminLocalPortCallsHelperBeforeSaving(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	var calls []string
+	testHelperCall = func(cmd, arg string) error {
+		c, _, _ := e.store.Load()
+		calls = append(calls, cmd+" "+arg+" gespeichert="+strconv.Itoa(c.Kiosk.LocalPort))
+		return nil
+	}
+	t.Cleanup(func() { testHelperCall = nil })
+	if r := e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}}); r.Code != 200 {
+		t.Fatalf("%d %s", r.Code, r.Body.String())
+	}
+	if len(calls) != 1 || calls[0] != "set-local-port 18080 gespeichert=0" {
+		t.Fatalf("Aufrufe: %v", calls)
+	}
+	if m, ok := policyPortMarker(e.dir); !ok || m != 18080 {
+		t.Errorf("Vermerk %d %v", m, ok)
+	}
+}
+
+func TestPDHTerminalNeedsSystemLevel2(t *testing.T) {
+	if release.PDHTerminal.SystemLevel < 2 {
+		t.Fatalf("SystemLevel %d: ein älterer Helfer ohne set-local-port muss als Systemteile älter gelten", release.PDHTerminal.SystemLevel)
 	}
 }

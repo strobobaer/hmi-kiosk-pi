@@ -15,6 +15,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/rfb"
 	"hmikiosk/internal/secrets"
 )
@@ -567,6 +568,7 @@ type adminView struct {
 	// Terminal: Aufruf am Terminal (Loopback); dann „Zurück zum Kiosk“, Inaktivitätsabmeldung
 	// nach IdleSeconds und Bildschirmtastatur (OSK „auto“ oder „manual“).
 	Terminal    bool
+	StartPort   int // Port der lokalen Startseite (Grundwert 8080)
 	KioskURL    string
 	IdleSeconds int
 	OSK         string
@@ -582,6 +584,7 @@ type adminView struct {
 }
 
 func (a *admin) writePage(w http.ResponseWriter, status int, page string, v adminView) {
+	v.StartPort = localport.Get()
 	if v.Terminal {
 		v.KioskURL, v.IdleSeconds, v.OSK = KioskURL(), int(localSessionIdle/time.Second), "auto"
 		if cfg, _, err := a.d.Store.Load(); err == nil && cfg.Kiosk.InputMode == config.InputMouse {

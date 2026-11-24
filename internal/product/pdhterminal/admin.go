@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -62,6 +63,8 @@ type adminProduct struct {
 	local func() localState
 	// adminPort liefert den Port der Admin-Seite über HTTPS (für die Kollisionsprüfung); nil: 8443.
 	adminPort func() int
+	// bindProbe versucht, addr kurz zu binden (nil: wirklich binden); für Tests ersetzbar.
+	bindProbe func(addr string) error
 	// kiosk: Windows-Kiosk, die Seite hat den Abschnitt „Kiosk“; logoff meldet den Benutzer ab (Windows:
 	// ExitWindowsEx(EWX_LOGOFF), Tests ersetzen es).
 	kiosk  bool
@@ -297,7 +300,47 @@ func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r 
 	if port == localport.Default {
 		port = 0 // der Grundwert steht nicht in der Datei
 	}
+	eff := portOrDefault(port)
+	cfg, lerr := f.Load()
+	if lerr != nil {
+		p.render(f, w, r, http.StatusInternalServerError, lerr.Error(), "", nil)
+		return
+	}
+	changed := eff != cfg.LocalPort() // gegen den gespeicherten Port: Die Richtlinie folgt ihm, nicht dem laufenden
+	if changed {
+		// Ein nicht bindbarer Port würde den Neustart ohne Startseite zurücklassen: vorher prüfen. Die Ports dieses
+		// Laufs gelten als frei (sie sind belegt, weil das Terminal sie selbst hält).
+		for _, bp := range []int{eff, eff + 1} {
+			if bp == localport.Get() || bp == localport.Admin() {
+				continue
+			}
+			if err := p.tryBind(bp); err != nil {
+				fail(fmt.Sprintf("Port %d lässt sich auf diesem Rechner nicht öffnen (%v). Bitte einen anderen Port wählen.", bp, err))
+				return
+			}
+		}
+		// Erst die Richtlinie des Browsers, dann die Konfiguration: Steht der neue Port in der Datei, ohne dass der
+		// Browser ihn öffnen darf, bliebe der Bildschirm nach dem nächsten Start gesperrt.
+		if h := f.Helper(); h != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), policyPortTimeout)
+			err := h.Call(ctx, helperSetLocalPort, strconv.Itoa(eff))
+			cancel()
+			if err != nil {
+				f.Logf("Richtlinie für Port %d nicht gesetzt: %v", eff, err)
+				fail("Browser-Richtlinie konnte nicht angepasst werden – Port nicht geändert (Systemteile aktualisieren)")
+				return
+			}
+			setPolicyPortMarker(p.dataDir, eff)
+		}
+	}
 	if err := f.Update(func(c *config.Config) error { c.Kiosk.LocalPort = port; return nil }); err != nil {
+		if h := f.Helper(); changed && h != nil { // Richtlinie zurück auf den bisherigen Port
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), policyPortTimeout)
+			if h.Call(ctx, helperSetLocalPort, strconv.Itoa(cfg.LocalPort())) == nil {
+				setPolicyPortMarker(p.dataDir, cfg.LocalPort())
+			}
+			cancel()
+		}
 		fail(err.Error())
 		return
 	}
@@ -309,6 +352,19 @@ func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r 
 		}
 	}
 	p.render(f, w, r, http.StatusOK, "", notice, nil)
+}
+
+// tryBind öffnet 127.0.0.1:port kurz und schließt es sofort wieder.
+func (p *adminProduct) tryBind(port int) error {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	if p.bindProbe != nil {
+		return p.bindProbe(addr)
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return l.Close()
 }
 
 func portOrDefault(p int) int {

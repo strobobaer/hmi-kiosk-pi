@@ -83,7 +83,7 @@ else
 fi
 pol="$ov/etc/chromium/policies/managed/hmi-kiosk.json"
 check "Richtlinie: nur die Grundliste ohne Web-Kacheln" bash -c "tr -d '\n\t' <'$pol' | tr -s ' ' | grep -Fq '\"URLAllowlist\": [\"http://127.0.0.1:8080\", \"http://localhost:8080\", \"http://127.0.0.1:8081\", \"http://localhost:8081\"]'"
-check "Systemstand-Marker im Overlay ist 1" test "$(cat "$ov/etc/hmi-kiosk/system-level" 2>/dev/null)" = 1
+check "Systemstand-Marker im Overlay ist 2" test "$(cat "$ov/etc/hmi-kiosk/system-level" 2>/dev/null)" = 2
 
 # I²C für den Kartenleser (nur pdh-terminal): Prüffunktion aus verify-i2c.sh gegen Testbäume.
 check "modules-load-Datei für i2c-dev im Overlay" test "$(cat "$ov/etc/modules-load.d/pdh-terminal-i2c.conf" 2>/dev/null)" = i2c-dev

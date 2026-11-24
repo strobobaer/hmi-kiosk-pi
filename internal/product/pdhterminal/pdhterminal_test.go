@@ -262,7 +262,15 @@ func newAdminEnvWith(t *testing.T, client Client, tune func(*adminProduct)) *adm
 
 type nopHelper struct{}
 
-func (nopHelper) Call(context.Context, string, string) error { return nil }
+// testHelperCall ersetzt bei Bedarf die Antwort des Helfers (Tests setzen und räumen auf).
+var testHelperCall func(cmd, arg string) error
+
+func (nopHelper) Call(_ context.Context, cmd, arg string) error {
+	if testHelperCall != nil {
+		return testHelperCall(cmd, arg)
+	}
+	return nil
+}
 
 func formReq(path string, v url.Values) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "https://admin.test"+path, strings.NewReader(v.Encode()))
