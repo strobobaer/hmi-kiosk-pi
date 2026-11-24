@@ -177,7 +177,8 @@ func (a *admin) handleKioskSave(w http.ResponseWriter, r *http.Request, s sessio
 		if mode == "" {
 			mode = config.InputTouch
 		}
-		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode, NetworkTiles: f.NetworkTiles}
+		// LocalPort gehört nicht zu diesem Formular und bleibt, wie er ist.
+		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode, NetworkTiles: f.NetworkTiles, LocalPort: c.Kiosk.LocalPort}
 		if err := checkKiosk(next); err != nil {
 			return err
 		}

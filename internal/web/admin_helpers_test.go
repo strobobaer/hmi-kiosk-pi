@@ -19,6 +19,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/rfb"
 	"hmikiosk/internal/secrets"
 )
@@ -320,9 +321,9 @@ func (b *browser) do(req *http.Request) *httptest.ResponseRecorder {
 	h := b.e.a.handler()
 	if b.onTerminal {
 		req.TLS = nil
-		req.URL.Scheme, req.URL.Host, req.Host = "http", "127.0.0.1:8081", "127.0.0.1:8081"
+		req.URL.Scheme, req.URL.Host, req.Host = "http", localport.AdminAddr(), localport.AdminAddr()
 		if isWrite(req) && req.Header.Get("Origin") == "" {
-			req.Header.Set("Origin", "http://127.0.0.1:8081")
+			req.Header.Set("Origin", "http://"+localport.AdminAddr())
 		}
 		h = b.e.a.localHandler()
 	}

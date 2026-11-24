@@ -54,6 +54,8 @@ type Server struct {
 	// ChromiumPolicyPath ist die Chromium-Richtlinie, WebOriginsStatePath die dauerhafte Liste der Web-Ursprünge.
 	ChromiumPolicyPath  string
 	WebOriginsStatePath string
+	// LocalPortStatePath hält den dauerhaften Port der lokalen Startseite; leer: neben WebOriginsStatePath ("local-port").
+	LocalPortStatePath string
 	// LocalNetworkAccess nimmt die Ursprünge zusätzlich in LocalNetworkAccessAllowedForUrls auf (PDH-Terminal).
 	LocalNetworkAccess bool
 

@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/session"
 )
 
@@ -40,16 +42,15 @@ type TileView struct {
 
 var heartbeat = 15 * time.Second
 
-// allowedHosts schützt gegen DNS-Rebinding: Nur die lokalen Namen sind gültig.
-var allowedHosts = map[string]bool{"127.0.0.1:8080": true, "localhost:8080": true}
+// allowedHost schützt gegen DNS-Rebinding: Nur die lokalen Namen mit dem Port der Startseite
+// (Grundwert 8080, einstellbar, siehe localport) sind gültig.
+func allowedHost(hostport string) bool { return localport.StartHost(hostport) }
 
 // tilePort ist der Port der Kachelseite; im Netz gilt nur er.
-const tilePort = "8080"
+func tilePort() string { return strconv.Itoa(localport.Get()) }
 
-var allowedOrigins = map[string]bool{
-	"http://127.0.0.1:8080": true,
-	"http://localhost:8080": true,
-}
+// allowedOrigin: genau http://127.0.0.1:<Port> oder http://localhost:<Port>.
+func allowedOrigin(origin string) bool { return localport.StartOrigin(origin) }
 
 type local struct {
 	s      SessionAPI
@@ -66,7 +67,7 @@ type LocalExtras struct {
 	// TouchHit nimmt den Treffer eines Ziels der Touch-Seite an; false lehnt ihn ab.
 	TouchHit func(target int) bool
 	// Network meldet, ob die Kachelseite im Netz freigegeben ist (nur für Tests).
-	// Dann gelten zusätzlich IP-Adressen mit Port 8080 als Host, nie Namen. nil heißt aus.
+	// Dann gelten zusätzlich IP-Adressen mit dem Port der Startseite als Host, nie Namen. nil heißt aus.
 	Network func() bool
 	// Keyboard blendet die Bildschirmtastatur ein und aus (nil: keine).
 	Keyboard KeyboardAPI
@@ -89,10 +90,9 @@ type KeyboardAPI interface {
 }
 
 // Adressen der Admin-Seite am Terminal (nur Loopback, HTTP) und der Kachelseite.
-const (
-	LocalAdminURL = "http://127.0.0.1:8081/admin/"
-	KioskURL      = "http://127.0.0.1:8080/"
-)
+// Sie folgen dem eingestellten Port (Grundwert 8080 und 8081).
+func LocalAdminURL() string { return localport.AdminURL() }
+func KioskURL() string      { return localport.StartURL() }
 
 // NewLocal baut den Handler der Kachelseite. layout liefert "auto" oder die
 // Spaltenzahl "2", "3", "4".
@@ -138,15 +138,15 @@ func SecureLocal(next http.Handler) http.Handler { return secure(onlyLocalHost(n
 func secure(next http.Handler) http.Handler { return secureWith(next, nil) }
 
 // secureWith prüft Host und Origin. Mit Netzfreigabe gilt zusätzlich ein IP-Host mit
-// Port 8080, und ein POST darf nur von genau diesem Host kommen (gleicher Ursprung).
+// dem Port der Startseite, und ein POST darf nur von genau diesem Host kommen (gleicher Ursprung).
 func secureWith(next http.Handler, network func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Cache-Control", "no-store")
-		netHost := !allowedHosts[r.Host] && network != nil && network() && ipHost(r.Host)
-		if !allowedHosts[r.Host] && !netHost {
+		netHost := !allowedHost(r.Host) && network != nil && network() && ipHost(r.Host)
+		if !allowedHost(r.Host) && !netHost {
 			writeError(w, http.StatusForbidden, "Anfrage nicht erlaubt")
 			return
 		}
@@ -158,11 +158,11 @@ func secureWith(next http.Handler, network func() bool) http.Handler {
 	})
 }
 
-// ipHost lässt nur eine IP-Adresse (IPv6 in Klammern, ohne Zone) mit Port 8080 zu.
+// ipHost lässt nur eine IP-Adresse (IPv6 in Klammern, ohne Zone) mit dem Port der Startseite zu.
 // Namen bleiben gesperrt: Sie könnte ein fremder DNS-Server auf das Terminal zeigen lassen.
 func ipHost(hostport string) bool {
 	host, port, err := net.SplitHostPort(hostport)
-	if err != nil || port != tilePort {
+	if err != nil || port != tilePort() {
 		return false
 	}
 	if strings.Contains(host, ":") && !strings.HasPrefix(hostport, "[") {
@@ -179,7 +179,7 @@ func originAllowed(r *http.Request, netHost bool) bool {
 		if netHost {
 			return origin == "http://"+r.Host
 		}
-		return allowedOrigins[origin]
+		return allowedOrigin(origin)
 	}
 	if o := r.Header.Get("Origin"); o != "" {
 		return ok(o)
@@ -206,7 +206,7 @@ func (l *local) asset(name, ctype string) http.HandlerFunc {
 // fromTerminal: lokaler Name als Host und eine Verbindung über Loopback. Der Host allein
 // reicht nicht: Bei Netzfreigabe kann ein Client im Netz Host und Origin vortäuschen.
 func fromTerminal(r *http.Request) bool {
-	return allowedHosts[r.Host] && loopbackPeer(r)
+	return allowedHost(r.Host) && loopbackPeer(r)
 }
 
 // loopbackPeer: Die Gegenstelle ist eine Loopback-Adresse; Unlesbares gilt als fremd.
@@ -293,7 +293,7 @@ func (l *local) handleTiles(w http.ResponseWriter, r *http.Request) {
 
 // adminURL ist leer, wenn es am Terminal keine Admin-Seite gibt.
 func (l *local) adminURL(hostport string) string {
-	if allowedHosts[hostport] && l.ex.LocalAdmin != nil && !l.ex.LocalAdmin() {
+	if allowedHost(hostport) && l.ex.LocalAdmin != nil && !l.ex.LocalAdmin() {
 		return ""
 	}
 	return adminURLFor(hostport)
@@ -302,12 +302,12 @@ func (l *local) adminURL(hostport string) string {
 // adminURLFor: Am Terminal führt das Zahnrad zur Loopback-Admin-Seite; von einem
 // PC aus (Netzfreigabe, IP-Host) zur Admin-Seite über HTTPS unter derselben Adresse.
 func adminURLFor(hostport string) string {
-	if allowedHosts[hostport] {
-		return LocalAdminURL
+	if allowedHost(hostport) {
+		return LocalAdminURL()
 	}
 	host, _, err := net.SplitHostPort(hostport)
 	if err != nil {
-		return LocalAdminURL
+		return LocalAdminURL()
 	}
 	return "https://" + net.JoinHostPort(host, adminPort) + "/admin/"
 }

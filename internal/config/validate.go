@@ -7,6 +7,8 @@ import (
 	"slices"
 	"unicode"
 	"unicode/utf8"
+
+	"hmikiosk/internal/localport"
 )
 
 var hostRe = regexp.MustCompile(`^[A-Za-z0-9._:\[\]][A-Za-z0-9._:\-\[\]]{0,252}$`)
@@ -79,7 +81,27 @@ func ValidateCore(c Config) error {
 	if err := ValidateEthernet(c.Network.Ethernet); err != nil {
 		return fmt.Errorf("Ethernet: %w", err)
 	}
+	if err := ValidateLocalPort(c.Kiosk.LocalPort, DefaultAdminPort); err != nil {
+		return err
+	}
 	return validateDisplay(c)
+}
+
+// DefaultAdminPort ist der Port der Admin-Seite über HTTPS (Vorgabe -admin :8443).
+const DefaultAdminPort = 8443
+
+// ValidateLocalPort prüft den Port der lokalen Startseite (0 = Grundwert 8080): 1024 bis 65534, und
+// weder er noch der Port darüber (lokale Admin-Seite) darf der Port der Admin-Seite über HTTPS sein.
+func ValidateLocalPort(port, adminPort int) error {
+	if port == 0 {
+		port = localport.Default
+	} else if port < localport.Min || port > localport.Max {
+		return fmt.Errorf("Port der lokalen Startseite muss zwischen %d und %d liegen: %d", localport.Min, localport.Max, port)
+	}
+	if adminPort == port || adminPort == port+1 {
+		return fmt.Errorf("Port der lokalen Startseite: %d und %d (lokale Admin-Seite) dürfen nicht der Port der Admin-Seite (%d) sein", port, port+1, adminPort)
+	}
+	return nil
 }
 
 // ValidateHMI prüft die Teile des HMI-Kiosks: Modus, Kacheln, Peers, Web-Ursprünge, Kiosk, Client, Fernsteuerung.

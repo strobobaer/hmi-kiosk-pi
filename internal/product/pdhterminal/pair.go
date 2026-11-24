@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/release"
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -197,4 +199,9 @@ func setClientHeaders(req *http.Request) {
 	req.Header.Set("X-Terminal-Version", v)
 	req.Header.Set("User-Agent", "pdh-terminal/"+v)
 	setAdminURLHeader(req)
+	// Nur bei einem eingestellten Port: Die PDH-Seiten erreichen das Terminal (Kartenstrom, Tastatur) unter
+	// http://127.0.0.1:<Port>. Beim Grundwert 8080 bleibt die Anfrage wie bisher.
+	if p := localport.Get(); p != localport.Default {
+		req.Header.Set("X-Terminal-Local-Port", strconv.Itoa(p))
+	}
 }
