@@ -3,26 +3,46 @@ package pdhterminal
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
 // routeProbeEvery: Abstand, in dem die Hauptadresse geprüft wird, solange die Ausweichadresse aktiv ist.
 var routeProbeEvery = 5 * time.Minute
 
+// routeProbeTimeout: Zeitlimit je Prüfung der Hauptadresse.
+var routeProbeTimeout = 10 * time.Second
+
 // IsNetworkErr: true bei Netzfehlern (Verbindung, DNS, Zeitüberschreitung), nie bei TLS-/Zertifikatsfehlern.
 func IsNetworkErr(err error) bool {
-	if err == nil || isTLSErr(err) {
+	if err == nil || errors.Is(err, context.Canceled) || isTLSErr(err) {
 		return false
 	}
+	// *url.Error erfüllt immer net.Error; deshalb nur den inneren Fehler auf Timeout prüfen.
+	inner := err
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		inner = ue.Err
+	}
 	var ne net.Error
-	return errors.As(err, &ne) ||
-		errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) ||
+		(errors.As(inner, &ne) && ne.Timeout()) {
+		return true
+	}
+	var (
+		dnsE *net.DNSError
+		opE  *net.OpError
+	)
+	if errors.As(err, &dnsE) || errors.As(err, &opE) {
+		return true
+	}
+	// Gegenseite beendet die Verbindung vor oder im Handshake (z. B. Proxy, Absturz).
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // RouteStatus beschreibt die aktive Adresse.
@@ -41,6 +61,7 @@ type Route struct {
 	since    time.Time
 	lastErr  string
 	now      func() time.Time
+	gen      uint64
 }
 
 // NewRoute legt eine Wegwahl an; aktiv ist zunächst die Hauptadresse.
@@ -54,7 +75,7 @@ func (r *Route) SetURLs(primary, fallback string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if fallback == "" || fallback != r.fallback || primary != r.primary {
-		r.useFB = false
+		r.backLocked()
 	}
 	r.primary, r.fallback = primary, fallback
 }
@@ -83,6 +104,17 @@ func (r *Route) nameLocked() string {
 	return "lan"
 }
 
+// backLocked wechselt auf die Hauptadresse zurück und setzt den Status zurück.
+func (r *Route) backLocked() {
+	if !r.useFB {
+		return
+	}
+	r.gen++
+	r.useFB = false
+	r.since = r.now()
+	r.lastErr = ""
+}
+
 // Fail meldet einen Fehler auf base; true, wenn auf die Ausweichadresse gewechselt wurde.
 func (r *Route) Fail(base string, err error) (switched bool) {
 	base = strings.TrimRight(base, "/")
@@ -92,6 +124,7 @@ func (r *Route) Fail(base string, err error) (switched bool) {
 		return false
 	}
 	r.useFB = true
+	r.gen++
 	r.since = r.now()
 	r.lastErr = cleanText(err.Error())
 	return true
@@ -99,7 +132,11 @@ func (r *Route) Fail(base string, err error) (switched bool) {
 
 // Run prüft bei aktiver Ausweichadresse regelmäßig die Hauptadresse und wechselt bei Erfolg zurück.
 func (r *Route) Run(ctx context.Context, probe func(ctx context.Context, base string) error) {
-	t := time.NewTicker(routeProbeEvery)
+	every := routeProbeEvery
+	if every <= 0 {
+		every = 5 * time.Minute
+	}
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
@@ -108,14 +145,20 @@ func (r *Route) Run(ctx context.Context, probe func(ctx context.Context, base st
 		case <-t.C:
 		}
 		r.mu.Lock()
-		active, primary := r.useFB, r.primary
+		active, primary, gen := r.useFB, r.primary, r.gen
 		r.mu.Unlock()
-		if !active || probe(ctx, primary) != nil {
+		if !active {
+			continue
+		}
+		pctx, cancel := context.WithTimeout(ctx, routeProbeTimeout)
+		err := probe(pctx, primary)
+		cancel()
+		if err != nil {
 			continue
 		}
 		r.mu.Lock()
-		if r.primary == primary {
-			r.useFB = false
+		if r.useFB && r.primary == primary && r.gen == gen {
+			r.backLocked()
 		}
 		r.mu.Unlock()
 	}

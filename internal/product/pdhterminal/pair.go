@@ -63,8 +63,12 @@ func isTLSErr(err error) bool {
 		ua  x509.UnknownAuthorityError
 		hn  x509.HostnameError
 		inv x509.CertificateInvalidError
+		sr  x509.SystemRootsError
+		rh  tls.RecordHeaderError
+		al  tls.AlertError
 	)
-	return errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &inv)
+	return errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &inv) ||
+		errors.As(err, &sr) || errors.As(err, &rh) || errors.As(err, &al)
 }
 
 // transportErr übersetzt Netzfehler in Text ohne Einzelheiten aus Go.
