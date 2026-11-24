@@ -593,15 +593,20 @@ func (s *service) serve(parent context.Context) error {
 		}
 	}
 	bound := Bound{}
-	origin := func() string {
-		p := s.config().PDH
-		return cardOrigin(p, s.client.base(Device{URL: p.URL}))
-	}
+	origins := func() []string { return cardOrigins(s.config().PDH) }
 	cardAPI := http.NewServeMux()
-	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
-	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, s.notifier()))
-	cardAPI.Handle("/api/slides/cache", slides.CacheHandler(s.slides, origin, s.applyCards))
-	cardAPI.Handle("/api/keyboard/{action}", keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI())))
+	cardAPI.Handle("/api/card/events", byOrigin(origins, func(origin func() string) http.Handler {
+		return card.EventsHandler(s.cards.Hub(), s.cards, origin)
+	}))
+	cardAPI.Handle("/api/card/result", byOrigin(origins, func(origin func() string) http.Handler {
+		return card.ResultHandler(origin, s.windowForeground, s.notifier())
+	}))
+	cardAPI.Handle("/api/slides/cache", byOrigin(origins, func(origin func() string) http.Handler {
+		return slides.CacheHandler(s.slides, origin, s.applyCards)
+	}))
+	cardAPI.Handle("/api/keyboard/{action}", byOrigin(origins, func(origin func() string) http.Handler {
+		return keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI()))
+	}))
 	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)
 	serveLocal := func(l net.Listener) *http.Server {
