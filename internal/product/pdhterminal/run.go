@@ -330,6 +330,7 @@ func (s *service) portChanged(want int) {
 // localState beschreibt, welchen Port die Startseite tatsächlich benutzt (für die Admin-Seite).
 type localState struct {
 	Port    int    // Port der Startseite dieses Laufs; die lokale Admin-Seite liegt einen darüber
+	Failed  int    // gespeicherter Port, der sich nicht binden ließ (Rückfall auf 8080)
 	Problem string // Grund, wenn die Startseite oder die Admin-Seite am Terminal nicht gebunden ist
 }
 
@@ -342,7 +343,7 @@ func (s *service) localState() localState {
 			parts = append(parts, m)
 		}
 	}
-	return localState{Port: s.port, Problem: strings.Join(parts, "; ")}
+	return localState{Port: s.port, Failed: s.badPort, Problem: strings.Join(parts, "; ")}
 }
 
 // adminPort ist der Port der Admin-Seite über HTTPS (gebunden, sonst aus der Adresse, sonst 8443).

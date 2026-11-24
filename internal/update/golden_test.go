@@ -21,8 +21,7 @@ func goldenPackage(t *testing.T, p release.Product) []byte {
 	if err := os.WriteFile(filepath.Join(dir, p.Binary), []byte("golden binary "+p.ID), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Fester Systemstand 1 wie beim Erzeugen der Golden-Dateien (der Stand des PDH-Terminals steigt mit 0.4.6 auf 2).
-	blob, err := Pack(dir, "1.2.3", p, 1, priv)
+	blob, err := Pack(dir, "1.2.3", p, p.SystemLevel, priv)
 	if err != nil {
 		t.Fatal(err)
 	}

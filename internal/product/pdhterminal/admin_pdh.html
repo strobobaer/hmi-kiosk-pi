@@ -36,7 +36,7 @@
 
 <section class="panel stack">
   <h2>Lokale Startseite</h2>
-  <p>Zurzeit benutzt: Startseite an Port {{.Port}}, lokale Admin-Seite an Port {{.AdminPort}}{{if .Pending}} · gespeichert ist Port {{.Pending}}, er gilt nach dem Neustart des Terminals{{end}}.</p>
+  <p>Zurzeit benutzt: Startseite an Port {{.Port}}, lokale Admin-Seite an Port {{.AdminPort}}{{if .Failed}} · Eingestellter Port {{.Failed}} nicht verfügbar – läuft auf {{.Port}}{{end}}{{if .Pending}} · gespeichert ist Port {{.Pending}}, er gilt nach dem Neustart des Terminals{{end}}.</p>
   {{if .PortProblem}}<p class="msg err" role="alert">{{.PortProblem}}</p>{{end}}
   <form method="post" action="/admin/pdh/localport" class="stack">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">

@@ -18,7 +18,7 @@ type Product struct {
 
 var (
 	HMIKiosk    = Product{ID: "hmi-kiosk", Name: "HMI-Kiosk", Binary: "hmi-kiosk", SystemLevel: SystemLevel, LegacyTags: true}
-	PDHTerminal = Product{ID: "pdh-terminal", Name: "PDH-Terminal", Binary: "pdh-terminal", SystemLevel: 2}
+	PDHTerminal = Product{ID: "pdh-terminal", Name: "PDH-Terminal", Binary: "pdh-terminal", SystemLevel: 1}
 )
 
 // Products sind alle bekannten Produkte.

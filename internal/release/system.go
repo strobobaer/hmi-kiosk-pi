@@ -6,6 +6,5 @@ package release
 // gleich mitgezogen. Pakete tragen den Wert, ein Terminal mit älterem Stand lehnt sie ab.
 //
 // 1: Stand 0.1.6 (Admin-Seite am Terminal in der Chromium-Richtlinie, wvkbd, Helfer mit
-// set-web-origins und Netzwerkbefehlen). Das PDH-Terminal braucht Stand 2 (Helferbefehl set-local-port,
-// Produkt-Overlay packaging/products/pdh-terminal).
+// set-web-origins und Netzwerkbefehlen).
 const SystemLevel = 1

@@ -47,6 +47,7 @@ type pdhView struct {
 	LocalPort       string
 	Port, AdminPort int
 	Pending         int
+	Failed          int // eingestellter Port, der sich nicht binden ließ; es läuft der Grundwert
 	PortProblem     string
 	DefaultPort     int
 }
@@ -195,7 +196,11 @@ func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *ht
 	}
 	v.Port, v.AdminPort, v.PortProblem = ls.Port, ls.Port+1, ls.Problem
 	if want := cfg.LocalPort(); want != ls.Port {
-		v.Pending = want
+		if want == ls.Failed && want != 0 {
+			v.Failed = want
+		} else {
+			v.Pending = want
+		}
 	}
 	dev, derr := LoadDevice(p.dataDir)
 	switch {

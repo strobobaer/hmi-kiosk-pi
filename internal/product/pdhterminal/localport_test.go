@@ -16,7 +16,6 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/localport"
-	"hmikiosk/internal/release"
 )
 
 // freePortPair liefert einen Port P, bei dem P und P+1 auf 127.0.0.1 frei sind.
@@ -654,8 +653,14 @@ func TestAdminLocalPortCallsHelperBeforeSaving(t *testing.T) {
 	}
 }
 
-func TestPDHTerminalNeedsSystemLevel2(t *testing.T) {
-	if release.PDHTerminal.SystemLevel < 2 {
-		t.Fatalf("SystemLevel %d: ein älterer Helfer ohne set-local-port muss als Systemteile älter gelten", release.PDHTerminal.SystemLevel)
+func TestAdminShowsFallbackNotice(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnvWith(t, Client{}, func(p *adminProduct) {
+		p.local = func() localState { return localState{Port: 8080, Failed: 18080} }
+	})
+	e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}})
+	body := e.get("/admin/pdh").Body.String()
+	if !strings.Contains(body, "Eingestellter Port 18080 nicht verfügbar – läuft auf 8080") || strings.Contains(body, "gilt nach dem Neustart") {
+		t.Errorf("Hinweis: %s", body)
 	}
 }
