@@ -103,7 +103,7 @@ wie 0.4.x.
 |---|---|
 | Keine Ausweichadresse gesetzt | wie 0.4.x |
 | Hauptadresse: Netzwerkfehler, Ausweichadresse erreichbar | Wechsel, Anzeige „über Tailnet“ |
-| Beide unerreichbar | Offline-Seite/Folien wie heute, Versuche weiter im 30-s-Takt (Haupt zuerst) |
+| Beide unerreichbar | Offline-Seite/Folien wie heute, Versuche weiter im 30-s-Takt am aktiven Weg (steht er noch auf LAN, wechselt ein Netzwerkfehler auf die Ausweichadresse); zurück zur Hauptadresse nur über die Probe alle 5 min |
 | Hauptadresse: Zertifikatsfehler | kein Wechsel, Meldung „Zertifikat nicht vertrauenswürdig“ wie heute |
 | Gerät gesperrt/entkoppelt (über welchen Weg auch immer) | kein Wechsel, Anzeige wie heute |
 | Ausweichadresse: Zertifikatsfehler | bleibt auf Haupt bzw. offline, Admin-Seite zeigt den Fehler |

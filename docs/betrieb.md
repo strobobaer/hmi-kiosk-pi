@@ -713,9 +713,9 @@ Regeln: erlaubt sind **1024 bis 65534**; weder der Port noch der Port darüber d
 
 Fällt der normale Weg zum PDH-Server aus (LAN gestört oder gesperrt), kann das Terminal über das **Tailnet** (Tailscale) weiterarbeiten. Ohne eingetragene Ausweichadresse verhält sich das Terminal wie vor 0.5.0. Einrichtung auf dem Server und im Tailnet: [tailnet-server-einrichtung.md](tailnet-server-einrichtung.md).
 
-**Ausweichadresse:** Admin-Seite, Reiter **PDH**, Feld **Ausweichadresse (Tailnet)** (Konfiguration `pdh.fallbackUrl`). Erlaubt ist nur ein reiner Ursprung mit `https://`, zum Beispiel `https://pdh.<tailnet>.ts.net` (kein Pfad; `http://` geht auch mit dem Haken „unverschlüsselt erlauben“ nicht), und die Adresse muss sich von der Hauptadresse unterscheiden. `100.x`-Adressen gehen nicht (kein Zertifikat). Ein ungültiger Wert wird beim Speichern abgelehnt; das Feld darf leer bleiben.
+**Ausweichadresse:** Admin-Seite, Reiter **PDH**, Feld **Ausweichadresse (Tailnet)** (Konfiguration `pdh.fallbackUrl`). Erlaubt ist nur ein reiner Ursprung mit `https://`, zum Beispiel `https://pdh.<tailnet>.ts.net` (kein Pfad; `http://` geht auch mit dem Haken „unverschlüsselt erlauben“ nicht), und die Adresse muss sich von der Hauptadresse unterscheiden. IP-Adressen (auch `100.x`) lehnt die Seite beim Speichern ab, weil es dafür kein Zertifikat gibt; andere Namen mit gültigem Zertifikat als `ts.net` sind erlaubt. Ein ungültiger Wert wird beim Speichern abgelehnt; das Feld darf leer bleiben.
 
-**Anzeige:** Ist eine Ausweichadresse gesetzt, zeigt der Reiter PDH die Zeile **verbunden über: LAN** oder **verbunden über: Tailnet seit hh:mm** (bei Tailnet zusätzlich der letzte Fehler auf der Hauptadresse). Ohne Ausweichadresse fehlt die Zeile.
+**Anzeige:** Ist eine Ausweichadresse gesetzt, zeigt der Reiter PDH die Zeile **verbunden über: LAN** oder **verbunden über: Tailnet seit hh:mm** (bei Tailnet steht der letzte Fehler auf der Hauptadresse als Tooltip an der Zeile, am Touch-Gerät nicht sichtbar). Ohne Ausweichadresse fehlt die Zeile.
 
 **Wann das Terminal wechselt:**
 
@@ -726,7 +726,7 @@ Fällt der normale Weg zum PDH-Server aus (LAN gestört oder gesperrt), kann das
 | Gerät gesperrt oder entkoppelt (401/403) | Kein Wechsel, Anzeige wie bisher. |
 | HTTP-Fehler des Servers (zum Beispiel 5xx) | Kein Wechsel. |
 | Abgebrochene Anfrage (Abbruch von der Seite aus) | Kein Wechsel. |
-| Beide Adressen nicht erreichbar | Offline-Seite und Folien wie bisher; neuer Versuch alle 30 Sekunden, Hauptadresse zuerst. |
+| Beide Adressen nicht erreichbar | Offline-Seite und Folien wie bisher; neuer Versuch alle 30 Sekunden am aktiven Weg (steht er noch auf LAN, wechselt ein Netzwerkfehler auf die Ausweichadresse); zurück zur Hauptadresse nur über die Probe alle 5 Minuten. |
 
 **Rückkehr:** Solange das Terminal über das Tailnet arbeitet, prüft es die Hauptadresse alle **5 Minuten**; gelingt das, kehrt es von selbst zurück. Ein Zertifikatsfehler der Ausweichadresse erscheint auf dem Reiter PDH.
 
@@ -742,9 +742,11 @@ Menüpunkt **Tailnet** (nur im PDH-Terminal). Er zeigt den Zustand von Tailscale
 
 | Status | Bedeutung | Was tun |
 |---|---|---|
-| **nicht installiert** | Tailscale fehlt auf dem Gerät (Windows: kein `tailscale.exe`). | Pi: Abbild ab 0.5.0 verwenden. Windows: Setup.exe ab 0.5.0 erneut ausführen; beim MSI verteilt die IT Tailscale getrennt (Abschnitt „MSI“). |
-| **nicht angemeldet** | Tailscale ist installiert, das Gerät gehört noch keinem Tailnet. | Anmelden (unten). |
-| **angemeldet als `<Name>` · `<DNS-Name>` · `<IP>`** | Das Gerät ist im Tailnet. | Nichts. Die Ausweichadresse eintragen, falls noch nicht geschehen. |
+| **Tailscale ist auf diesem Gerät nicht installiert.** | Tailscale fehlt auf dem Gerät (Windows: kein `tailscale.exe`). | Pi: Abbild ab 0.5.0 verwenden. Windows: Setup.exe ab 0.5.0 erneut ausführen; beim MSI verteilt die IT Tailscale getrennt (Abschnitt „MSI“). |
+| **nicht angemeldet** (Formular „Anmelden“) | Tailscale ist installiert, das Gerät gehört noch keinem Tailnet. | Anmelden (unten). |
+| **angemeldet als `<Name>` · `<DNS-Name>` · `<IP>`** (Knopf „Abmelden“) | Das Gerät ist im Tailnet. | Nichts. Die Ausweichadresse eintragen, falls noch nicht geschehen. |
+
+Nach dem Anmelden bzw. Abmelden meldet die Seite „Angemeldet.“ bzw. „Abgemeldet.“. Das Formular „Anmelden“ und der Knopf „Abmelden“ erscheinen nur, wenn Tailscale installiert ist. Antwortet Tailscale nicht, steht „Zustand nicht abfragbar: …“ (Dienst `tailscaled` prüfen).
 
 **Anmelden:** Auth-Key (Tag `tag:pdh-terminal`, vorab freigegeben, **nicht** ephemeral; Erzeugen: [tailnet-server-einrichtung.md](tailnet-server-einrichtung.md), Abschnitt 4) in das Feld einfügen, „Anmelden“. Der Rechnername im Tailnet ergibt sich aus dem Gerätenamen (PDH-Einstellung, sonst Rechnername). Der Key wird **nicht gespeichert und nicht protokolliert**; das Terminal reicht ihn über eine temporäre Datei weiter, die gleich danach gelöscht wird, nie in der Befehlszeile. Bei einem ungültigen oder abgelaufenen Key zeigt die Seite die Meldung von Tailscale, und das Gerät bleibt abgemeldet.
 
@@ -800,8 +802,8 @@ Technisch:
 | Admin-Passwort vergessen | Es gibt keine Rücksetzung in der Admin-Seite. | Neues Abbild schreiben (Ersatzkarte), Admin-Passwort festlegen, **Name und Rolle des Geräts setzen**, danach die gesicherte Konfiguration importieren (auch die eines anderen Terminals: der Import behält Name, Kennung und Rolle des Geräts). Das Admin-Passwort ist nicht in der Sicherung. |
 | Admin-Seite meldet **500 „Konfiguration nicht lesbar“** | Siehe unten. | Siehe unten. |
 | Admin-Seite leitet nach der Anmeldung auf „Schlüssel reparieren“ um | Die Schlüsseldatei (`secrets.key`) fehlt oder ist beschädigt, obwohl verschlüsselte Werte gespeichert sind. | Abschnitt „Schlüssel prüfen und reparieren“. Alternativ aus einer Sicherung wiederherstellen. |
-| Reiter PDH zeigt „verbunden über: Tailnet“, obwohl das LAN wieder geht | Die Hauptadresse wird erst alle 5 Minuten geprüft. | Bis zu 5 Minuten warten. Bleibt es dabei, nennt die Zeile den letzten Fehler auf der Hauptadresse (Name, Port, Zertifikat). |
-| Ausweichadresse wird abgelehnt | Kein reiner `https://`-Ursprung, mit Pfad, gleich der Hauptadresse oder eine `100.x`-Adresse. | Form `https://<server>.<tailnet>.ts.net` verwenden. |
+| Reiter PDH zeigt „verbunden über: Tailnet“, obwohl das LAN wieder geht | Die Hauptadresse wird erst alle 5 Minuten geprüft. | Bis zu 5 Minuten warten. Bleibt es dabei, mit der Maus über die Zeile fahren: Der Tooltip nennt den letzten Fehler auf der Hauptadresse (Name, Port, Zertifikat). |
+| Ausweichadresse wird abgelehnt | Kein reiner `https://`-Ursprung, mit Pfad, gleich der Hauptadresse oder eine IP-Adresse (auch `100.x`). | Form `https://<server>.<tailnet>.ts.net` verwenden. |
 | Tailnet-Anmeldung schlägt fehl | Key ungültig, abgelaufen, verbraucht oder ohne Erlaubnis für das Tag; kein Netz zu Tailscale. | Meldung auf der Seite lesen, neuen Key erzeugen (Server-Anleitung, Abschnitt 4). |
 | Warnung „Der Schreibschutz (Overlay auf /) ist nicht aktiv.“ (System) | Das Overlay ist aus, zum Beispiel nach Wartung. | `overlayroot=tmpfs:recurse=0` in `cmdline.txt` wieder einfügen (Abschnitt 3). |
 | Warnung „Kein Monitor erkannt“ (System) | Bildschirm nicht erkannt, es gilt 1920×1080. | Kabel und Bildschirm prüfen oder unter System die Auflösung fest eintragen. |

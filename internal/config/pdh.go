@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strings"
 )
 
@@ -87,6 +88,9 @@ func validateFallback(p PDHCfg) error {
 	}
 	if f != canon {
 		return fmt.Errorf("Ausweichadresse ungültig: nur Adresse ohne Pfad (z. B. https://pdh.tailnet.ts.net)")
+	}
+	if net.ParseIP(u.Hostname()) != nil {
+		return fmt.Errorf("Ausweichadresse ungültig: IP-Adressen gehen nicht – bitte den ts.net-Namen eintragen (Zertifikat)")
 	}
 	if p.URL != "" {
 		fo, _ := WebOrigin(f)

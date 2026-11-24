@@ -131,6 +131,8 @@ func TestValidatePDHFallback(t *testing.T) {
 		{"pfad", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.ts.net/x"}, "Ausweichadresse ungültig"},
 		{"gleich der Hauptadresse", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.lan"}, "Ausweichadresse ungültig"},
 		{"gleich mit Standardport", PDHCfg{URL: "https://pdh.lan:443", FallbackURL: "https://pdh.lan"}, "Ausweichadresse ungültig"},
+		{"IPv4", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://100.64.1.2"}, "IP-Adressen gehen nicht"},
+		{"IPv6", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://[fd7a:115c:a1e0::1]"}, "IP-Adressen gehen nicht"},
 		{"Großbuchstaben", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://PDH.ts.net"}, "Ausweichadresse ungültig"},
 		{"Zusatz grenze mit Ausweich", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.ts.net", ExtraOrigins: many[:MaxWebOrigins-2]}, ""},
 		{"zu viele mit Ausweich", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.ts.net", ExtraOrigins: many[:MaxWebOrigins-1]}, "Zu viele zusätzliche Adressen"},

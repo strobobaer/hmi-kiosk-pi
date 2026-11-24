@@ -11,16 +11,26 @@ Das Terminal richtet nichts davon selbst ein: `tailscale serve` und die Richtlin
 3. Ein Auth-Key mit dem Tag der Terminals meldet jedes Terminal an.
 4. Am Terminal wird die `ts.net`-Adresse als **Ausweichadresse** eingetragen.
 
-`100.x`-Adressen als Ausweichadresse funktionieren nicht (für IP-Adressen gibt es kein Zertifikat); es muss der Name unter `ts.net` sein.
+`100.x`-Adressen als Ausweichadresse funktionieren nicht (für IP-Adressen gibt es kein Zertifikat); das Terminal lehnt IP-Adressen beim Speichern ab. Der Name unter `ts.net` ist der vorgesehene Weg (andere Namen mit gültigem Zertifikat sind erlaubt).
 
 ## 1. Voraussetzungen im Tailnet
 
 In der Tailscale-Verwaltung (Admin-Konsole, `https://login.tailscale.com/admin`):
 
 - **MagicDNS** und **HTTPS-Zertifikate** sind eingeschaltet (Reiter „DNS“, Abschnitt „HTTPS Certificates“). Ohne sie gibt `tailscale serve` keinen HTTPS-Zugang frei. Das Einschalten macht die Namen des Tailnets in den öffentlichen Zertifikatsprotokollen sichtbar; das ist bei Tailscale so vorgesehen.
-- Der PDH-Server ist im Tailnet angemeldet (`tailscale up` auf dem Server, am besten mit einem Tag, siehe unten).
+- Der PDH-Server ist im Tailnet angemeldet (`tailscale up` auf dem Server mit Tag, siehe Abschnitt 2, „Server-Tailscale und Tag“).
 
 ## 2. `tailscale serve` auf dem PDH-Server
+
+### Server-Tailscale und Tag
+
+`tailscale serve` braucht das **Tailscale des Server-Betriebssystems** (`tailscaled` auf dem Host). PDH hat außerdem einen eigenen, eingebetteten tsnet-Knoten mit eigenen Tags (`tag:pdh`, `tag:pdh-data`, Datennetz). Das ist ein **anderer Knoten** und kann nicht für `tailscale serve` benutzt werden. Der Host muss selbst im Tailnet sein, mit eigenem Tag:
+
+```
+sudo tailscale up --advertise-tags=tag:pdh-server
+```
+
+Das Tag muss in `tagOwners` stehen (Abschnitt 3), sonst lehnt Tailscale die Anmeldung ab. Einen Namen wählen, der nicht mit `tag:pdh` oder `tag:pdh-data` zusammenfällt, damit die Regeln des PDH-Datennetzes unberührt bleiben. Ist der Host schon ohne Tag angemeldet, das Tag in der Admin-Konsole bei der Maschine setzen; sie gehört danach keinem Benutzer mehr.
 
 ### Welcher Port, welches Protokoll
 
@@ -33,7 +43,13 @@ PDH lauscht auf **Port 8090** und spricht dort **unverschlüsseltes HTTP** (`PDH
 
 Der **erste** Befehl gilt für ein PDH nach der Standardinstallation (Docker, `compose.yaml`). Tailscale beendet TLS selbst und reicht die Anfrage unverschlüsselt an `localhost:8090` weiter; im Tailnet ist die Verbindung zwischen Terminal und Server zusätzlich durch WireGuard verschlüsselt.
 
-Den zweiten Befehl nur verwenden, wenn der Proxy auf `localhost` tatsächlich TLS spricht. `https+insecure://` prüft das Zertifikat des lokalen Ziels nicht, was auf `localhost` vertretbar ist. **Nicht** den nginx auf Port 443 als Ziel nehmen: Er wählt die Seite nach dem Namen und kennt den `ts.net`-Namen nicht, die Anfragen landen dann auf der falschen Seite.
+Den zweiten Befehl nur verwenden, wenn der Proxy auf `localhost` tatsächlich TLS spricht und den ts.net-Namen kennt (siehe Alternative unten). `https+insecure://` prüft das Zertifikat des lokalen Ziels nicht, was auf `localhost` vertretbar ist. **Nicht** den nginx auf Port 443 als Ziel nehmen: Er wählt die Seite nach dem Namen und kennt den `ts.net`-Namen nicht, die Anfragen landen dann auf der falschen Seite.
+
+**Zu beachten:**
+
+- `PDH_PUBLIC_URL` muss gesetzt bleiben (Hauptadresse). Sonst könnte PDH Links (QR-Codes, Passwort-Rücksetzung) über den ts.net-Weg mit `http://` bauen.
+- Hinter `tailscale serve` kommen alle Terminals von derselben Loopback-Adresse bei PDH an, genau wie hinter nginx. Die Begrenzung bei der Kopplung (5 Fehlversuche in 5 Minuten) gilt deshalb für alle Terminals dieses Wegs zusammen.
+- Alternative: im nginx des Servers einen eigenen `server_name <name>.ts.net`-Block anlegen (Vorlage: der Block, den der Update-Agent für den PDH-Namen schreibt) und `tailscale serve` auf `https+insecure://localhost:443` zeigen lassen. Der Standardbefehl oben ist einfacher und bleibt gültig.
 
 PDH prüft fremde Seiten über `Sec-Fetch-Site`, nicht über einen festen Hostnamen, und die Cookies gelten je Name. Ein zweiter Name ist für PDH deshalb unkritisch.
 
@@ -66,7 +82,7 @@ Die Terminals tragen das Tag `tag:pdh-terminal` und dürfen **nur** den PDH-Serv
   // Wer die Tags vergeben darf (Personen oder Gruppen, die Auth-Keys erzeugen und Geräte anmelden)
   "tagOwners": {
     "tag:pdh-terminal": ["<admin@example.com>"],
-    "tag:pdh-server":   ["<admin@example.com>"],   // Tag des PDH-Servers, falls verwendet
+    "tag:pdh-server":   ["<admin@example.com>"],   // Tag des Host-Tailscale des PDH-Servers (Abschnitt 2)
   },
 
   "acls": [
@@ -75,8 +91,6 @@ Die Terminals tragen das Tag `tag:pdh-terminal` und dürfen **nur** den PDH-Serv
       "action": "accept",
       "src":    ["tag:pdh-terminal"],
       "dst":    ["tag:pdh-server:443"],
-      // Ohne Tag am Server stattdessen Name oder Adresse des Geräts:
-      // "dst": ["<pdh-server>:443"],
     },
 
     // ... bestehende Regeln für Administratoren hier belassen ...
@@ -116,4 +130,4 @@ Hinweise:
 
 1. Am Terminal unter „Tailnet“ anmelden. Der Status zeigt „angemeldet als …“ mit Name, DNS-Name und `100.x`-Adresse.
 2. Am Terminal (Pi zum Beispiel per SSH): `tailscale ping <pdh-server>` muss antworten.
-3. Den Weg zum PDH-Server über die Hauptadresse unterbrechen (Netzwerkkabel oder Firewall) und nach etwa einer Minute prüfen: Admin-Seite, Reiter „PDH“, zeigt „verbunden über: Tailnet seit hh:mm“. Weg wieder freigeben: spätestens nach 5 Minuten steht dort wieder „verbunden über: LAN“.
+3. Den Weg zum PDH-Server über die Hauptadresse unterbrechen (Netzwerkkabel oder Firewall) und nach etwa einer Minute prüfen: Admin-Seite, Reiter „PDH“, zeigt „verbunden über: Tailnet seit hh:mm“. Weg wieder freigeben: nach etwa 5 Minuten (Probe alle 5 Minuten plus bis zu 10 Sekunden) steht dort wieder „verbunden über: LAN“.
