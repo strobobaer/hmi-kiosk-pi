@@ -593,7 +593,10 @@ func (s *service) serve(parent context.Context) error {
 		}
 	}
 	bound := Bound{}
-	origin := func() string { return cardOrigin(s.config().PDH) }
+	origin := func() string {
+		p := s.config().PDH
+		return cardOrigin(p, s.client.base(Device{URL: p.URL}))
+	}
 	cardAPI := http.NewServeMux()
 	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
 	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, s.notifier()))

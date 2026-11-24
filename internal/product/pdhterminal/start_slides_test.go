@@ -81,7 +81,7 @@ func TestStartOnlineWithCacheStillLogsIn(t *testing.T) {
 func TestStartSlidesCacheRoute(t *testing.T) {
 	p := newFakePDH(t)
 	st := &slides.Store{Dir: filepath.Join(t.TempDir(), "slides")}
-	origin := cardOrigin(config.PDHCfg{URL: p.hostURL()})
+	origin := cardOrigin(config.PDHCfg{URL: p.hostURL()}, p.hostURL())
 	api := http.NewServeMux()
 	api.Handle("/api/slides/cache", slides.CacheHandler(st, func() string { return origin }, nil))
 	h := StartHandler(t.TempDir(), func() config.PDHCfg { return config.PDHCfg{URL: p.hostURL()} }, p.client(), api, st)

@@ -94,8 +94,11 @@ func serveStart(w http.ResponseWriter, r *http.Request, dataDir string, p config
 		cancel()
 		switch state {
 		case StateOK:
-			v = startView{Form: true, Action: p.URL + "/terminal/geraet", Secret: d.Secret, Theme: theme}
+			v = startView{Form: true, Action: client.base(*d) + "/terminal/geraet", Secret: d.Secret, Theme: theme}
 			csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action " + p.URL
+			if p.FallbackURL != "" { // beide Adressen: Ein Wechsel während des Ladens darf das Absenden nicht sperren
+				csp += " " + p.FallbackURL
+			}
 		case StateRevoked:
 			v = startView{Message: msgRevoked, Refresh: 60, Theme: theme}
 		case StateUntrusted:
@@ -126,14 +129,17 @@ func pdhOnline(ctx context.Context, dataDir string, p config.PDHCfg, client Clie
 	return state == StateOK
 }
 
-// cardOrigin ist der einzige Ursprung, der den Kartenstrom lesen darf: die PDH-Adresse
-// selbst (nicht die Zusatzursprünge) in der Schreibweise des Origin-Headers, also ohne
-// Standardport. Leer, wenn keine gültige PDH-Adresse eingetragen ist.
-func cardOrigin(p config.PDHCfg) string {
+// cardOrigin ist der einzige Ursprung, der den Kartenstrom lesen darf: die aktive PDH-Adresse base (Haupt- oder
+// Ausweichadresse, nicht die Zusatzursprünge) in der Schreibweise des Origin-Headers, also ohne Standardport.
+// base leer: die Hauptadresse. Leer, wenn keine gültige PDH-Adresse eingetragen ist.
+func cardOrigin(p config.PDHCfg, base string) string {
 	if p.URL == "" {
 		return ""
 	}
-	o, err := config.WebOrigin(p.URL)
+	if base == "" {
+		base = p.URL
+	}
+	o, err := config.WebOrigin(base)
 	if err != nil {
 		return ""
 	}
