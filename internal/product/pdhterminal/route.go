@@ -18,6 +18,10 @@ var routeProbeEvery = 5 * time.Minute
 // routeProbeTimeout: Zeitlimit je Prüfung der Hauptadresse.
 var routeProbeTimeout = 10 * time.Second
 
+// routeKickMin: Mindestabstand zwischen einer Prüfung und einer weiteren, die ein Netzfehler auf der aktiven
+// Ausweichadresse sofort anstößt (sonst prüft nur der Takt routeProbeEvery).
+var routeKickMin = 30 * time.Second
+
 // IsNetworkErr: true bei Netzfehlern (Verbindung, DNS, Zeitüberschreitung), nie bei TLS-/Zertifikatsfehlern.
 func IsNetworkErr(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || isTLSErr(err) {
@@ -62,11 +66,17 @@ type Route struct {
 	lastErr  string
 	now      func() time.Time
 	gen      uint64
+	kick     chan struct{} // Netzfehler auf der aktiven Ausweichadresse: Hauptadresse bald prüfen (Run)
 }
 
 // NewRoute legt eine Wegwahl an; aktiv ist zunächst die Hauptadresse.
 func NewRoute(primary, fallback string) *Route {
-	return &Route{primary: strings.TrimRight(primary, "/"), fallback: strings.TrimRight(fallback, "/"), now: time.Now}
+	return &Route{
+		primary:  strings.TrimRight(primary, "/"),
+		fallback: strings.TrimRight(fallback, "/"),
+		now:      time.Now,
+		kick:     make(chan struct{}, 1),
+	}
 }
 
 // SetURLs setzt die Adressen neu; bei leerer oder geänderter Adresse geht es zurück auf Haupt.
@@ -97,6 +107,18 @@ func (r *Route) Base() string {
 	return r.primary
 }
 
+// Snapshot liefert Hauptadresse, aktive Basisadresse und Generation unter einem Lock, damit eine Anfrage Ziel und
+// Wegangabe aus derselben Lage nimmt.
+func (r *Route) Snapshot() (primary, base string, gen uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	base = r.primary
+	if r.useFB {
+		base = r.fallback
+	}
+	return r.primary, base, r.gen
+}
+
 // Name ist "lan" oder "tailnet".
 func (r *Route) Name() string {
 	r.mu.Lock()
@@ -122,12 +144,26 @@ func (r *Route) backLocked() {
 	r.lastErr = ""
 }
 
-// Fail meldet einen Fehler auf base; true, wenn auf die Ausweichadresse gewechselt wurde.
+// Fail meldet einen Fehler auf base; true, wenn auf die Ausweichadresse gewechselt wurde. Ein Netzfehler auf der
+// aktiven Ausweichadresse schaltet nie um, stößt aber eine sofortige Prüfung der Hauptadresse an (Run, gedrosselt
+// durch routeKickMin): Ist auch der Rückfall tot, hängt das Terminal so nicht bis zum nächsten Takt dort fest.
 func (r *Route) Fail(base string, err error) (switched bool) {
 	base = strings.TrimRight(base, "/")
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.useFB || r.fallback == "" || base != r.primary || !IsNetworkErr(err) {
+	if r.fallback == "" || !IsNetworkErr(err) {
+		return false
+	}
+	if r.useFB {
+		if base == r.fallback {
+			select {
+			case r.kick <- struct{}{}:
+			default: // schon angestoßen
+			}
+		}
+		return false
+	}
+	if base != r.primary {
 		return false
 	}
 	r.useFB = true
@@ -137,7 +173,8 @@ func (r *Route) Fail(base string, err error) (switched bool) {
 	return true
 }
 
-// Run prüft bei aktiver Ausweichadresse regelmäßig die Hauptadresse und wechselt bei Erfolg zurück.
+// Run prüft bei aktiver Ausweichadresse regelmäßig die Hauptadresse und wechselt bei Erfolg zurück. Meldet Fail
+// einen Netzfehler auf der Ausweichadresse, prüft Run sofort, höchstens aber einmal je routeKickMin.
 func (r *Route) Run(ctx context.Context, probe func(ctx context.Context, base string) error) {
 	every := routeProbeEvery
 	if every <= 0 {
@@ -145,11 +182,16 @@ func (r *Route) Run(ctx context.Context, probe func(ctx context.Context, base st
 	}
 	t := time.NewTicker(every)
 	defer t.Stop()
+	var last time.Time // Beginn der letzten Prüfung (Takt oder Anstoß)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-r.kick:
+			if !last.IsZero() && time.Since(last) < routeKickMin {
+				continue // gedrosselt; der nächste Fehler auf der Ausweichadresse stößt wieder an
+			}
 		}
 		r.mu.Lock()
 		active, primary, gen := r.useFB, r.primary, r.gen
@@ -157,6 +199,7 @@ func (r *Route) Run(ctx context.Context, probe func(ctx context.Context, base st
 		if !active {
 			continue
 		}
+		last = time.Now()
 		pctx, cancel := context.WithTimeout(ctx, routeProbeTimeout)
 		err := probe(pctx, primary)
 		cancel()

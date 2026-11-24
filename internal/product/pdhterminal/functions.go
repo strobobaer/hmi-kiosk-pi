@@ -302,14 +302,14 @@ func (w remoteWire) remote() Remote {
 
 // FetchRemote fragt den Gerätezustand (Statusabfrage) und liest functions und theme daraus.
 func (c Client) FetchRemote(ctx context.Context, d Device) (State, Remote, error) {
-	resp, err := c.send(ctx, d, func(base string) (*http.Request, error) {
+	resp, err := c.send(ctx, d, func(base, route string) (*http.Request, error) {
 		req, err := http.NewRequest(http.MethodGet, base+"/api/terminal/v1/device", nil)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+d.Secret)
 		req.Header.Set("Accept", "application/json")
-		setClientHeaders(req, c.routeName(base))
+		setClientHeaders(req, route)
 		return req, nil
 	})
 	if err != nil {
@@ -336,7 +336,7 @@ func (c Client) PushFunctions(ctx context.Context, d Device, set FuncSet) (State
 	if err != nil {
 		return StateUnreachable, Remote{}, err
 	}
-	resp, err := c.send(ctx, d, func(base string) (*http.Request, error) {
+	resp, err := c.send(ctx, d, func(base, route string) (*http.Request, error) {
 		req, err := http.NewRequest(http.MethodPut, base+"/api/terminal/v1/functions", bytes.NewReader(body))
 		if err != nil {
 			return nil, err
@@ -344,7 +344,7 @@ func (c Client) PushFunctions(ctx context.Context, d Device, set FuncSet) (State
 		req.Header.Set("Authorization", "Bearer "+d.Secret)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json")
-		setClientHeaders(req, c.routeName(base))
+		setClientHeaders(req, route)
 		return req, nil
 	})
 	if err != nil {
@@ -543,14 +543,14 @@ func (f *FuncSync) runEvents(ctx context.Context) {
 // readEvents liest den Kanal bis zum Ende; true, wenn er mit 200 geöffnet wurde oder der Verbindungsfehler auf die
 // Ausweichadresse umgeschaltet hat (dann soll runEvents bald neu verbinden).
 func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
-	base := f.client.base(d)
+	base, route := f.client.target(d)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/terminal/events", nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Accept", "text/event-stream")
-	setClientHeaders(req, f.client.routeName(base))
+	setClientHeaders(req, route)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req = req.WithContext(ctx)

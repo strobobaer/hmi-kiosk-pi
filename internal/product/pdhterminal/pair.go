@@ -48,21 +48,26 @@ type Client struct {
 	Route *Route
 }
 
-// base ist die Adresse, an die Anfragen für d gehen: die aktive der Route, wenn d.URL deren Hauptadresse ist.
-func (c Client) base(d Device) string {
-	if c.Route != nil && sameBase(d.URL, c.Route.Primary()) {
-		return c.Route.Base()
+// target liefert Ziel und Weg einer Anfrage für d aus einem einzigen Schnappschuss der Route: die aktive Adresse,
+// wenn d.URL deren Hauptadresse ist, sonst d.URL. route ist "tailnet" nur, wenn das Ziel die aktive Ausweichadresse
+// ist; ein Gerät mit anderer Adresse geht direkt und ohne Route ("lan").
+func (c Client) target(d Device) (base, route string) {
+	if c.Route != nil {
+		primary, active, _ := c.Route.Snapshot()
+		if sameBase(d.URL, primary) {
+			if sameBase(active, primary) {
+				return active, "lan"
+			}
+			return active, "tailnet"
+		}
 	}
-	return strings.TrimRight(d.URL, "/")
+	return strings.TrimRight(d.URL, "/"), "lan"
 }
 
-// routeName ist der Weg, über den base wirklich geht: "tailnet" nur, wenn base die aktive Ausweichadresse der Route
-// ist; ein Gerät mit anderer Adresse geht direkt und ohne Route ("lan").
-func (c Client) routeName(base string) string {
-	if c.Route != nil && !sameBase(base, c.Route.Primary()) && sameBase(base, c.Route.Base()) {
-		return "tailnet"
-	}
-	return "lan"
+// base ist die Adresse, an die Anfragen für d gehen (siehe target).
+func (c Client) base(d Device) string {
+	base, _ := c.target(d)
+	return base
 }
 
 // fail meldet einen Transportfehler auf base an die Route; wahr, wenn auf die Ausweichadresse gewechselt wurde.
@@ -85,20 +90,25 @@ func (b cancelBody) Close() error {
 
 // send führt die Anfrage gegen die aktive Adresse aus (Frist requestTimeout je Versuch). Bei einem Netzfehler, der
 // auf die Ausweichadresse umschaltet, wird genau einmal gegen die neue Adresse wiederholt; build baut dafür die
-// Anfrage neu (auch den Rumpf). Antworten von PDH (auch Fehlerstatus) und TLS-Fehler schalten nie um.
-func (c Client) send(ctx context.Context, d Device, build func(base string) (*http.Request, error)) (*http.Response, error) {
-	base := c.base(d)
-	resp, err := c.attempt(ctx, base, build)
+// Anfrage neu (auch den Rumpf). Antworten von PDH (auch Fehlerstatus) und TLS-Fehler schalten nie um. Ziel und
+// Wegangabe (route, für X-Terminal-Route) stammen je Versuch aus demselben Schnappschuss der Route. Scheitert auch
+// die Wiederholung, wird das der Route gemeldet (stößt die Prüfung der Hauptadresse an).
+func (c Client) send(ctx context.Context, d Device, build func(base, route string) (*http.Request, error)) (*http.Response, error) {
+	base, route := c.target(d)
+	resp, err := c.attempt(ctx, base, route, build)
 	if err != nil && c.fail(ctx, base, err) {
-		base = c.base(d)
-		resp, err = c.attempt(ctx, base, build)
+		base, route = c.target(d)
+		resp, err = c.attempt(ctx, base, route, build)
+		if err != nil {
+			c.fail(ctx, base, err)
+		}
 	}
 	return resp, err
 }
 
-func (c Client) attempt(ctx context.Context, base string, build func(base string) (*http.Request, error)) (*http.Response, error) {
+func (c Client) attempt(ctx context.Context, base, route string, build func(base, route string) (*http.Request, error)) (*http.Response, error) {
 	actx, cancel := context.WithTimeout(ctx, requestTimeout)
-	req, err := build(base)
+	req, err := build(base, route)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -267,14 +277,14 @@ func (c Client) PairMove(ctx context.Context, baseURL, code, name string, prev *
 // Check fragt PDH, ob die Kopplung noch gilt. Ein Fehler kommt nur mit
 // StateUnreachable oder StateUntrusted; StateRevoked ist ein gewöhnliches Ergebnis.
 func (c Client) Check(ctx context.Context, d Device) (State, error) {
-	resp, err := c.send(ctx, d, func(base string) (*http.Request, error) {
+	resp, err := c.send(ctx, d, func(base, route string) (*http.Request, error) {
 		req, err := http.NewRequest(http.MethodGet, base+"/api/terminal/v1/device", nil)
 		if err != nil {
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+d.Secret)
 		req.Header.Set("Accept", "application/json")
-		setClientHeaders(req, c.routeName(base))
+		setClientHeaders(req, route)
 		return req, nil
 	})
 	if err != nil {

@@ -170,17 +170,87 @@ func TestProbeNoSecretToOtherURL(t *testing.T) {
 	}
 }
 
-func TestRouteNameDirectDevice(t *testing.T) {
+func TestTargetDirectDevice(t *testing.T) {
 	c := Client{Route: NewRoute("https://p.example", "https://f.example")}
-	if n := c.routeName("https://other.example"); n != "lan" {
-		t.Fatalf("anderes Gerät: %q", n)
+	other := Device{URL: "https://other.example"}
+	if b, n := c.target(other); b != "https://other.example" || n != "lan" {
+		t.Fatalf("anderes Gerät: %q %q", b, n)
+	}
+	if b, n := c.target(Device{URL: "https://p.example"}); b != "https://p.example" || n != "lan" {
+		t.Fatalf("Hauptadresse: %q %q", b, n)
 	}
 	c.Route.Fail("https://p.example", errNet)
-	if n := c.routeName("https://f.example"); n != "tailnet" {
-		t.Fatalf("Ausweichadresse: %q", n)
+	if b, n := c.target(Device{URL: "https://p.example"}); b != "https://f.example" || n != "tailnet" {
+		t.Fatalf("Ausweichadresse: %q %q", b, n)
 	}
-	if n := c.routeName("https://other.example"); n != "lan" {
-		t.Fatalf("anderes Gerät bei aktiver Ausweichadresse: %q", n)
+	if b, n := c.target(other); b != "https://other.example" || n != "lan" {
+		t.Fatalf("anderes Gerät bei aktiver Ausweichadresse: %q %q", b, n)
+	}
+}
+
+// Ziel und Wegangabe kommen aus einem Schnappschuss: Während die Hauptadresse wechselt, geht eine Anfrage für das an
+// A gekoppelte Gerät nie an die neue Hauptadresse B, und "tailnet" steht genau dann, wenn das Ziel die
+// Ausweichadresse ist. Mit -race laufen lassen.
+func TestTargetConsistentSnapshot(t *testing.T) {
+	r := NewRoute("https://a", "https://f")
+	c := Client{Route: r}
+	d := Device{URL: "https://a"}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			r.SetURLs("https://b", "https://f")
+			r.SetURLs("https://a", "https://f")
+			r.Fail("https://a", errNet)
+		}
+	}()
+	for i := 0; i < 20000; i++ {
+		base, route := c.target(d)
+		if base != "https://a" && base != "https://f" {
+			close(stop)
+			<-done
+			t.Fatalf("Ziel %q: weder Kopplungs- noch Ausweichadresse", base)
+		}
+		if (route == "tailnet") != (base == "https://f") {
+			close(stop)
+			<-done
+			t.Fatalf("Ziel %q mit Weg %q", base, route)
+		}
+	}
+	close(stop)
+	<-done
+}
+
+// Beide Adressen tot: Die gescheiterte Wiederholung auf der Ausweichadresse wird gemeldet und stößt die Prüfung der
+// Hauptadresse an; ebenso jede weitere Anfrage über die tote Ausweichadresse.
+func TestDeadFallbackKicksProbe(t *testing.T) {
+	main, fb := newRouteSrv(200), newRouteSrv(200)
+	main.Close()
+	fb.Close()
+	rt := NewRoute(main.URL, fb.URL)
+	c := Client{HTTP: trustClient(main, fb), Route: rt}
+	d := Device{URL: main.URL, Secret: "s"}
+	if st, _ := c.Check(context.Background(), d); st != StateUnreachable || rt.Name() != "tailnet" {
+		t.Fatalf("Check: %v, Route %s", st, rt.Name())
+	}
+	select {
+	case <-rt.kick:
+	default:
+		t.Fatal("kein Anstoß nach gescheiterter Wiederholung")
+	}
+	if st, _ := c.Check(context.Background(), d); st != StateUnreachable {
+		t.Fatalf("Check: %v", st)
+	}
+	select {
+	case <-rt.kick:
+	default:
+		t.Fatal("kein Anstoß bei Fehler auf der Ausweichadresse")
 	}
 }
 

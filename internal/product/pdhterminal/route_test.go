@@ -278,6 +278,120 @@ func TestRouteRunNoReturnAfterSetURLs(t *testing.T) {
 	}
 }
 
+// Ausweichadresse tot, Hauptadresse wieder da: Ein Netzfehler auf der Ausweichadresse stößt die Prüfung sofort an,
+// die Rückkehr wartet nicht auf den (hier stundenlangen) Takt.
+func TestRouteKickReturnsWithoutTick(t *testing.T) {
+	oldE, oldK := routeProbeEvery, routeKickMin
+	routeProbeEvery, routeKickMin = time.Hour, 0
+	defer func() { routeProbeEvery, routeKickMin = oldE, oldK }()
+	r := NewRoute("https://a", "https://b")
+	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx, func(_ context.Context, base string) error {
+			if base != "https://a" {
+				t.Errorf("probe base %s", base)
+			}
+			calls.Add(1)
+			return nil
+		})
+		close(done)
+	}()
+	defer func() { cancel(); <-done }()
+
+	// Fehler auf der Hauptadresse schaltet um; das allein stößt keine Prüfung an.
+	if !r.Fail("https://a", errNet) {
+		t.Fatal("kein Wechsel")
+	}
+	time.Sleep(30 * time.Millisecond)
+	if calls.Load() != 0 || r.Base() != "https://b" {
+		t.Fatalf("probe ohne Anstoß: %d, %s", calls.Load(), r.Base())
+	}
+	// TLS-Fehler auf der Ausweichadresse ist kein Netzfehler: kein Anstoß.
+	r.Fail("https://b", x509.UnknownAuthorityError{})
+	time.Sleep(30 * time.Millisecond)
+	if calls.Load() != 0 {
+		t.Fatal("Anstoß bei TLS-Fehler")
+	}
+	// Netzfehler auf der Ausweichadresse: Anstoß, kein Wechsel zurück durch Fail selbst.
+	if r.Fail("https://b", errNet) {
+		t.Fatal("Fail auf Ausweichadresse meldet Wechsel")
+	}
+	waitFor(t, "Rückkehr nach Anstoß", func() bool { return r.Base() == "https://a" })
+	if calls.Load() != 1 {
+		t.Fatalf("probe-Aufrufe %d", calls.Load())
+	}
+}
+
+// Angestoßene Prüfungen sind gedrosselt: höchstens eine je routeKickMin, auch bei vielen Fehlern.
+func TestRouteKickRateLimited(t *testing.T) {
+	oldE, oldK := routeProbeEvery, routeKickMin
+	routeProbeEvery, routeKickMin = time.Hour, time.Hour
+	defer func() { routeProbeEvery, routeKickMin = oldE, oldK }()
+	r := NewRoute("https://a", "https://b")
+	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx, func(context.Context, string) error { calls.Add(1); return errNet })
+		close(done)
+	}()
+	defer func() { cancel(); <-done }()
+	r.Fail("https://a", errNet)
+	r.Fail("https://b", errNet)
+	waitFor(t, "erste Prüfung", func() bool { return calls.Load() == 1 })
+	for i := 0; i < 50; i++ {
+		r.Fail("https://b", errNet)
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("probe-Aufrufe %d, erwartet 1", n)
+	}
+	if r.Base() != "https://b" {
+		t.Fatal("Rückkehr trotz gescheiterter Prüfung")
+	}
+}
+
+// Nach Ablauf von routeKickMin darf der nächste Anstoß wieder prüfen.
+func TestRouteKickAfterMinInterval(t *testing.T) {
+	oldE, oldK := routeProbeEvery, routeKickMin
+	routeProbeEvery, routeKickMin = time.Hour, 40*time.Millisecond
+	defer func() { routeProbeEvery, routeKickMin = oldE, oldK }()
+	r := NewRoute("https://a", "https://b")
+	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		r.Run(ctx, func(context.Context, string) error {
+			if calls.Add(1) == 1 {
+				return errNet
+			}
+			return nil
+		})
+		close(done)
+	}()
+	defer func() { cancel(); <-done }()
+	r.Fail("https://a", errNet)
+	r.Fail("https://b", errNet)
+	waitFor(t, "erste Prüfung", func() bool { return calls.Load() == 1 })
+	time.Sleep(60 * time.Millisecond)
+	r.Fail("https://b", errNet)
+	waitFor(t, "Rückkehr nach zweitem Anstoß", func() bool { return r.Base() == "https://a" })
+}
+
+// Bei aktiver Hauptadresse stößt ein Fehler auf der (inaktiven) Ausweichadresse nichts an.
+func TestRouteNoKickOnPrimary(t *testing.T) {
+	r := NewRoute("https://a", "https://b")
+	r.Fail("https://b", errNet)
+	select {
+	case <-r.kick:
+		t.Fatal("Anstoß bei aktiver Hauptadresse")
+	default:
+	}
+}
+
 func TestRouteSetURLs(t *testing.T) {
 	r := NewRoute("https://a", "https://b")
 	r.Fail("https://a", errNet)
