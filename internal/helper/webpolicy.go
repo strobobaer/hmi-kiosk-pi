@@ -9,10 +9,14 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/localport"
 )
 
 // CmdSetWebOrigins schreibt die Chromium-Richtlinie mit den Ursprüngen der Web-Kacheln.
@@ -27,8 +31,38 @@ const (
 	defaultWebOriginsSt = "/data/system/web-origins"
 )
 
-// fixedAllow bleibt immer erlaubt: Kachelseite und Leiste (8080), Admin-Seite am Terminal (8081).
-var fixedAllow = []string{"http://127.0.0.1:8080", "http://localhost:8080", "http://127.0.0.1:8081", "http://localhost:8081"}
+// CmdSetLocalPort schreibt den Port der lokalen Startseite (einstellbar im Admin-Bereich) in die
+// Chromium-Richtlinie. Wert: die Dezimalzahl, 1024 bis 65534. Die lokale Admin-Seite liegt einen Port darüber.
+const CmdSetLocalPort = "set-local-port"
+
+const maxLocalPortState = 16
+
+// LocalPortStatePathFor liegt neben der Liste der Web-Ursprünge (gleicher Ordner, Name local-port).
+func LocalPortStatePathFor(webOriginsState string) string {
+	return filepath.Join(filepath.Dir(webOriginsState), "local-port")
+}
+
+var portDigits = regexp.MustCompile(`^[0-9]{1,5}$`)
+
+// parseLocalPort liest den Port streng: nur Ziffern, 1024 bis 65534. Der Helfer kennt den Port der
+// Admin-Seite nicht; die Kollision prüft der Dienst beim Speichern (config.ValidateLocalPort).
+func parseLocalPort(s string) (int, error) {
+	if !portDigits.MatchString(s) {
+		return 0, errors.New("Port der lokalen Startseite ungültig")
+	}
+	p, _ := strconv.Atoi(s)
+	if p < localport.Min || p > localport.Max {
+		return 0, fmt.Errorf("Port der lokalen Startseite muss zwischen %d und %d liegen", localport.Min, localport.Max)
+	}
+	return p, nil
+}
+
+// fixedAllow bleibt immer erlaubt: Kachelseite und Leiste (Port der Startseite, Grundwert 8080) und
+// Admin-Seite am Terminal (der Port darüber, Grundwert 8081). Genau diese vier Einträge, kein Muster.
+func fixedAllow(port int) []string {
+	p, q := strconv.Itoa(port), strconv.Itoa(port+1)
+	return []string{"http://127.0.0.1:" + p, "http://localhost:" + p, "http://127.0.0.1:" + q, "http://localhost:" + q}
+}
 
 // parseWebOrigins liest die Liste streng: genau eine JSON-Liste von Zeichenketten,
 // jede ein gültiger Ursprung. Ergebnis sortiert und ohne Doppel.
@@ -94,11 +128,16 @@ func localNetworkURLs(origins []string) []string {
 //
 // Mit localNetwork (nur PDH-Terminal) steht zusätzlich LocalNetworkAccessAllowedForUrls mit den
 // Ursprüngen der Seiten in der Richtlinie: Die PDH-Seite liest den Kartenstrom per EventSource
-// von http://127.0.0.1:8080, und Chromium (Local Network Access, ab etwa 142) fragte sonst nach
+// von http://127.0.0.1:<Port der Startseite>, und Chromium (Local Network Access, ab etwa 142) fragte sonst nach
 // einer Berechtigung, die ein Kiosk mit gelöschtem Profil nie erteilen kann. Ohne Ursprünge
 // oder ohne localNetwork fehlt der Eintrag, die Richtlinie bleibt wie im Paket.
 func ChromiumPolicy(origins []string, localNetwork bool) []byte {
-	allow := slices.Clone(fixedAllow)
+	return ChromiumPolicyFor(localport.Default, origins, localNetwork)
+}
+
+// ChromiumPolicyFor ist ChromiumPolicy für den Port der lokalen Startseite port (Grundwert 8080).
+func ChromiumPolicyFor(port int, origins []string, localNetwork bool) []byte {
+	allow := fixedAllow(port)
 	for _, o := range origins {
 		allow = append(allow, allowFilter(o))
 	}
@@ -127,15 +166,35 @@ func ChromiumPolicy(origins []string, localNetwork bool) []byte {
 		"}\n")
 }
 
-func (s *Server) policyPaths() (policy, state string) {
-	policy, state = s.ChromiumPolicyPath, s.WebOriginsStatePath
+func (s *Server) policyPaths() (policy, state, portState string) {
+	policy, state, portState = s.ChromiumPolicyPath, s.WebOriginsStatePath, s.LocalPortStatePath
 	if policy == "" {
 		policy = defaultPolicyPath
 	}
 	if state == "" {
 		state = defaultWebOriginsSt
 	}
-	return policy, state
+	if portState == "" {
+		portState = LocalPortStatePathFor(state)
+	}
+	return policy, state, portState
+}
+
+// savedLocalPort liest den gespeicherten Port. Fehlt die Datei, gilt der Grundwert ohne Fehler; eine
+// unlesbare oder ungültige Datei ergibt den Grundwert und einen Fehler (nie einen anderen Port).
+func savedLocalPort(portState string) (int, error) {
+	raw, err := readStateFile(portState, maxLocalPortState)
+	if errors.Is(err, os.ErrNotExist) {
+		return localport.Default, nil
+	}
+	if err != nil {
+		return localport.Default, err
+	}
+	p, perr := parseLocalPort(strings.TrimSuffix(string(raw), "\n"))
+	if perr != nil {
+		return localport.Default, perr
+	}
+	return p, nil
 }
 
 // setWebOrigins speichert die Liste zuerst dauerhaft (das Wurzeldateisystem des Abbilds
@@ -145,12 +204,37 @@ func (s *Server) setWebOrigins(_ context.Context, arg string) error {
 	if err != nil {
 		return err
 	}
-	policy, state := s.policyPaths()
+	policy, state, portState := s.policyPaths()
 	b, _ := json.Marshal(origins)
 	if err := writeStateFile(state, append(b, '\n')); err != nil {
 		return fmt.Errorf("Web-Ursprünge nicht speicherbar: %v", err)
 	}
-	if err := writeAtomic(policy, ChromiumPolicy(origins, s.LocalNetworkAccess), 0o644); err != nil {
+	// Der gespeicherte Port bleibt erhalten; ist die Datei unbrauchbar, gilt nur der Grundwert (nie ein offener Port).
+	port, _ := savedLocalPort(portState)
+	if err := writeAtomic(policy, ChromiumPolicyFor(port, origins, s.LocalNetworkAccess), 0o644); err != nil {
+		return fmt.Errorf("Chromium-Richtlinie nicht schreibbar: %v", err)
+	}
+	return nil
+}
+
+// setLocalPort speichert den Port der lokalen Startseite dauerhaft und schreibt die Richtlinie mit den
+// gespeicherten Web-Ursprüngen neu (fehlende oder unlesbare Liste: nur die festen Einträge).
+func (s *Server) setLocalPort(_ context.Context, arg string) error {
+	port, err := parseLocalPort(arg)
+	if err != nil {
+		return err
+	}
+	policy, state, portState := s.policyPaths()
+	if err := writeStateFile(portState, []byte(strconv.Itoa(port)+"\n")); err != nil {
+		return fmt.Errorf("Port der lokalen Startseite nicht speicherbar: %v", err)
+	}
+	var origins []string
+	if raw, rerr := readStateFile(state, maxWebOriginsState); rerr == nil {
+		if o, perr := parseWebOrigins(raw); perr == nil {
+			origins = o
+		}
+	}
+	if err := writeAtomic(policy, ChromiumPolicyFor(port, origins, s.LocalNetworkAccess), 0o644); err != nil {
 		return fmt.Errorf("Chromium-Richtlinie nicht schreibbar: %v", err)
 	}
 	return nil
@@ -160,25 +244,40 @@ func (s *Server) setWebOrigins(_ context.Context, arg string) error {
 // (hmi-kiosk-helper web-policy, vor dem Kiosk-Dienst). Ohne Liste bleibt die Richtlinie
 // aus dem Paket. Eine ungültige Liste ergibt die Richtlinie nur mit den festen Einträgen.
 func (s *Server) ApplyWebPolicy() error {
-	policy, state := s.policyPaths()
-	return ApplyWebPolicy(policy, state, s.LocalNetworkAccess)
+	policy, state, portState := s.policyPaths()
+	return applyWebPolicy(policy, state, portState, s.LocalNetworkAccess)
 }
 
-// ApplyWebPolicy ist der Startschritt mit festen Pfaden (ohne Server).
+// ApplyWebPolicy ist der Startschritt mit festen Pfaden (ohne Server). Der gespeicherte Port der
+// Startseite liegt neben der Liste der Web-Ursprünge (LocalPortStatePathFor).
 func ApplyWebPolicy(policy, state string, localNetwork bool) error {
+	return applyWebPolicy(policy, state, LocalPortStatePathFor(state), localNetwork)
+}
+
+func applyWebPolicy(policy, state, portState string, localNetwork bool) error {
 	raw, err := readStateFile(state, maxWebOriginsState)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	noOrigins := errors.Is(err, os.ErrNotExist)
 	var origins []string
 	if err == nil {
 		origins, err = parseWebOrigins(raw)
 	}
-	if werr := writeAtomic(policy, ChromiumPolicy(origins, localNetwork), 0o644); werr != nil {
+	port, perr := savedLocalPort(portState)
+	_, statErr := os.Lstat(portState)
+	noPort := perr == nil && errors.Is(statErr, os.ErrNotExist)
+	if noOrigins && noPort {
+		return nil // nichts gespeichert: Die Richtlinie aus dem Paket gilt
+	}
+	if noOrigins {
+		err = nil
+	}
+	if werr := writeAtomic(policy, ChromiumPolicyFor(port, origins, localNetwork), 0o644); werr != nil {
 		return fmt.Errorf("Chromium-Richtlinie nicht schreibbar: %v", werr)
 	}
 	if err != nil {
 		return fmt.Errorf("Gespeicherte Web-Ursprünge nicht lesbar, nur die festen Einträge gelten: %v", err)
+	}
+	if perr != nil {
+		return fmt.Errorf("Gespeicherter Port der Startseite nicht lesbar, es gilt der Grundwert %d: %v", localport.Default, perr)
 	}
 	return nil
 }
