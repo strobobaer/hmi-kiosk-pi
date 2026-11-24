@@ -80,6 +80,13 @@ func (r *Route) SetURLs(primary, fallback string) {
 	r.primary, r.fallback = primary, fallback
 }
 
+// Primary ist die Hauptadresse.
+func (r *Route) Primary() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.primary
+}
+
 // Base ist die aktive Basisadresse.
 func (r *Route) Base() string {
 	r.mu.Lock()

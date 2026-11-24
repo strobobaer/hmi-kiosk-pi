@@ -302,16 +302,16 @@ func (w remoteWire) remote() Remote {
 
 // FetchRemote fragt den Gerätezustand (Statusabfrage) und liest functions und theme daraus.
 func (c Client) FetchRemote(ctx context.Context, d Device) (State, Remote, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(d.URL, "/")+"/api/terminal/v1/device", nil)
-	if err != nil {
-		return StateUnreachable, Remote{}, errUnreachable
-	}
-	req.Header.Set("Authorization", "Bearer "+d.Secret)
-	req.Header.Set("Accept", "application/json")
-	setClientHeaders(req)
-	resp, err := c.client().Do(req)
+	resp, err := c.send(ctx, d, func(base string) (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, base+"/api/terminal/v1/device", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+d.Secret)
+		req.Header.Set("Accept", "application/json")
+		setClientHeaders(req, c.routeName(base))
+		return req, nil
+	})
 	if err != nil {
 		st, e := transportErr(err)
 		return st, Remote{}, e
@@ -332,21 +332,21 @@ func (c Client) FetchRemote(ctx context.Context, d Device) (State, Remote, error
 // PushFunctions überträgt Schalter an PDH (PUT /api/terminal/v1/functions) und liefert den Stand danach.
 // 404 und 405 ergeben errFuncUnsupported.
 func (c Client) PushFunctions(ctx context.Context, d Device, set FuncSet) (State, Remote, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
 	body, err := json.Marshal(map[string]FuncSet{"functions": set})
 	if err != nil {
 		return StateUnreachable, Remote{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, strings.TrimRight(d.URL, "/")+"/api/terminal/v1/functions", bytes.NewReader(body))
-	if err != nil {
-		return StateUnreachable, Remote{}, errUnreachable
-	}
-	req.Header.Set("Authorization", "Bearer "+d.Secret)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	setClientHeaders(req)
-	resp, err := c.client().Do(req)
+	resp, err := c.send(ctx, d, func(base string) (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodPut, base+"/api/terminal/v1/functions", bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+d.Secret)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		setClientHeaders(req, c.routeName(base))
+		return req, nil
+	})
 	if err != nil {
 		st, e := transportErr(err)
 		return st, Remote{}, e
@@ -542,13 +542,14 @@ func (f *FuncSync) runEvents(ctx context.Context) {
 
 // readEvents liest den Kanal bis zum Ende; true, wenn er mit 200 geöffnet wurde.
 func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(d.URL, "/")+"/terminal/events", nil)
+	base := f.client.base(d)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/terminal/events", nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+d.Secret)
 	req.Header.Set("Accept", "text/event-stream")
-	setClientHeaders(req)
+	setClientHeaders(req, f.client.routeName(base))
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	req = req.WithContext(ctx)
@@ -556,7 +557,9 @@ func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
 	hc.Timeout = 0 // Dauerverbindung
 	resp, err := hc.Do(req)
 	if err != nil {
-		return false
+		// Bei einem Wechsel auf die Ausweichadresse sofort neu verbinden (kurze statt lange Wartezeit); die Wiederholung
+		// im Aufrufer nimmt die neue Adresse.
+		return f.client.fail(base, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
