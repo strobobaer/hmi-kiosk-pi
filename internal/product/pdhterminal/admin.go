@@ -341,10 +341,11 @@ func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r 
 	if err := f.Update(func(c *config.Config) error { c.Kiosk.LocalPort = port; return nil }); err != nil {
 		if h := f.Helper(); changed && h != nil { // Richtlinie zurück auf den bisherigen Port
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), policyPortTimeout)
-			// Zurück auf den Port, mit dem das Terminal läuft (nach einem Rückfall ist das nicht der gespeicherte).
+			// Zurück auf den Port, an den die Startseite gerade wirklich gebunden ist (nach einem Rückfall oder bei
+			// einem eingeplanten Wechsel ist das nicht der gespeicherte).
 			back := cfg.LocalPort()
 			if p.local != nil {
-				if ls := p.local(); ls.Failed != 0 && ls.Failed == back {
+				if ls := p.local(); ls.Port != 0 {
 					back = ls.Port
 				}
 			}

@@ -263,8 +263,9 @@ func (s *service) helperCall(ctx context.Context, cmd, arg string) error {
 
 const policyPortTimeout = 15 * time.Second
 
-// policySyncStartLimit: So lange wartet der Start auf den Abgleich der Richtlinie, bevor der Browser startet.
-const policySyncStartLimit = 10 * time.Second
+// policySyncStartLimit: So lange wartet der Start auf den Abgleich der Richtlinie, bevor der Browser startet
+// (Variable für Tests). Die Admin-Seite über HTTPS und die Startseite laufen da schon.
+var policySyncStartLimit = 10 * time.Second
 
 // browserStartHook (Tests) meldet jeden Browserstart mit der Adresse.
 var browserStartHook func(startURL string)
@@ -280,6 +281,26 @@ func (s *service) syncPolicyPort(ctx context.Context, port int) error {
 	}
 	setPolicyPortMarker(s.o.DataDir, port)
 	return nil
+}
+
+// syncPolicyAtStart gleicht die Richtlinie beim Start mit dem Port ab, mit dem dieser Lauf wirklich arbeitet (auch
+// nach dem Rückfall auf 8080). Synchron und vor dem Browser: Chromium darf die Startseite nicht laden, bevor die
+// Richtlinie ihren Port erlaubt. Misslingt es oder dauert es länger als policySyncStartLimit, startet der Browser
+// trotzdem. Jeder Fehlschlag ist sichtbar (Warnung und Problemanzeige), auch beim Grundwert: Nach einem Rückfall oder
+// einem früher gescheiterten Rückwechsel stünde die Richtlinie sonst unbemerkt auf dem falschen Port.
+func (s *service) syncPolicyAtStart(ctx context.Context, fellBack bool) {
+	port := s.port
+	if !fellBack && !s.needsPolicySync(port) {
+		return
+	}
+	sctx, cancel := context.WithTimeout(ctx, policySyncStartLimit)
+	defer cancel()
+	err := s.syncPolicyPort(sctx, port)
+	if err == nil || ctx.Err() != nil {
+		return
+	}
+	s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", port, err))
+	s.setProblem(problemPolicy, fmt.Sprintf("Browser-Richtlinie nicht auf Port %d gesetzt – Startseite womöglich gesperrt (Systemteile aktualisieren)", port))
 }
 
 // policyPortFile merkt sich den Port, den der Helfer zuletzt in die Richtlinie geschrieben hat. Der Dienst ruft den
@@ -344,7 +365,7 @@ func (s *service) localState() localState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var parts []string
-	for _, k := range []string{problemStart, problemLocal} {
+	for _, k := range []string{problemStart, problemLocal, problemPolicy} {
 		if m := s.problems[k]; m != "" {
 			parts = append(parts, m)
 		}
@@ -500,21 +521,6 @@ func (s *service) serve(parent context.Context) error {
 			l, err, fellBack = fl, nil, true
 		}
 	}
-	// Die Richtlinie folgt dem Port, mit dem dieser Lauf wirklich arbeitet (auch nach dem Rückfall).
-	if fellBack || s.needsPolicySync(s.port) {
-		// Synchron und vor dem Browser: Chromium darf die Startseite nicht laden, bevor die Richtlinie ihren Port erlaubt.
-		// Misslingt es oder dauert es zu lange, startet der Browser trotzdem, und die Warnung erscheint.
-		port := s.port
-		sctx, scancel := context.WithTimeout(ctx, policySyncStartLimit)
-		if err := s.syncPolicyPort(sctx, port); err != nil && ctx.Err() == nil {
-			if port == localport.Default {
-				log.Printf("Port der Startseite nicht in die Richtlinie geschrieben: %v", err)
-			} else {
-				s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", port, err))
-			}
-		}
-		scancel()
-	}
 	bound := Bound{}
 	origin := func() string { return cardOrigin(s.config().PDH) }
 	cardAPI := http.NewServeMux()
@@ -533,6 +539,15 @@ func (s *service) serve(parent context.Context) error {
 		})
 		return srv
 	}
+	// Reihenfolge: Admin-Seite über HTTPS, Startseite, Abgleich der Richtlinie (begrenzt), Browser. Ein hängender
+	// Helfer hält so nur den Browser auf, nie die Admin-Seite.
+	remote, onTerminal := web.NewAdminHandlers(s.adminDeps())
+	adm := &adminListener{}
+	adminAddr := s.startAdmin(&wg, remote, adm)
+	bound.Admin = adminAddr
+	if adminAddr == "" {
+		background(func() { s.retryAdmin(ctx, &wg, remote, adm) })
+	}
 	var local *http.Server
 	if l != nil {
 		bound.Local = l.Addr().String()
@@ -540,14 +555,6 @@ func (s *service) serve(parent context.Context) error {
 	} else {
 		s.warn(fmt.Sprintf("Startseite nicht verfügbar: %v. Der Port lässt sich im Admin-Bereich ändern (PDH, Lokale Startseite).", err))
 		s.setProblem(problemStart, portBusyText(s.o.LocalAddr, startPortHint))
-	}
-
-	remote, onTerminal := web.NewAdminHandlers(s.adminDeps())
-	adm := &adminListener{}
-	adminAddr := s.startAdmin(&wg, remote, adm)
-	bound.Admin = adminAddr
-	if adminAddr == "" {
-		background(func() { s.retryAdmin(ctx, &wg, remote, adm) })
 	}
 	stopLocalAdmin, err := appcore.ServeLocalAdmin(ctx, s.o.LocalAdminAddr, onTerminal, &s.presence)
 	if err != nil {
@@ -575,6 +582,7 @@ func (s *service) serve(parent context.Context) error {
 			}
 		})
 	}
+	s.syncPolicyAtStart(ctx, fellBack)
 	// Browser und späte Startseite (nach belegtem Port) teilen sich late; closed verhindert Neues nach dem Ende.
 	var late struct {
 		mu      sync.Mutex

@@ -2,6 +2,7 @@ package pdhterminal
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -716,4 +717,164 @@ func TestPolicySyncRunsBeforeBrowserStart(t *testing.T) {
 	if len(ordered) < 2 || ordered[0] != "set-local-port "+strconv.Itoa(p) || ordered[1] != "browser" {
 		t.Fatalf("Reihenfolge: %v", events)
 	}
+}
+
+// --- Fix-Runde 4: Warnung in jedem Fall, Rücksetzen auf den laufenden Port, Admin-Seite vor dem Abgleich ---
+
+// Scheitert der Abgleich auf 8080 (nach dem Rückfall oder beim Rückwechsel nach einem früheren Port), erscheint die
+// Warnung trotzdem: auf der Systemseite und als Problem auf der Seite PDH.
+func TestPolicySyncFailureAt8080Warns(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		fellBack bool
+		marker   string
+	}{
+		{"nach dem Rückfall", true, ""},
+		{"Rückwechsel, Richtlinie stand auf 18080", false, "18080"},
+	} {
+		h := &helperLog{err: errors.New("Helfer nicht erreichbar")}
+		s := newPortService(t, h)
+		if tc.fellBack {
+			s.badPort.Store(18080) // der Rückfall hat s.port schon auf 8080 gestellt
+		}
+		if tc.marker != "" {
+			if err := os.WriteFile(filepath.Join(s.o.DataDir, policyPortFile), []byte(tc.marker+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if s.port != localport.Default {
+			t.Fatalf("%s: Port %d", tc.name, s.port)
+		}
+		s.syncPolicyAtStart(context.Background(), tc.fellBack)
+		if got := h.got(); len(got) != 1 || got[0] != "set-local-port 8080" {
+			t.Fatalf("%s: Helferaufrufe %v", tc.name, got)
+		}
+		warned := false
+		for _, w := range s.status().Warnings {
+			if strings.Contains(w, "Chromium-Richtlinie erlaubt den Port 8080 der Startseite womöglich nicht") {
+				warned = true
+			}
+		}
+		if !warned {
+			t.Errorf("%s: keine Warnung: %v", tc.name, s.status().Warnings)
+		}
+		if p := s.localState().Problem; !strings.Contains(p, "Browser-Richtlinie nicht auf Port 8080 gesetzt") {
+			t.Errorf("%s: Problemanzeige %q", tc.name, p)
+		}
+		e := newAdminEnvWith(t, Client{}, func(p *adminProduct) { p.local = s.localState })
+		if body := e.get("/admin/pdh").Body.String(); !strings.Contains(body, "Browser-Richtlinie nicht auf Port 8080 gesetzt") {
+			t.Errorf("%s: Seite PDH ohne Problem:\n%s", tc.name, body)
+		}
+	}
+}
+
+// Scheitert das Speichern nach dem Setzen der Richtlinie, geht sie auf den Port zurück, an den die Startseite gerade
+// gebunden ist, auch wenn er vom gespeicherten abweicht und kein Rückfall vorliegt.
+func TestAdminLocalPortRevertTargetsRunningPort(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnvWith(t, Client{}, func(p *adminProduct) {
+		p.local = func() localState { return localState{Port: 18090} } // gespeichert ist 8080, Failed 0
+		p.bindProbe = func(string) error { return nil }
+	})
+	var calls []string
+	testHelperCall = func(cmd, arg string) error {
+		calls = append(calls, cmd+" "+arg)
+		if len(calls) == 1 { // danach scheitert das Speichern: config.json unlesbar
+			if err := os.WriteFile(filepath.Join(e.dir, "config.json"), []byte("{"), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { testHelperCall = nil })
+	if r := e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}}); r.Code == http.StatusOK {
+		t.Fatalf("Speichern trotz unlesbarer Konfiguration erfolgreich: %s", r.Body.String())
+	}
+	if len(calls) != 2 || calls[0] != "set-local-port 18080" || calls[1] != "set-local-port 18090" {
+		t.Fatalf("Aufrufe: %v", calls)
+	}
+	if m, ok := policyPortMarker(e.dir); !ok || m != 18090 {
+		t.Errorf("Vermerk %d %v", m, ok)
+	}
+}
+
+// Ein hängender Helfer hält die Admin-Seite über HTTPS nicht auf; der Browser startet spätestens nach der Frist.
+func TestHangingPolicySyncDoesNotBlockAdmin(t *testing.T) {
+	resetLocalPort(t)
+	old := policySyncStartLimit
+	policySyncStartLimit = 1500 * time.Millisecond
+	t.Cleanup(func() { policySyncStartLimit = old })
+	p := freePortPair(t)
+	adminPort := freePortPair(t)
+	for adminPort == p || adminPort == p+1 || adminPort+1 == p {
+		adminPort = freePortPair(t)
+	}
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Kiosk.LocalPort = p
+	if err := config.Open(data).Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan time.Time, 1)
+	browser := make(chan time.Time, 1)
+	browserStartHook = func(string) {
+		select {
+		case browser <- time.Now():
+		default:
+		}
+	}
+	t.Cleanup(func() { browserStartHook = nil })
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:" + strconv.Itoa(adminPort),
+			HelperCall: func(hctx context.Context, cmd, _ string) error {
+				if cmd != helperSetLocalPort {
+					return nil
+				}
+				select {
+				case entered <- time.Now():
+				default:
+				}
+				<-hctx.Done() // hängt bis zur Frist
+				return hctx.Err()
+			},
+			HardwareID: func() string { return "t" },
+		})
+	}()
+	var t0 time.Time
+	select {
+	case t0 = <-entered:
+	case err := <-done:
+		t.Fatalf("Ende: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Abgleich nicht begonnen")
+	}
+	c := &http.Client{Timeout: 5 * time.Second,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // Test mit selbst ausgestelltem Zertifikat
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := c.Get("https://127.0.0.1:" + strconv.Itoa(adminPort) + "/admin/")
+	if err != nil {
+		t.Fatalf("Admin-Seite während des Abgleichs nicht erreichbar: %v", err)
+	}
+	resp.Body.Close()
+	select {
+	case <-browser:
+		t.Fatal("Browser vor dem Ende des Abgleichs gestartet")
+	default:
+	}
+	select {
+	case tb := <-browser:
+		if d := tb.Sub(t0); d < policySyncStartLimit-300*time.Millisecond {
+			t.Errorf("Browser nach %v gestartet, Frist %v", d, policySyncStartLimit)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Browser nach der Frist nicht gestartet")
+	}
+	cancel()
+	<-done
 }
