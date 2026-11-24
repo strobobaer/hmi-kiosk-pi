@@ -220,6 +220,12 @@ func newAdminEnv(t *testing.T, client Client) *adminEnv {
 // newAdminEnvWith wie newAdminEnv; tune ändert das Produkt vor dem Aufbau der Seite (etwa für den Kiosk).
 func newAdminEnvWith(t *testing.T, client Client, tune func(*adminProduct)) *adminEnv {
 	t.Helper()
+	return newAdminEnvApply(t, client, tune, func(config.Config) {})
+}
+
+// newAdminEnvApply wie newAdminEnvWith; apply bekommt jede gespeicherte Konfiguration (z. B. service.apply).
+func newAdminEnvApply(t *testing.T, client Client, tune func(*adminProduct), apply func(config.Config)) *adminEnv {
+	t.Helper()
 	dir := t.TempDir()
 	box, err := secrets.OpenBox(filepath.Join(dir, "secrets.key"), false)
 	if err != nil {
@@ -243,7 +249,7 @@ func newAdminEnvWith(t *testing.T, client Client, tune func(*adminProduct)) *adm
 	prod := newAdminProduct(dir, client, cards, display)
 	tune(prod)
 	h := web.NewAdmin(web.AdminDeps{
-		Store: store, Box: box, Apply: func(config.Config) {}, Helper: nopHelper{},
+		Store: store, Box: box, Apply: apply, Helper: nopHelper{},
 		Status:  func() web.SystemStatus { return web.SystemStatus{} },
 		KeyFile: filepath.Join(dir, "secrets.key"), TLSDir: t.TempDir(), LogDir: t.TempDir(),
 		Product: prod.product(),

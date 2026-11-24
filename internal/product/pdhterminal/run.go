@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -271,15 +272,22 @@ var policySyncStartLimit = 10 * time.Second
 var browserStartHook func(startURL string)
 
 // syncPolicyPort schreibt den Port der Startseite in die Chromium-Richtlinie (Linux; unter Windows gibt es keinen
-// Helfer und keine Richtlinie). Beim Start geschieht das immer, auch beim Grundwert: Es macht einen früher
-// fehlgeschlagenen Rückwechsel gut. Ein älterer Helfer kennt den Befehl nicht; beim Grundwert ist das kein Fehler.
+// Helfer und keine Richtlinie). Der Vermerk ist während des Aufrufs ungültig (setPolicyPort).
 func (s *service) syncPolicyPort(ctx context.Context, port int) error {
 	cctx, cancel := context.WithTimeout(ctx, policyPortTimeout)
 	defer cancel()
-	if err := s.helperCall(cctx, helperSetLocalPort, strconv.Itoa(port)); err != nil {
+	return setPolicyPort(cctx, s.o.DataDir, s.helperCall, port)
+}
+
+// setPolicyPort ruft set-local-port. Der Vermerk wird vorher ungültig und erst nach bestätigtem Erfolg auf den Port
+// gesetzt: Antwortet der Helfer zu spät oder mit Fehler, kann er die Richtlinie trotzdem geschrieben haben, und der
+// nächste Start bzw. das nächste Speichern gleicht dann erneut ab.
+func setPolicyPort(ctx context.Context, dataDir string, call func(context.Context, string, string) error, port int) error {
+	invalidatePolicyPortMarker(dataDir)
+	if err := call(ctx, helperSetLocalPort, strconv.Itoa(port)); err != nil {
 		return err
 	}
-	setPolicyPortMarker(s.o.DataDir, port)
+	setPolicyPortMarker(dataDir, port)
 	return nil
 }
 
@@ -303,9 +311,48 @@ func (s *service) syncPolicyAtStart(ctx context.Context, fellBack bool) {
 	s.setProblem(problemPolicy, fmt.Sprintf("Browser-Richtlinie nicht auf Port %d gesetzt – Startseite womöglich gesperrt (Systemteile aktualisieren)", port))
 }
 
-// policyPortFile merkt sich den Port, den der Helfer zuletzt in die Richtlinie geschrieben hat. Der Dienst ruft den
-// Helfer beim Start nur, wenn der Port vom Grundwert abweicht oder die Richtlinie noch auf einem anderen steht.
+// policyPortFile merkt sich den Port, den der Helfer zuletzt bestätigt in die Richtlinie geschrieben hat. Der Dienst
+// ruft den Helfer beim Start nur, wenn der Port vom Grundwert abweicht, die Richtlinie auf einem anderen steht oder
+// der Vermerk ungültig ist (ein Aufruf lief, ohne dass sein Erfolg bestätigt wurde). Fehlt der Vermerk, wurde nie ein
+// Aufruf begonnen: Es gilt die Richtlinie des Pakets (8080).
 const policyPortFile = "policy-port"
+
+// policyPortUnknown steht im Vermerk, solange ein Aufruf von set-local-port nicht bestätigt ist.
+const policyPortUnknown = "unbekannt"
+
+// policyMarker liefert den Vermerk: present, ob die Datei da ist; ok, ob sie einen gültigen Port enthält.
+func policyMarker(dataDir string) (port int, present, ok bool) {
+	b, err := os.ReadFile(filepath.Join(dataDir, policyPortFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, false, false
+	}
+	if err != nil {
+		return 0, true, false
+	}
+	p, perr := strconv.Atoi(strings.TrimSpace(string(b)))
+	return p, true, perr == nil && p > 0
+}
+
+// policyMatches: Steht die Richtlinie bestätigt auf port? Ohne Vermerk gilt die des Pakets (Grundwert).
+func policyMatches(dataDir string, port int) bool {
+	m, present, ok := policyMarker(dataDir)
+	if !present {
+		return port == localport.Default
+	}
+	return ok && m == port
+}
+
+// policyMarkerInvalid: Ein Aufruf von set-local-port lief ohne bestätigten Erfolg.
+func policyMarkerInvalid(dataDir string) bool {
+	_, present, ok := policyMarker(dataDir)
+	return present && !ok
+}
+
+func invalidatePolicyPortMarker(dataDir string) {
+	if err := os.WriteFile(filepath.Join(dataDir, policyPortFile), []byte(policyPortUnknown+"\n"), 0o600); err != nil {
+		log.Printf("Vermerk der Richtlinie nicht als ungültig markiert: %v", err)
+	}
+}
 
 func policyPortMarker(dataDir string) (int, bool) {
 	b, err := os.ReadFile(filepath.Join(dataDir, policyPortFile))
@@ -322,19 +369,21 @@ func setPolicyPortMarker(dataDir string, port int) {
 	}
 }
 
-// needsPolicySync: Beim Grundwert bleibt die Richtlinie des Pakets, solange nie ein anderer Port eingestellt war.
+// needsPolicySync: Beim Grundwert bleibt die Richtlinie des Pakets, solange nie ein Aufruf begonnen wurde; ein
+// ungültiger oder abweichender Vermerk löst den Abgleich aus.
 func (s *service) needsPolicySync(port int) bool {
 	if port != localport.Default {
 		return true
 	}
-	m, ok := policyPortMarker(s.o.DataDir)
-	return ok && m != port
+	return !policyMatches(s.o.DataDir, port)
 }
 
 // portChanged: Hat die gespeicherte Konfiguration einen anderen Port als dieser Lauf, schreibt der Dienst die
 // Richtlinie neu und startet danach selbst neu (kurz verzögert, damit die Antwort der Admin-Seite noch ankommt).
 // Misslingt das Schreiben der Richtlinie, läuft das Terminal auf dem alten Port weiter: Chromium bliebe sonst auf dem
-// neuen Port gesperrt.
+// neuen Port gesperrt. Maßgeblich ist der Port, an den die Startseite in diesem Lauf gebunden ist (s.port); badPort
+// unterdrückt nur den erneuten Versuch mit dem Port, der beim Start nicht band, solange kein Speichern gelang
+// (savedLocalPort setzt ihn zurück).
 func (s *service) portChanged(want int) {
 	if want == s.port || (want != 0 && int32(want) == s.badPort.Load()) || !s.portSwitch.CompareAndSwap(false, true) {
 		return
@@ -352,6 +401,13 @@ func (s *service) portChanged(want int) {
 		log.Printf("Port der Startseite wechselt von %d auf %d, das Terminal startet neu", s.port, want)
 		s.requestExit(ErrRestart)
 	})
+}
+
+// savedLocalPort: Das Speichern im Admin-Bereich hat Bindetest und Richtlinie bestanden. Ein früher gescheiterter Port
+// hält dann keinen Neustart mehr zurück, und das Problem des Abgleichs beim Start ist erledigt.
+func (s *service) savedLocalPort() {
+	s.badPort.Store(0)
+	s.setProblem(problemPolicy, "")
 }
 
 // localState beschreibt, welchen Port die Startseite tatsächlich benutzt (für die Admin-Seite).
@@ -1030,7 +1086,7 @@ func (s *service) adminDeps() web.AdminDeps {
 func (s *service) adminProduct() *web.AdminProduct {
 	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
 	p.funcs = s.funcs
-	p.local, p.adminPort = s.localState, s.adminPort
+	p.local, p.adminPort, p.saved = s.localState, s.adminPort, s.savedLocalPort
 	if s.o.Kiosk && onWindows {
 		p.kiosk, p.logoff = true, logoffUser
 	}

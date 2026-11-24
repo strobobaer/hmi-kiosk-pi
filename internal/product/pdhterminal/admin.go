@@ -66,6 +66,8 @@ type adminProduct struct {
 	adminPort func() int
 	// bindProbe versucht, addr kurz zu binden (nil: wirklich binden); für Tests ersetzbar.
 	bindProbe func(addr string) error
+	// saved meldet dem Dienst ein Speichern des Ports nach bestandenem Bindetest und Abgleich (nil: kein Dienst).
+	saved func()
 	// kiosk: Windows-Kiosk, die Seite hat den Abschnitt „Kiosk“; logoff meldet den Benutzer ab (Windows:
 	// ExitWindowsEx(EWX_LOGOFF), Tests ersetzen es).
 	kiosk  bool
@@ -195,6 +197,14 @@ func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *ht
 		ls = p.local()
 	}
 	v.Port, v.AdminPort, v.PortProblem = ls.Port, ls.Port+1, ls.Problem
+	if policyMarkerInvalid(p.dataDir) {
+		const msg = "Browser-Richtlinie in unbekanntem Zustand (Helfer hat nicht bestätigt) – Port erneut speichern"
+		if v.PortProblem != "" {
+			v.PortProblem += "; " + msg
+		} else {
+			v.PortProblem = msg
+		}
+	}
 	if want := cfg.LocalPort(); want != ls.Port {
 		if want == ls.Failed && want != 0 {
 			v.Failed = want
@@ -311,8 +321,15 @@ func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r 
 		p.render(f, w, r, http.StatusInternalServerError, lerr.Error(), "", nil)
 		return
 	}
-	changed := eff != cfg.LocalPort() // gegen den gespeicherten Port: Die Richtlinie folgt ihm, nicht dem laufenden
-	if changed {
+	running := localport.Get() // Port, an den die Startseite in diesem Lauf gebunden ist
+	if p.local != nil {
+		if ls := p.local(); ls.Port != 0 {
+			running = ls.Port
+		}
+	}
+	changed := eff != cfg.LocalPort()
+	restart := eff != running // der Dienst startet nach dem Speichern neu (service.portChanged)
+	if changed || restart {
 		// Ein nicht bindbarer Port würde den Neustart ohne Startseite zurücklassen: vorher prüfen. Die Ports dieses
 		// Laufs gelten als frei (sie sind belegt, weil das Terminal sie selbst hält).
 		for _, bp := range []int{eff, eff + 1} {
@@ -324,47 +341,48 @@ func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r 
 				return
 			}
 		}
-		// Erst die Richtlinie des Browsers, dann die Konfiguration: Steht der neue Port in der Datei, ohne dass der
-		// Browser ihn öffnen darf, bliebe der Bildschirm nach dem nächsten Start gesperrt.
-		if h := f.Helper(); h != nil {
-			ctx, cancel := context.WithTimeout(r.Context(), policyPortTimeout)
-			err := h.Call(ctx, helperSetLocalPort, strconv.Itoa(eff))
-			cancel()
-			if err != nil {
-				f.Logf("Richtlinie für Port %d nicht gesetzt: %v", eff, err)
-				fail("Browser-Richtlinie konnte nicht angepasst werden – Port nicht geändert (Systemteile aktualisieren)")
-				return
-			}
-			setPolicyPortMarker(p.dataDir, eff)
+	}
+	// Erst die Richtlinie des Browsers, dann die Konfiguration: Steht der neue Port in der Datei, ohne dass der
+	// Browser ihn öffnen darf, bliebe der Bildschirm nach dem nächsten Start gesperrt. Auch ohne Änderung, solange
+	// die Richtlinie nicht bestätigt auf dem Port steht (z. B. nach einer verspäteten Antwort des Helfers).
+	h := f.Helper()
+	policySet := false
+	if h != nil && (changed || restart || !policyMatches(p.dataDir, eff)) {
+		ctx, cancel := context.WithTimeout(r.Context(), policyPortTimeout)
+		err := setPolicyPort(ctx, p.dataDir, h.Call, eff)
+		cancel()
+		if err != nil {
+			f.Logf("Richtlinie für Port %d nicht gesetzt: %v", eff, err)
+			fail("Browser-Richtlinie konnte nicht angepasst werden – Port nicht geändert (Systemteile aktualisieren)")
+			return
 		}
+		policySet = true
+	}
+	if p.saved != nil {
+		p.saved() // vor dem Speichern: apply entscheidet sofort über den Neustart
 	}
 	if err := f.Update(func(c *config.Config) error { c.Kiosk.LocalPort = port; return nil }); err != nil {
-		if h := f.Helper(); changed && h != nil { // Richtlinie zurück auf den bisherigen Port
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), policyPortTimeout)
-			// Zurück auf den Port, an den die Startseite gerade wirklich gebunden ist (nach einem Rückfall oder bei
-			// einem eingeplanten Wechsel ist das nicht der gespeicherte).
-			back := cfg.LocalPort()
-			if p.local != nil {
-				if ls := p.local(); ls.Port != 0 {
-					back = ls.Port
-				}
-			}
-			if h.Call(ctx, helperSetLocalPort, strconv.Itoa(back)) == nil {
-				setPolicyPortMarker(p.dataDir, back)
-			}
-			cancel()
+		if policySet && eff != running { // Richtlinie zurück auf den laufenden Port
+			p.revertPolicy(h, r, running)
 		}
 		fail(err.Error())
 		return
 	}
 	notice := "Einstellung gespeichert."
-	if want := localport.Default; port != 0 || localport.Get() != want {
-		if eff := portOrDefault(port); eff != localport.Get() {
-			f.Logf("Port der lokalen Startseite auf %d gestellt", eff)
-			notice = fmt.Sprintf("Gespeichert. Das Terminal wird neu gestartet; danach ist die Startseite unter Port %d und die lokale Admin-Seite unter Port %d erreichbar.", eff, eff+1)
-		}
+	if restart {
+		f.Logf("Port der lokalen Startseite auf %d gestellt", eff)
+		notice = fmt.Sprintf("Gespeichert. Das Terminal wird neu gestartet; danach ist die Startseite unter Port %d und die lokale Admin-Seite unter Port %d erreichbar.", eff, eff+1)
 	}
 	p.render(f, w, r, http.StatusOK, "", notice, nil)
+}
+
+// revertPolicy setzt die Richtlinie best effort auf den Port zurück, an den die Startseite gerade wirklich gebunden ist
+// (nach einem Rückfall oder bei einem eingeplanten Wechsel ist das nicht der gespeicherte). Misslingt es, bleibt der
+// Vermerk ungültig, und der nächste Start oder das nächste Speichern gleicht ab.
+func (p *adminProduct) revertPolicy(h web.HelperAPI, r *http.Request, running int) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), policyPortTimeout)
+	defer cancel()
+	_ = setPolicyPort(ctx, p.dataDir, h.Call, running)
 }
 
 // tryBind öffnet 127.0.0.1:port kurz und schließt es sofort wieder.

@@ -217,17 +217,17 @@ func (s *Server) setWebOrigins(_ context.Context, arg string) error {
 	return nil
 }
 
-// setLocalPort speichert den Port der lokalen Startseite dauerhaft und schreibt die Richtlinie mit den
-// gespeicherten Web-Ursprüngen neu (fehlende oder unlesbare Liste: nur die festen Einträge).
+// setLocalPort schreibt die Richtlinie mit den gespeicherten Web-Ursprüngen neu (fehlende oder unlesbare Liste: nur
+// die festen Einträge) und speichert danach den Port der lokalen Startseite dauerhaft. Beides atomar und in dieser
+// Reihenfolge: Die Zustandsdatei beschreibt so immer eine Richtlinie, die wirklich geschrieben wurde. Scheitert die
+// Richtlinie, bleibt alles beim Alten; scheitert nur die Zustandsdatei, meldet der Befehl den Fehler, und der Dienst
+// gleicht beim nächsten Start erneut ab (sein Vermerk bleibt ungültig).
 func (s *Server) setLocalPort(_ context.Context, arg string) error {
 	port, err := parseLocalPort(arg)
 	if err != nil {
 		return err
 	}
 	policy, state, portState := s.policyPaths()
-	if err := writeStateFile(portState, []byte(strconv.Itoa(port)+"\n")); err != nil {
-		return fmt.Errorf("Port der lokalen Startseite nicht speicherbar: %v", err)
-	}
 	var origins []string
 	if raw, rerr := readStateFile(state, maxWebOriginsState); rerr == nil {
 		if o, perr := parseWebOrigins(raw); perr == nil {
@@ -236,6 +236,9 @@ func (s *Server) setLocalPort(_ context.Context, arg string) error {
 	}
 	if err := writeAtomic(policy, ChromiumPolicyFor(port, origins, s.LocalNetworkAccess), 0o644); err != nil {
 		return fmt.Errorf("Chromium-Richtlinie nicht schreibbar: %v", err)
+	}
+	if err := writeStateFile(portState, []byte(strconv.Itoa(port)+"\n")); err != nil {
+		return fmt.Errorf("Port der lokalen Startseite nicht speicherbar: %v", err)
 	}
 	return nil
 }

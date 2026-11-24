@@ -878,3 +878,126 @@ func TestHangingPolicySyncDoesNotBlockAdmin(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// --- Schlussprüfung: Vermerk erst nach bestätigtem Erfolg, badPort nach erfolgreichem Speichern ---
+
+// Antwortet der Helfer erst nach der Frist, bleibt der Vermerk ungültig, und der nächste Start gleicht erneut ab.
+func TestLateHelperLeavesMarkerInvalid(t *testing.T) {
+	resetLocalPort(t)
+	old := policySyncStartLimit
+	policySyncStartLimit = 200 * time.Millisecond
+	t.Cleanup(func() { policySyncStartLimit = old })
+	data := t.TempDir()
+	if err := os.WriteFile(filepath.Join(data, policyPortFile), []byte("18080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	late := func(ctx context.Context, cmd, _ string) error {
+		<-ctx.Done() // die Antwort kommt erst nach der Frist
+		return ctx.Err()
+	}
+	s, err := newService(Options{DataDir: data, RunDir: t.TempDir(), HardwareID: func() string { return "" }, HelperCall: late})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.syncPolicyAtStart(context.Background(), false)
+	s.close()
+	if !policyMarkerInvalid(data) {
+		m, present, ok := policyMarker(data)
+		t.Fatalf("Vermerk nach verspäteter Antwort: %d present=%v ok=%v", m, present, ok)
+	}
+	// Nächster Start: Der Abgleich läuft (auch beim Grundwert), danach ist der Vermerk gültig.
+	h := &helperLog{}
+	s2, err := newService(Options{DataDir: data, RunDir: t.TempDir(), HardwareID: func() string { return "" }, HelperCall: h.call})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s2.close)
+	if !s2.needsPolicySync(localport.Default) {
+		t.Fatal("kein Abgleich beim nächsten Start")
+	}
+	s2.syncPolicyAtStart(context.Background(), false)
+	if got := h.got(); len(got) != 1 || got[0] != "set-local-port 8080" {
+		t.Fatalf("Helferaufrufe %v", got)
+	}
+	if m, ok := policyPortMarker(data); !ok || m != 8080 {
+		t.Errorf("Vermerk %d %v", m, ok)
+	}
+}
+
+// Ist der Vermerk ungültig, ruft auch das erneute Speichern von 8080 den Helfer; bis dahin warnt die Seite PDH.
+func TestAdminSave8080WithInvalidMarkerCallsHelper(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	if err := os.WriteFile(filepath.Join(e.dir, policyPortFile), []byte(policyPortUnknown+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const warning = "Browser-Richtlinie in unbekanntem Zustand"
+	if body := e.get("/admin/pdh").Body.String(); !strings.Contains(body, warning) {
+		t.Fatalf("keine Warnung:\n%s", body)
+	}
+	var calls []string
+	testHelperCall = func(cmd, arg string) error { calls = append(calls, cmd+" "+arg); return nil }
+	t.Cleanup(func() { testHelperCall = nil })
+	r := e.post("/admin/pdh/localport", url.Values{"localPort": {"8080"}})
+	if r.Code != http.StatusOK || strings.Contains(r.Body.String(), "neu gestartet") {
+		t.Fatalf("%d\n%s", r.Code, r.Body.String())
+	}
+	if len(calls) != 1 || calls[0] != "set-local-port 8080" {
+		t.Fatalf("Aufrufe: %v", calls)
+	}
+	if m, ok := policyPortMarker(e.dir); !ok || m != 8080 {
+		t.Errorf("Vermerk %d %v", m, ok)
+	}
+	if body := e.get("/admin/pdh").Body.String(); strings.Contains(body, warning) {
+		t.Error("Warnung nach erfolgreichem Abgleich")
+	}
+	// Bestätigt und unverändert: kein weiterer Aufruf.
+	e.post("/admin/pdh/localport", url.Values{"localPort": {"8080"}})
+	if len(calls) != 1 {
+		t.Errorf("Aufrufe: %v", calls)
+	}
+}
+
+// Rückfall (18080 band nicht) → 8080 speichern → 18080 speichern: Das zweite Speichern startet neu, und nur dann
+// nennt die Meldung den Neustart.
+func TestFallbackThenSave8080ThenSavePortRestarts(t *testing.T) {
+	h := &helperLog{}
+	s := newPortService(t, h)
+	s.badPort.Store(18080) // Rückfall: s.port ist 8080, gespeichert war 18080
+	e := newAdminEnvApply(t, Client{}, func(p *adminProduct) {
+		p.local, p.saved = s.localState, s.savedLocalPort
+		p.bindProbe = func(string) error { return nil }
+	}, s.apply)
+	c, _, err := e.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Kiosk.LocalPort = 18080
+	if err := e.store.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	testHelperCall = func(string, string) error { return nil }
+	t.Cleanup(func() { testHelperCall = nil })
+
+	r := e.post("/admin/pdh/localport", url.Values{"localPort": {"8080"}})
+	if body := r.Body.String(); r.Code != http.StatusOK || !strings.Contains(body, "Einstellung gespeichert.") || strings.Contains(body, "neu gestartet") {
+		t.Fatalf("8080: %d\n%s", r.Code, body)
+	}
+	select {
+	case err := <-s.exit:
+		t.Fatalf("Neustart nach 8080: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	r = e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}})
+	if body := r.Body.String(); r.Code != http.StatusOK || !strings.Contains(body, "Das Terminal wird neu gestartet") {
+		t.Fatalf("18080: %d\n%s", r.Code, body)
+	}
+	select {
+	case err := <-s.exit:
+		if !errors.Is(err, ErrRestart) {
+			t.Fatalf("Ende mit %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("kein Neustart nach dem Speichern von 18080")
+	}
+}

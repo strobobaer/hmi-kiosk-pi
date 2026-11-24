@@ -158,3 +158,42 @@ func TestLocalPortStatePathDerivedFromWebOrigins(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+// Die Richtlinie wird vor der Zustandsdatei geschrieben: Scheitert die Zustandsdatei, ist die Richtlinie trotzdem
+// vollständig (und der Befehl meldet den Fehler); scheitert die Richtlinie, bleibt die Zustandsdatei auf dem alten Port.
+func TestSetLocalPortWritesPolicyBeforeState(t *testing.T) {
+	linuxOnly(t)
+	e := portEnv(t)
+	if err := e.srv.Dispatch(context.Background(), CmdSetLocalPort, "18080"); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Dir(e.srv.LocalPortStatePath)
+	if err := os.Chmod(stateDir, 0o777); err != nil { // für andere schreibbar: der Helfer schreibt dort nicht
+		t.Fatal(err)
+	}
+	if err := e.srv.Dispatch(context.Background(), CmdSetLocalPort, "19090"); err == nil {
+		t.Fatal("Fehler der Zustandsdatei nicht gemeldet")
+	}
+	if pf := readPolicy(t, e.srv.ChromiumPolicyPath); !reflect.DeepEqual(pf.URLAllowlist, fixedFor(19090)) {
+		t.Fatalf("Richtlinie nach Fehler der Zustandsdatei: %q", pf.URLAllowlist)
+	}
+	if b := e.read(t, e.srv.LocalPortStatePath); strings.TrimSpace(b) != "18080" {
+		t.Fatalf("Zustandsdatei %q", b)
+	}
+	if err := os.Chmod(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Richtlinie nicht schreibbar (an ihrer Stelle liegt ein Ordner): Die Zustandsdatei bleibt unverändert.
+	if err := os.Remove(e.srv.ChromiumPolicyPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(e.srv.ChromiumPolicyPath, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.srv.Dispatch(context.Background(), CmdSetLocalPort, "20000"); err == nil {
+		t.Fatal("Fehler der Richtlinie nicht gemeldet")
+	}
+	if b := e.read(t, e.srv.LocalPortStatePath); strings.TrimSpace(b) != "18080" {
+		t.Fatalf("Zustandsdatei nach Fehler der Richtlinie %q", b)
+	}
+}
