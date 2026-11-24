@@ -428,7 +428,7 @@ func TestStartHandlerChecksConfiguredPort(t *testing.T) {
 func TestPortChangedIgnoresFailedPort(t *testing.T) {
 	h := &helperLog{}
 	s := newPortService(t, h)
-	s.badPort = 18080
+	s.badPort.Store(18080)
 	c := config.Default()
 	c.Kiosk.LocalPort = 18080
 	s.apply(c)
@@ -662,5 +662,58 @@ func TestAdminShowsFallbackNotice(t *testing.T) {
 	body := e.get("/admin/pdh").Body.String()
 	if !strings.Contains(body, "Eingestellter Port 18080 nicht verfügbar – läuft auf 8080") || strings.Contains(body, "gilt nach dem Neustart") {
 		t.Errorf("Hinweis: %s", body)
+	}
+}
+
+// Der Abgleich der Richtlinie läuft vor dem Start des Browsers, nicht daneben.
+func TestPolicySyncRunsBeforeBrowserStart(t *testing.T) {
+	resetLocalPort(t)
+	p := freePortPair(t)
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Kiosk.LocalPort = p
+	if err := config.Open(data).Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var events []string
+	add := func(e string) { mu.Lock(); events = append(events, e); mu.Unlock() }
+	browserStartHook = func(string) { add("browser") }
+	t.Cleanup(func() { browserStartHook = nil })
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:0",
+			HelperCall: func(_ context.Context, cmd, arg string) error {
+				time.Sleep(300 * time.Millisecond) // ein langsamer Helfer darf den Browser nicht überholen
+				add(cmd + " " + arg)
+				return nil
+			},
+			HardwareID: func() string { return "t" }, Ready: func(b Bound) { ready <- b },
+		})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("Ende: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Start")
+	}
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	var ordered []string
+	for _, e := range events {
+		if strings.HasPrefix(e, "set-local-port") || e == "browser" {
+			ordered = append(ordered, e)
+		}
+	}
+	if len(ordered) < 2 || ordered[0] != "set-local-port "+strconv.Itoa(p) || ordered[1] != "browser" {
+		t.Fatalf("Reihenfolge: %v", events)
 	}
 }

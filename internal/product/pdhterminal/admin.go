@@ -341,8 +341,15 @@ func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r 
 	if err := f.Update(func(c *config.Config) error { c.Kiosk.LocalPort = port; return nil }); err != nil {
 		if h := f.Helper(); changed && h != nil { // Richtlinie zurück auf den bisherigen Port
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), policyPortTimeout)
-			if h.Call(ctx, helperSetLocalPort, strconv.Itoa(cfg.LocalPort())) == nil {
-				setPolicyPortMarker(p.dataDir, cfg.LocalPort())
+			// Zurück auf den Port, mit dem das Terminal läuft (nach einem Rückfall ist das nicht der gespeicherte).
+			back := cfg.LocalPort()
+			if p.local != nil {
+				if ls := p.local(); ls.Failed != 0 && ls.Failed == back {
+					back = ls.Port
+				}
+			}
+			if h.Call(ctx, helperSetLocalPort, strconv.Itoa(back)) == nil {
+				setPolicyPortMarker(p.dataDir, back)
 			}
 			cancel()
 		}

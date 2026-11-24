@@ -146,10 +146,10 @@ type service struct {
 	markGood bool
 	hwID     string
 
-	port         int         // Port der Startseite dieses Laufs (localport); ändert sich nur beim Start (Rückfall auf 8080)
-	portSwitch   atomic.Bool // ein Wechsel auf einen anderen Port ist eingeplant
-	derivedAddrs bool        // Adressen der lokalen Seiten stammen aus dem Port der Konfiguration (nicht ausdrücklich angegeben)
-	badPort      int         // gespeicherter Port, der sich nicht binden ließ (Rückfall auf 8080); kein Neustart deswegen
+	port         int          // Port der Startseite dieses Laufs (localport); ändert sich nur beim Start (Rückfall auf 8080)
+	portSwitch   atomic.Bool  // ein Wechsel auf einen anderen Port ist eingeplant
+	derivedAddrs bool         // Adressen der lokalen Seiten stammen aus dem Port der Konfiguration (nicht ausdrücklich angegeben)
+	badPort      atomic.Int32 // gespeicherter Port, der sich nicht binden ließ (Rückfall auf 8080); kein Neustart deswegen
 }
 
 // Run führt den Dienst aus, bis ctx endet; ein geordnetes Ende ergibt nil.
@@ -263,6 +263,12 @@ func (s *service) helperCall(ctx context.Context, cmd, arg string) error {
 
 const policyPortTimeout = 15 * time.Second
 
+// policySyncStartLimit: So lange wartet der Start auf den Abgleich der Richtlinie, bevor der Browser startet.
+const policySyncStartLimit = 10 * time.Second
+
+// browserStartHook (Tests) meldet jeden Browserstart mit der Adresse.
+var browserStartHook func(startURL string)
+
 // syncPolicyPort schreibt den Port der Startseite in die Chromium-Richtlinie (Linux; unter Windows gibt es keinen
 // Helfer und keine Richtlinie). Beim Start geschieht das immer, auch beim Grundwert: Es macht einen früher
 // fehlgeschlagenen Rückwechsel gut. Ein älterer Helfer kennt den Befehl nicht; beim Grundwert ist das kein Fehler.
@@ -309,7 +315,7 @@ func (s *service) needsPolicySync(port int) bool {
 // Misslingt das Schreiben der Richtlinie, läuft das Terminal auf dem alten Port weiter: Chromium bliebe sonst auf dem
 // neuen Port gesperrt.
 func (s *service) portChanged(want int) {
-	if want == s.port || (want == s.badPort && s.badPort != 0) || !s.portSwitch.CompareAndSwap(false, true) {
+	if want == s.port || (want != 0 && int32(want) == s.badPort.Load()) || !s.portSwitch.CompareAndSwap(false, true) {
 		return
 	}
 	time.AfterFunc(restartDelay, func() {
@@ -343,7 +349,7 @@ func (s *service) localState() localState {
 			parts = append(parts, m)
 		}
 	}
-	return localState{Port: s.port, Failed: s.badPort, Problem: strings.Join(parts, "; ")}
+	return localState{Port: s.port, Failed: int(s.badPort.Load()), Problem: strings.Join(parts, "; ")}
 }
 
 // adminPort ist der Port der Admin-Seite über HTTPS (gebunden, sonst aus der Adresse, sonst 8443).
@@ -485,7 +491,7 @@ func (s *service) serve(parent context.Context) error {
 	if err != nil && s.derivedAddrs && s.port != localport.Default {
 		if fl, ferr := appcore.ListenLoopback("127.0.0.1:" + strconv.Itoa(localport.Default)); ferr == nil {
 			s.warn(fmt.Sprintf("Eingestellter Port %d nicht verfügbar, läuft auf %d: %v", s.port, localport.Default, err))
-			s.badPort = s.port
+			s.badPort.Store(int32(s.port))
 			s.mu.Lock()
 			s.port = localport.Default
 			s.mu.Unlock()
@@ -496,16 +502,18 @@ func (s *service) serve(parent context.Context) error {
 	}
 	// Die Richtlinie folgt dem Port, mit dem dieser Lauf wirklich arbeitet (auch nach dem Rückfall).
 	if fellBack || s.needsPolicySync(s.port) {
+		// Synchron und vor dem Browser: Chromium darf die Startseite nicht laden, bevor die Richtlinie ihren Port erlaubt.
+		// Misslingt es oder dauert es zu lange, startet der Browser trotzdem, und die Warnung erscheint.
 		port := s.port
-		background(func() {
-			if err := s.syncPolicyPort(ctx, port); err != nil && ctx.Err() == nil {
-				if port == localport.Default {
-					log.Printf("Port der Startseite nicht in die Richtlinie geschrieben: %v", err)
-				} else {
-					s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", port, err))
-				}
+		sctx, scancel := context.WithTimeout(ctx, policySyncStartLimit)
+		if err := s.syncPolicyPort(sctx, port); err != nil && ctx.Err() == nil {
+			if port == localport.Default {
+				log.Printf("Port der Startseite nicht in die Richtlinie geschrieben: %v", err)
+			} else {
+				s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", port, err))
 			}
-		})
+		}
+		scancel()
 	}
 	bound := Bound{}
 	origin := func() string { return cardOrigin(s.config().PDH) }
@@ -677,6 +685,9 @@ func (s *service) announce(ctx context.Context, bound Bound, background func(fun
 
 // startBrowser liefert einen Kanal, der schließt, sobald Chromium beendet ist.
 func (s *service) startBrowser(ctx context.Context, startURL string) <-chan struct{} {
+	if browserStartHook != nil {
+		browserStartHook(startURL)
+	}
 	done := make(chan struct{})
 	if !s.o.ChromiumEnabled {
 		close(done)
