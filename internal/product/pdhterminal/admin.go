@@ -16,6 +16,7 @@ import (
 	"hmikiosk/internal/localport"
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/oled"
+	"hmikiosk/internal/tailnet"
 	"hmikiosk/internal/web"
 )
 
@@ -76,6 +77,10 @@ type adminProduct struct {
 	kiosk  bool
 	logoff func() error
 
+	// tailnet steuert Tailscale (Pi: über den Helfer, Windows: tailscale.exe); nil: kein Abschnitt „Tailnet“.
+	tailnet   tailnet.Ctl
+	tailnetMu sync.Mutex
+
 	learnMu    sync.Mutex
 	learnCache *learnResult // Antwort der letzten erfolgreichen Anlernanfrage, für ein zweites Absenden
 }
@@ -91,6 +96,11 @@ func Admin(dataDir string, client Client, cards *card.Service, display *oled.Ser
 
 func (p *adminProduct) product() *web.AdminProduct {
 	ap := p.baseProduct()
+	if p.tailnet != nil {
+		ap.Nav = append(ap.Nav, web.NavItem{Section: "tailnet", Label: "Tailnet", Path: "/admin/tailnet"})
+		ap.Pages["tailnet"] = tailnetPage
+		ap.Routes = append(ap.Routes, p.tailnetRoutes()...)
+	}
 	if p.kiosk {
 		ap.Nav = append(ap.Nav, web.NavItem{Section: "kiosk", Label: "Kiosk", Path: "/admin/kiosk"})
 		ap.Pages["winkiosk"] = kioskPage

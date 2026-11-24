@@ -1109,6 +1109,7 @@ func (s *service) adminDeps() web.AdminDeps {
 func (s *service) adminProduct() *web.AdminProduct {
 	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
 	p.funcs = s.funcs
+	p.tailnet = s.tailnetCtl()
 	p.local, p.adminPort, p.saved = s.localState, s.adminPort, s.savedLocalPort
 	if s.o.Kiosk && onWindows {
 		p.kiosk, p.logoff = true, logoffUser
