@@ -318,11 +318,12 @@ func TestSystemLevelOnlyWithHelper(t *testing.T) {
 	}
 }
 
-// TestRunLinuxExitsWhenStartPortBusy: Wie bisher endet der Dienst unter Linux ohne Startseite (systemd startet neu).
-func TestRunLinuxExitsWhenStartPortBusy(t *testing.T) {
-	old := staysUpWithoutStart
-	staysUpWithoutStart = false
-	t.Cleanup(func() { staysUpWithoutStart = old })
+// TestRunStaysUpWhenStartPortBusyOnAnyPlatform: Auch unter Linux endet der Dienst nicht, wenn die Startseite nicht
+// bindet; sonst käme die HTTPS-Admin-Seite nie hoch und der Port ließe sich nicht mehr ändern.
+func TestRunStaysUpWhenStartPortBusyOnAnyPlatform(t *testing.T) {
+	oldEvery := portRetryEvery
+	portRetryEvery = time.Hour
+	t.Cleanup(func() { portRetryEvery = oldEvery })
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -330,23 +331,38 @@ func TestRunLinuxExitsWhenStartPortBusy(t *testing.T) {
 	defer busy.Close()
 	rootFS = t.TempDir()
 	t.Cleanup(func() { rootFS = "/" })
-	err = Run(context.Background(), Options{
-		DataDir: t.TempDir(), RunDir: t.TempDir(),
-		LocalAddr: busy.Addr().String(), AdminAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
-		HelperSocket: filepath.Join(t.TempDir(), "kein.sock"), HardwareID: func() string { return "x" },
-	})
-	if err == nil || !strings.Contains(err.Error(), "Startseite") {
-		t.Fatalf("Fehler %v, erwartet Startseite", err)
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: t.TempDir(), RunDir: t.TempDir(),
+			LocalAddr: busy.Addr().String(), AdminAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+			HelperSocket: filepath.Join(t.TempDir(), "kein.sock"), HardwareID: func() string { return "x" },
+			Ready: func(b Bound) { ready <- b },
+		})
+	}()
+	select {
+	case b := <-ready:
+		if b.Local != "" || b.Admin == "" {
+			t.Errorf("Local %q, Admin %q: Die HTTPS-Admin-Seite muss laufen, die Startseite nicht", b.Local, b.Admin)
+		}
+	case err := <-done:
+		t.Fatalf("Dienst endete trotz belegtem Port: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Dienst startet nicht")
 	}
+	cancel()
+	<-done
 }
 
 // TestRunStaysUpDegradedWhenStartPortBusy: Windows. Port 8080 belegt: Der Dienst bleibt oben, das Symbol ist rot mit
 // Grund, die Selbstprüfung ist rot, die Gesundmarke steht (der Prozess ist gesund), und sobald der Port frei ist,
 // wird die Startseite gebunden, ohne Neustart.
 func TestRunStaysUpDegradedWhenStartPortBusy(t *testing.T) {
-	oldStay, oldEvery := staysUpWithoutStart, portRetryEvery
-	staysUpWithoutStart, portRetryEvery = true, 50*time.Millisecond
-	t.Cleanup(func() { staysUpWithoutStart, portRetryEvery = oldStay, oldEvery })
+	oldEvery := portRetryEvery
+	portRetryEvery = 50 * time.Millisecond
+	t.Cleanup(func() { portRetryEvery = oldEvery })
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

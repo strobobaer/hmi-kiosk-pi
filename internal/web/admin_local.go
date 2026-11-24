@@ -5,20 +5,23 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+
+	"hmikiosk/internal/localport"
 )
 
 // Die Admin-Seite am Terminal: Chromium im Kiosk kann die HTTPS-Seite mit dem
 // selbstsignierten Zertifikat nicht öffnen. Dieselben Seiten gibt es deshalb auch
-// über HTTP an 127.0.0.1:8081 (nie im Netz), ohne /peer/, mit eigenen Cookies, kurzer
-// Sitzung und der Tastatur-API. Anmeldung und Sperre sind dieselben.
+// über HTTP an 127.0.0.1:8081 (nie im Netz; der Port liegt einen über dem der Startseite, siehe
+// localport), ohne /peer/, mit eigenen Cookies, kurzer Sitzung und der Tastatur-API. Anmeldung und
+// Sperre sind dieselben.
 
 // pathLocalBack führt vom Terminal zurück zur Kachelseite; auch im Wartungs- und Reparaturmodus.
 const pathLocalBack = "/admin/local/back"
 
-// localAdminHosts schützt gegen DNS-Rebinding: Nur die lokalen Namen gelten.
-var localAdminHosts = map[string]bool{"127.0.0.1:8081": true, "localhost:8081": true}
+// localAdminHost schützt gegen DNS-Rebinding: Nur die lokalen Namen mit dem Port der Admin-Seite gelten.
+func localAdminHost(hostport string) bool { return localport.AdminHost(hostport) }
 
-var localAdminOrigins = map[string]bool{"http://127.0.0.1:8081": true, "http://localhost:8081": true}
+func localAdminOriginOK(origin string) bool { return localport.AdminOrigin(origin) }
 
 type terminalKey struct{}
 
@@ -63,7 +66,7 @@ func (a *admin) buildLocal() http.Handler {
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/admin/", http.StatusFound) })
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { notFound(w) })
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !localAdminHosts[r.Host] {
+		if !localAdminHost(r.Host) {
 			http.Error(w, "Anfrage nicht erlaubt", http.StatusForbidden)
 			return
 		}
@@ -83,17 +86,17 @@ func (a *admin) buildLocal() http.Handler {
 // wird abgelehnt.
 func localAdminOrigin(r *http.Request) bool {
 	if o := r.Header.Get("Origin"); o != "" {
-		return localAdminOrigins[o]
+		return localAdminOriginOK(o)
 	}
 	if ref := r.Header.Get("Referer"); ref != "" {
 		u, err := url.Parse(ref)
-		return err == nil && localAdminOrigins[u.Scheme+"://"+u.Host]
+		return err == nil && localAdminOriginOK(u.Scheme+"://"+u.Host)
 	}
 	return false
 }
 
 // trustedNavigation: Chromium öffnet die Seite als Dokument, nicht von einer fremden Seite
-// aus (Sec-Fetch-Site none, same-origin oder same-site wie die Kachelseite an 8080).
+// aus (Sec-Fetch-Site none, same-origin oder same-site wie die Kachelseite).
 func trustedNavigation(r *http.Request) bool {
 	if r.Header.Get("Sec-Fetch-Mode") != "navigate" {
 		return false
@@ -135,5 +138,5 @@ func (a *admin) handleLocalBack(w http.ResponseWriter, r *http.Request) {
 	if a.d.LocalLeft != nil {
 		a.d.LocalLeft()
 	}
-	http.Redirect(w, r, KioskURL, http.StatusSeeOther)
+	http.Redirect(w, r, KioskURL(), http.StatusSeeOther)
 }

@@ -4,13 +4,16 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/web"
@@ -38,6 +41,15 @@ type pdhView struct {
 	User, Since                         string
 	State, StateClass                   string
 	Notice                              string
+
+	// Lokale Startseite: LocalPort ist der Wert im Feld, Port/AdminPort der tatsächlich benutzte Port der
+	// Startseite und der lokalen Admin-Seite, Pending der gespeicherte, aber erst nach dem Neustart gültige.
+	LocalPort       string
+	Port, AdminPort int
+	Pending         int
+	Failed          int // eingestellter Port, der sich nicht binden ließ; es läuft der Grundwert
+	PortProblem     string
+	DefaultPort     int
 }
 
 type adminProduct struct {
@@ -48,6 +60,14 @@ type adminProduct struct {
 	display *oled.Service
 	// probe prüft das Statusdisplay (Variable für Tests).
 	probe func(bus string, addr int) error
+	// local meldet den tatsächlich benutzten Port der Startseite; nil: der eingestellte Port (localport).
+	local func() localState
+	// adminPort liefert den Port der Admin-Seite über HTTPS (für die Kollisionsprüfung); nil: 8443.
+	adminPort func() int
+	// bindProbe versucht, addr kurz zu binden (nil: wirklich binden); für Tests ersetzbar.
+	bindProbe func(addr string) error
+	// saved meldet dem Dienst ein Speichern des Ports nach bestandenem Bindetest und Abgleich (nil: kein Dienst).
+	saved func()
 	// kiosk: Windows-Kiosk, die Seite hat den Abschnitt „Kiosk“; logoff meldet den Benutzer ab (Windows:
 	// ExitWindowsEx(EWX_LOGOFF), Tests ersetzen es).
 	kiosk  bool
@@ -123,6 +143,7 @@ func (p *adminProduct) baseProduct() *web.AdminProduct {
 			}},
 			{Method: http.MethodPost, Path: "/admin/functions", Handle: p.functionsSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/settings", Handle: p.settings},
+			{Method: http.MethodPost, Path: "/admin/pdh/localport", Handle: p.localPortSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/pair", Handle: p.pair},
 			{Method: http.MethodPost, Path: "/admin/pdh/unpair", Handle: p.unpair},
 			{Method: http.MethodGet, Path: "/admin/card", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
@@ -148,6 +169,11 @@ func defaultName() string {
 
 // render zeigt die Seite PDH. form (nicht nil) ersetzt die gespeicherten Werte im Formular.
 func (p *adminProduct) render(f web.AdminFrame, w http.ResponseWriter, r *http.Request, status int, errMsg, notice string, form *config.PDHCfg) {
+	p.renderPort(f, w, r, status, errMsg, notice, form, nil)
+}
+
+// renderPort wie render; port (nicht nil) ersetzt den gespeicherten Port im Feld der lokalen Startseite.
+func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *http.Request, status int, errMsg, notice string, form *config.PDHCfg, port *string) {
 	cfg, err := f.Load()
 	if err != nil {
 		f.Render(w, http.StatusInternalServerError, "pdh", "pdh", "PDH", err.Error(), pdhView{})
@@ -160,6 +186,31 @@ func (p *adminProduct) render(f web.AdminFrame, w http.ResponseWriter, r *http.R
 	v := pdhView{
 		URL: shown.URL, AllowHTTP: shown.AllowHTTP, DeviceName: shown.DeviceName,
 		Extra: strings.Join(shown.ExtraOrigins, "\n"), DefaultName: defaultName(), Notice: notice,
+		DefaultPort: localport.Default,
+	}
+	v.LocalPort = strconv.Itoa(cfg.LocalPort())
+	if port != nil {
+		v.LocalPort = *port
+	}
+	ls := localState{Port: localport.Get()}
+	if p.local != nil {
+		ls = p.local()
+	}
+	v.Port, v.AdminPort, v.PortProblem = ls.Port, ls.Port+1, ls.Problem
+	if policyMarkerInvalid(p.dataDir) {
+		const msg = "Browser-Richtlinie in unbekanntem Zustand (Helfer hat nicht bestätigt) – Port erneut speichern"
+		if v.PortProblem != "" {
+			v.PortProblem += "; " + msg
+		} else {
+			v.PortProblem = msg
+		}
+	}
+	if want := cfg.LocalPort(); want != ls.Port {
+		if want == ls.Failed && want != 0 {
+			v.Failed = want
+		} else {
+			v.Pending = want
+		}
 	}
 	dev, derr := LoadDevice(p.dataDir)
 	switch {
@@ -231,6 +282,127 @@ func (p *adminProduct) settings(f web.AdminFrame, w http.ResponseWriter, r *http
 		notice = "Kopplung entfernt, weil die PDH-Adresse geändert wurde."
 	}
 	p.render(f, w, r, http.StatusOK, "", notice, nil)
+}
+
+// localPortSave speichert den Port der lokalen Startseite. Er wirkt nach dem Neustart des Dienstes, den der
+// Dienst nach dem Speichern selbst auslöst (service.portChanged).
+func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		p.render(f, w, r, http.StatusBadRequest, "Formular unlesbar", "", nil)
+		return
+	}
+	raw := strings.TrimSpace(r.PostFormValue("localPort"))
+	fail := func(msg string) {
+		p.renderPort(f, w, r, http.StatusBadRequest, msg, "", nil, &raw)
+	}
+	port := 0
+	if raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			fail(fmt.Sprintf("Port der lokalen Startseite muss eine Zahl sein: %q", raw))
+			return
+		}
+		port = n
+	}
+	adminPort := config.DefaultAdminPort
+	if p.adminPort != nil {
+		adminPort = p.adminPort()
+	}
+	if err := config.ValidateLocalPort(port, adminPort); err != nil {
+		fail(err.Error())
+		return
+	}
+	if port == localport.Default {
+		port = 0 // der Grundwert steht nicht in der Datei
+	}
+	eff := portOrDefault(port)
+	cfg, lerr := f.Load()
+	if lerr != nil {
+		p.render(f, w, r, http.StatusInternalServerError, lerr.Error(), "", nil)
+		return
+	}
+	running := localport.Get() // Port, an den die Startseite in diesem Lauf gebunden ist
+	if p.local != nil {
+		if ls := p.local(); ls.Port != 0 {
+			running = ls.Port
+		}
+	}
+	changed := eff != cfg.LocalPort()
+	restart := eff != running // der Dienst startet nach dem Speichern neu (service.portChanged)
+	if changed || restart {
+		// Ein nicht bindbarer Port würde den Neustart ohne Startseite zurücklassen: vorher prüfen. Die Ports dieses
+		// Laufs gelten als frei (sie sind belegt, weil das Terminal sie selbst hält).
+		for _, bp := range []int{eff, eff + 1} {
+			if bp == localport.Get() || bp == localport.Admin() {
+				continue
+			}
+			if err := p.tryBind(bp); err != nil {
+				fail(fmt.Sprintf("Port %d lässt sich auf diesem Rechner nicht öffnen (%v). Bitte einen anderen Port wählen.", bp, err))
+				return
+			}
+		}
+	}
+	// Erst die Richtlinie des Browsers, dann die Konfiguration: Steht der neue Port in der Datei, ohne dass der
+	// Browser ihn öffnen darf, bliebe der Bildschirm nach dem nächsten Start gesperrt. Auch ohne Änderung, solange
+	// die Richtlinie nicht bestätigt auf dem Port steht (z. B. nach einer verspäteten Antwort des Helfers).
+	h := f.Helper()
+	policySet := false
+	if h != nil && (changed || restart || !policyMatches(p.dataDir, eff)) {
+		ctx, cancel := context.WithTimeout(r.Context(), policyPortTimeout)
+		err := setPolicyPort(ctx, p.dataDir, h.Call, eff)
+		cancel()
+		if err != nil {
+			f.Logf("Richtlinie für Port %d nicht gesetzt: %v", eff, err)
+			fail("Browser-Richtlinie konnte nicht angepasst werden – Port nicht geändert (Systemteile aktualisieren)")
+			return
+		}
+		policySet = true
+	}
+	if p.saved != nil {
+		p.saved() // vor dem Speichern: apply entscheidet sofort über den Neustart
+	}
+	if err := f.Update(func(c *config.Config) error { c.Kiosk.LocalPort = port; return nil }); err != nil {
+		if policySet && eff != running { // Richtlinie zurück auf den laufenden Port
+			p.revertPolicy(h, r, running)
+		}
+		fail(err.Error())
+		return
+	}
+	notice := "Einstellung gespeichert."
+	if restart {
+		f.Logf("Port der lokalen Startseite auf %d gestellt", eff)
+		notice = fmt.Sprintf("Gespeichert. Das Terminal wird neu gestartet; danach ist die Startseite unter Port %d und die lokale Admin-Seite unter Port %d erreichbar.", eff, eff+1)
+	}
+	p.render(f, w, r, http.StatusOK, "", notice, nil)
+}
+
+// revertPolicy setzt die Richtlinie best effort auf den Port zurück, an den die Startseite gerade wirklich gebunden ist
+// (nach einem Rückfall oder bei einem eingeplanten Wechsel ist das nicht der gespeicherte). Misslingt es, bleibt der
+// Vermerk ungültig, und der nächste Start oder das nächste Speichern gleicht ab.
+func (p *adminProduct) revertPolicy(h web.HelperAPI, r *http.Request, running int) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), policyPortTimeout)
+	defer cancel()
+	_ = setPolicyPort(ctx, p.dataDir, h.Call, running)
+}
+
+// tryBind öffnet 127.0.0.1:port kurz und schließt es sofort wieder.
+func (p *adminProduct) tryBind(port int) error {
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	if p.bindProbe != nil {
+		return p.bindProbe(addr)
+	}
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return l.Close()
+}
+
+func portOrDefault(p int) int {
+	if p == 0 {
+		return localport.Default
+	}
+	return p
 }
 
 func (p *adminProduct) pair(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {

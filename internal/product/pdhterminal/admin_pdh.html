@@ -35,6 +35,21 @@
 </section>
 
 <section class="panel stack">
+  <h2>Lokale Startseite</h2>
+  <p>Zurzeit benutzt: Startseite an Port {{.Port}}, lokale Admin-Seite an Port {{.AdminPort}}{{if .Failed}} · Eingestellter Port {{.Failed}} nicht verfügbar – läuft auf {{.Port}}{{end}}{{if .Pending}} · gespeichert ist Port {{.Pending}}, er gilt nach dem Neustart des Terminals{{end}}.</p>
+  {{if .PortProblem}}<p class="msg err" role="alert">{{.PortProblem}}</p>{{end}}
+  <form method="post" action="/admin/pdh/localport" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Port der lokalen Startseite
+      <input type="text" name="localPort" value="{{.LocalPort}}" inputmode="numeric" autocomplete="off" placeholder="{{.DefaultPort}}">
+    </label>
+    <p class="hint">Die lokale Admin-Seite nutzt den Port darüber. Ändern, wenn 8080 auf diesem Rechner gesperrt oder belegt ist.</p>
+    <p class="hint">Erlaubt sind 1024 bis 65534; der Port und der Port darüber dürfen nicht der Port dieser Admin-Seite sein. Nach dem Speichern startet das Terminal neu und zeigt die Startseite am neuen Port. Gelingt das nicht, läuft es auf dem bisherigen Port weiter, und die Meldung steht unter System.</p>
+    <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+  </form>
+</section>
+
+<section class="panel stack">
   <h2>Koppeln</h2>
   <form method="post" action="/admin/pdh/pair" class="stack" autocomplete="off">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">

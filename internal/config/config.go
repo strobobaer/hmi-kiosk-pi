@@ -5,6 +5,8 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+
+	"hmikiosk/internal/localport"
 )
 
 type Role string
@@ -75,6 +77,11 @@ type KioskCfg struct {
 	// NetworkTiles gibt die Kachelseite für Tests im Netz frei (Port 8080 auf allen
 	// Adressen). Sie gehört zum Gerät: Der Import übernimmt sie nicht.
 	NetworkTiles bool `json:"networkTiles,omitempty"`
+	// LocalPort ist der Port der lokalen Startseite (127.0.0.1); die lokale Admin-Seite am
+	// Terminal liegt einen Port darüber. 0 oder fehlend heißt 8080 (und 8081). Er gehört zum
+	// Rechner (andere Rechner sperren andere Bereiche): Der Import übernimmt ihn nicht.
+	// Eine Änderung wirkt nach dem Neustart des Dienstes (PDH-Terminal).
+	LocalPort int `json:"local_port,omitempty"`
 }
 
 const (
@@ -137,6 +144,14 @@ type Config struct {
 }
 
 const SchemaVersion = 1
+
+// LocalPort liefert den Port der lokalen Startseite; fehlt der Wert, gilt der Grundwert 8080.
+func (c Config) LocalPort() int {
+	if c.Kiosk.LocalPort == 0 {
+		return localport.Default
+	}
+	return c.Kiosk.LocalPort
+}
 
 func Default() Config {
 	var c Config

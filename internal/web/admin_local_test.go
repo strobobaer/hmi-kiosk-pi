@@ -215,7 +215,7 @@ func TestLocalBackEndsSession(t *testing.T) {
 	e.a.d.LocalLeft = func() { left.Add(1) }
 	b := e.terminalLogin()
 	r := b.post("/admin/local/back", nil)
-	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL {
+	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL() {
 		t.Fatalf("Zurück: %d %q", r.Code, r.Header().Get("Location"))
 	}
 	if left.Load() != 1 {
@@ -317,7 +317,7 @@ func TestLocalBackWorksWithoutValidSession(t *testing.T) {
 	tok := csrfRe.FindStringSubmatch(b.get("/admin/hmis").Body.String())[1]
 	e.clock.advance(localSessionIdle + time.Minute)
 	r := b.postRaw("/admin/local/back", url.Values{"csrf": {tok}})
-	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL {
+	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL() {
 		t.Fatalf("Zurück mit abgelaufener Sitzung: %d %q", r.Code, r.Header().Get("Location"))
 	}
 	if left.Load() != 1 {
@@ -325,7 +325,7 @@ func TestLocalBackWorksWithoutValidSession(t *testing.T) {
 	}
 	// Auch ganz ohne Cookie (Anmeldeseite).
 	r = e.terminal().postRaw("/admin/local/back", nil)
-	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL {
+	if r.Code != http.StatusSeeOther || r.Header().Get("Location") != KioskURL() {
 		t.Fatalf("Zurück ohne Sitzung: %d %q", r.Code, r.Header().Get("Location"))
 	}
 	// Fremder Ursprung bleibt abgelehnt.

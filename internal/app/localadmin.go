@@ -52,10 +52,10 @@ func (s *service) startLocalAdmin(ctx context.Context, wg *sync.WaitGroup, h htt
 }
 
 // localAdminOrigin ist der Ursprung, den das Zahnrad öffnet.
-var localAdminOrigin = strings.TrimSuffix(web.LocalAdminURL, "/admin/")
+func localAdminOrigin() string { return strings.TrimSuffix(web.LocalAdminURL(), "/admin/") }
 
 // localAdminShown: Das Zahnrad erscheint nur, wenn die Admin-Seite am Terminal läuft und die
 // Chromium-Richtlinie sie öffnen lässt. Systemteile vor 0.1.6 sperren sie („This page is blocked“).
 func (s *service) localAdminShown() bool {
-	return s.localAdminUp.Load() && platform.ChromiumAllows(rootFS, localAdminOrigin)
+	return s.localAdminUp.Load() && platform.ChromiumAllows(rootFS, localAdminOrigin())
 }

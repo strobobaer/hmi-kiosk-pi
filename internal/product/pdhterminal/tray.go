@@ -49,10 +49,11 @@ const adminPathSelftest = "/admin/system"
 
 // Problemarten für den Tooltip.
 const (
-	problemEdge  = "edge"
-	problemAdmin = "port-admin"
-	problemLocal = "port-local"
-	problemStart = "port-start" // Startseite (8080) nicht gebunden
+	problemEdge   = "edge"
+	problemAdmin  = "port-admin"
+	problemLocal  = "port-local"
+	problemStart  = "port-start"  // Startseite (Port aus der Konfiguration, Grundwert 8080) nicht gebunden
+	problemPolicy = "policy-port" // Chromium-Richtlinie beim Start nicht auf den Port der Startseite gesetzt
 )
 
 // setProblem merkt einen Grund für die rote Färbung (leer: erledigt) und färbt das Symbol neu.
@@ -74,7 +75,7 @@ func (s *service) setProblem(kind, msg string) {
 func (s *service) trayReason() string {
 	s.mu.RLock()
 	parts := make([]string, 0, 4)
-	for _, k := range []string{problemEdge, problemStart, problemLocal, problemAdmin} {
+	for _, k := range []string{problemEdge, problemStart, problemLocal, problemAdmin, problemPolicy} {
 		if m := s.problems[k]; m != "" {
 			parts = append(parts, m)
 		}
