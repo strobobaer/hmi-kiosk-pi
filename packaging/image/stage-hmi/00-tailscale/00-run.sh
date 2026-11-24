@@ -1,0 +1,13 @@
+#!/bin/bash -e
+# Tailscale, Teil 1 (auf dem Bauhost): Schlüsselbund und Paketquelle ins Abbild legen.
+# pi-gen führt 00-run-chroot.sh nur über stdin im Chroot aus; files/ ist dort nicht sichtbar,
+# deshalb kopiert dieses Skript, 00-run-chroot.sh installiert danach das Paket.
+#
+# Schlüsselbund: einmalig von https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg geladen.
+# Fingerabdruck: 2596 A99E AAB3 3821 893C  0A79 458C A832 957F 5868
+# (Tailscale Inc., Package repository signing key, RSA 4096, 2020-02-25)
+install -d -m 755 "${ROOTFS_DIR}/usr/share/keyrings" "${ROOTFS_DIR}/etc/apt/sources.list.d"
+install -m 644 -o root -g root files/tailscale-archive-keyring.gpg "${ROOTFS_DIR}/usr/share/keyrings/tailscale-archive-keyring.gpg"
+printf '%s\n' 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main' \
+	>"${ROOTFS_DIR}/etc/apt/sources.list.d/tailscale.list"
+chmod 644 "${ROOTFS_DIR}/etc/apt/sources.list.d/tailscale.list"

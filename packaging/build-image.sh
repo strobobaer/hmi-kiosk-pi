@@ -108,7 +108,7 @@ cp packaging/image/identity.sh "$files/identity.sh"
 cp "$work/bin/$PRODUCT_BINARY" "$work/bin/hmi-kiosk-helper" "$files/bin/"
 printf 'HMI_VERSION=%s\nHMI_ENABLE_SSH=%s\nHMI_PRODUCT_ID=%s\nHMI_PRODUCT_BINARY=%s\n' "$VERSION" "$ssh" "$PRODUCT_ID" "$PRODUCT_BINARY" >"$files/build.env"
 # Unter Windows fehlen Ausführungsrechte; docker build übernimmt sie von hier.
-chmod +x "$pg/stage-hmi/prerun.sh" "$pg/stage-hmi/01-hmi/00-run.sh"
+chmod +x "$pg/stage-hmi/prerun.sh" "$pg/stage-hmi/00-tailscale/00-run.sh" "$pg/stage-hmi/01-hmi/00-run.sh"
 
 # Konfiguration dieses Baus. FIRST_USER_PASS ist ein verworfener Zufallswert: pi-gen verlangt ihn
 # ohne Umbenennungs-Assistent, stage-hmi sperrt das Konto danach.

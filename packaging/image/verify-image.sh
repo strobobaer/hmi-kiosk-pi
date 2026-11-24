@@ -16,7 +16,7 @@ set -eu
 KIOSK_UID=1100
 REQUIRED_PACKAGES="labwc xwayland wvkbd chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
 xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs
-iputils-arping iputils-ping network-manager"
+iputils-arping iputils-ping network-manager tailscale"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
 UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service hmi-kiosk-network.service"
 
@@ -395,6 +395,16 @@ masked getty@tty1.service || msg="$msg; getty@tty1.service nicht maskiert"
 [ -e "$R/var/lib/systemd/linger/hmikiosk" ] || msg="$msg; linger für hmikiosk fehlt"
 [ -f "$R/usr/share/icons/hmi-blank/cursors/default" ] || msg="$msg; Zeigerthema hmi-blank fehlt"
 if [ -z "$msg" ]; then ok dienste "$UNITS vorhanden und aktiviert; Dienst als hmikiosk, Helfer als root"; else bad dienste "${msg#; }"; fi
+
+# Tailscale: Paket aus der signierten Quelle, Dienst an, aber nicht am Tailnet angemeldet (das macht der Helfer)
+msg=""
+installed tailscale || msg="$msg; tailscale nicht installiert"
+[ -x "$R/usr/bin/tailscale" ] || msg="$msg; /usr/bin/tailscale fehlt (der Helfer sucht es dort)"
+enabled_in multi-user.target tailscaled.service || msg="$msg; tailscaled.service nicht aktiviert"
+grep -Fqx 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main' \
+	"$R/etc/apt/sources.list.d/tailscale.list" 2>/dev/null || msg="$msg; /etc/apt/sources.list.d/tailscale.list ohne signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg"
+[ -s "$R/usr/share/keyrings/tailscale-archive-keyring.gpg" ] || msg="$msg; Schlüsselbund tailscale-archive-keyring.gpg fehlt"
+if [ -z "$msg" ]; then ok tailscale "tailscale installiert, tailscaled aktiviert, Quelle mit signed-by-Schlüsselbund"; else bad tailscale "${msg#; }"; fi
 
 # Hardware-Watchdog
 if grep -qx 'RuntimeWatchdogSec=15s' "$R/etc/systemd/system.conf.d/watchdog.conf" 2>/dev/null; then
