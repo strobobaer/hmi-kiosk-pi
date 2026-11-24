@@ -16,8 +16,13 @@ var binaryNames = []string{"mount", "umount", "blkid", "sync", "rfkill", "system
 // optionalBinaryNames werden nur für die dateiweise Sicherung (losetup, rsync, mkfs.vfat) und die
 // Ethernet-Einstellung (nmcli, arping) gebraucht. Fehlen sie, startet der Helfer trotzdem;
 // die Sicherung meldet dann, was nachzuinstallieren ist.
-var optionalBinaryNames = []string{"losetup", "rsync", "mkfs.vfat", "nmcli", "arping"}
+var optionalBinaryNames = []string{"losetup", "rsync", "mkfs.vfat", "nmcli", "arping", "tailscale"}
 var binaryDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+
+// notInstalledError meldet ein optionales Programm, das auf dem Gerät fehlt.
+type notInstalledError struct{ name string }
+
+func (e notInstalledError) Error() string { return fmt.Sprintf("Programm %s ist nicht installiert", e.name) }
 
 // NewOSExec löst die benötigten Programme einmalig in festen Verzeichnissen auf
 // und startet später nur diese absoluten Pfade, ohne Shell und mit leerer Umgebung.
@@ -65,7 +70,7 @@ func newOSRunner() (ExecOut, error) {
 		if !ok {
 			for _, o := range optionalBinaryNames {
 				if o == name {
-					return "", fmt.Errorf("Programm %s ist nicht installiert", name)
+					return "", notInstalledError{name}
 				}
 			}
 			return "", fmt.Errorf("Programm %q nicht erlaubt", name)

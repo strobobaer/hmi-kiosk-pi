@@ -56,6 +56,9 @@ type Server struct {
 	WebOriginsStatePath string
 	// LocalPortStatePath hält den dauerhaften Port der lokalen Startseite; leer: neben WebOriginsStatePath ("local-port").
 	LocalPortStatePath string
+	// TailnetKeyPath ist die kurzlebige Datei für den Tailscale-Auth-Key (Voreinstellung im root-eigenen Ordner des
+	// Helfers); ihr Ordner muss root gehören und darf für andere nicht schreibbar sein.
+	TailnetKeyPath string
 	// LocalNetworkAccess nimmt die Ursprünge zusätzlich in LocalNetworkAccessAllowedForUrls auf (PDH-Terminal).
 	LocalNetworkAccess bool
 
@@ -85,6 +88,7 @@ func NewServer(socket string, allowedUID int, e Exec, bootCfg string, upd Update
 		HealthyMarker:       "/run/hmi-kiosk/healthy",
 		ChromiumPolicyPath:  defaultPolicyPath,
 		WebOriginsStatePath: defaultWebOriginsSt,
+		TailnetKeyPath:      defaultTailnetKeyPath,
 		peerUID:             peerUID,
 	}
 }
