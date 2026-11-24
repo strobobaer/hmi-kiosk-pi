@@ -540,7 +540,8 @@ func (f *FuncSync) runEvents(ctx context.Context) {
 	}
 }
 
-// readEvents liest den Kanal bis zum Ende; true, wenn er mit 200 geöffnet wurde.
+// readEvents liest den Kanal bis zum Ende; true, wenn er mit 200 geöffnet wurde oder der Verbindungsfehler auf die
+// Ausweichadresse umgeschaltet hat (dann soll runEvents bald neu verbinden).
 func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
 	base := f.client.base(d)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/terminal/events", nil)
@@ -557,9 +558,9 @@ func (f *FuncSync) readEvents(ctx context.Context, d Device) bool {
 	hc.Timeout = 0 // Dauerverbindung
 	resp, err := hc.Do(req)
 	if err != nil {
-		// Bei einem Wechsel auf die Ausweichadresse sofort neu verbinden (kurze statt lange Wartezeit); die Wiederholung
-		// im Aufrufer nimmt die neue Adresse.
-		return f.client.fail(base, err)
+		// Bei einem Wechsel auf die Ausweichadresse true: runEvents wartet dann kurz statt lange und verbindet über die
+		// neue Adresse. Ein offener Kanal bleibt nach der Rückkehr zur Hauptadresse, bis er abreißt.
+		return f.client.fail(ctx, base, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {

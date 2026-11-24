@@ -56,17 +56,19 @@ func (c Client) base(d Device) string {
 	return strings.TrimRight(d.URL, "/")
 }
 
-// routeName ist der Weg für base: "tailnet", wenn base nicht die Hauptadresse der Route ist, sonst "lan".
+// routeName ist der Weg, über den base wirklich geht: "tailnet" nur, wenn base die aktive Ausweichadresse der Route
+// ist; ein Gerät mit anderer Adresse geht direkt und ohne Route ("lan").
 func (c Client) routeName(base string) string {
-	if c.Route != nil && !sameBase(base, c.Route.Primary()) {
+	if c.Route != nil && !sameBase(base, c.Route.Primary()) && sameBase(base, c.Route.Base()) {
 		return "tailnet"
 	}
 	return "lan"
 }
 
 // fail meldet einen Transportfehler auf base an die Route; wahr, wenn auf die Ausweichadresse gewechselt wurde.
-func (c Client) fail(base string, err error) bool {
-	return c.Route != nil && c.Route.Fail(base, err)
+// Ist ctx des Aufrufers selbst abgelaufen oder abgebrochen, ist das kein Fehler des Weges: kein Wechsel.
+func (c Client) fail(ctx context.Context, base string, err error) bool {
+	return c.Route != nil && ctx.Err() == nil && c.Route.Fail(base, err)
 }
 
 // cancelBody gibt den Zeitgeber der Anfrage frei, sobald der Rumpf geschlossen wird.
@@ -87,7 +89,7 @@ func (b cancelBody) Close() error {
 func (c Client) send(ctx context.Context, d Device, build func(base string) (*http.Request, error)) (*http.Response, error) {
 	base := c.base(d)
 	resp, err := c.attempt(ctx, base, build)
-	if err != nil && c.fail(base, err) {
+	if err != nil && c.fail(ctx, base, err) {
 		base = c.base(d)
 		resp, err = c.attempt(ctx, base, build)
 	}
@@ -112,6 +114,9 @@ func (c Client) attempt(ctx context.Context, base string, build func(base string
 
 // Probe prüft die Hauptadresse base mit dem Gerätegeheimnis (für Route.Run): erreichbar bei 200 oder 401.
 func (c Client) Probe(ctx context.Context, d Device, base string) error {
+	if !sameBase(d.URL, base) {
+		return errUnreachable // das Geheimnis geht nur an die Adresse, für die es gilt
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/terminal/v1/device", nil)
 	if err != nil {
 		return errUnreachable

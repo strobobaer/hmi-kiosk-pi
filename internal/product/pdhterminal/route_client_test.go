@@ -121,7 +121,7 @@ func TestNoRouteUnchanged(t *testing.T) {
 func TestProbe(t *testing.T) {
 	for status, want := range map[int]bool{200: true, 401: true, 500: false, 403: false} {
 		s := newRouteSrv(status)
-		err := (Client{HTTP: trustClient(s)}).Probe(context.Background(), Device{Secret: "s"}, s.URL)
+		err := (Client{HTTP: trustClient(s)}).Probe(context.Background(), Device{URL: s.URL, Secret: "s"}, s.URL)
 		s.Close()
 		if (err == nil) != want {
 			t.Errorf("Status %d: %v", status, err)
@@ -145,5 +145,62 @@ func TestRunSetURLsOnConfigChange(t *testing.T) {
 	s.apply(c)
 	if s.route.Base() != "https://pdh.example" {
 		t.Fatalf("Basis nach Leeren: %q", s.route.Base())
+	}
+}
+
+func TestProbeNoSecretToOtherURL(t *testing.T) {
+	a, b := newRouteSrv(200), newRouteSrv(200)
+	defer a.Close()
+	defer b.Close()
+	// Gerät ist an A gekoppelt, die Route hat B als Hauptadresse: B bekommt weder Anfrage noch Geheimnis.
+	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if err := SaveDevice(s.o.DataDir, Device{DeviceID: "1", Secret: "geheim", URL: a.URL}); err != nil {
+		t.Fatal(err)
+	}
+	s.client.HTTP = trustClient(a, b)
+	if err := s.probePrimary(context.Background(), b.URL); err == nil {
+		t.Fatal("Fehler erwartet")
+	}
+	if a.hits.Load() != 0 || b.hits.Load() != 0 {
+		t.Fatalf("Anfragen: A %d, B %d", a.hits.Load(), b.hits.Load())
+	}
+}
+
+func TestRouteNameDirectDevice(t *testing.T) {
+	c := Client{Route: NewRoute("https://p.example", "https://f.example")}
+	if n := c.routeName("https://other.example"); n != "lan" {
+		t.Fatalf("anderes Gerät: %q", n)
+	}
+	c.Route.Fail("https://p.example", errNet)
+	if n := c.routeName("https://f.example"); n != "tailnet" {
+		t.Fatalf("Ausweichadresse: %q", n)
+	}
+	if n := c.routeName("https://other.example"); n != "lan" {
+		t.Fatalf("anderes Gerät bei aktiver Ausweichadresse: %q", n)
+	}
+}
+
+func TestNoSwitchOnCallerContextExpiry(t *testing.T) {
+	main, fb := newRouteSrv(200), newRouteSrv(200)
+	defer fb.Close()
+	main.Close()
+	c := Client{HTTP: trustClient(main, fb), Route: NewRoute(main.URL, fb.URL)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if st, _ := c.Check(ctx, Device{URL: main.URL, Secret: "s"}); st != StateUnreachable {
+		t.Fatalf("Check: %v", st)
+	}
+	if c.Route.Name() != "lan" || fb.hits.Load() != 0 {
+		t.Fatalf("Route %s, Treffer %d", c.Route.Name(), fb.hits.Load())
+	}
+	dctx, dcancel := context.WithTimeout(context.Background(), 0)
+	defer dcancel()
+	c.Check(dctx, Device{URL: main.URL, Secret: "s"})
+	if c.Route.Name() != "lan" || fb.hits.Load() != 0 {
+		t.Fatalf("nach Frist: Route %s, Treffer %d", c.Route.Name(), fb.hits.Load())
 	}
 }
