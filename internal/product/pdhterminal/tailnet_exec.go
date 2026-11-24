@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"os/exec"
-	"strings"
 	"time"
 
 	"hmikiosk/internal/tailnet"
@@ -24,7 +23,7 @@ func (s *service) tailnetCtl() tailnet.Ctl {
 }
 
 // runTailscale startet tailscale.exe ohne Shell und ohne Fenster. Die Befehlszeile enthält nie den Auth-Key
-// (er geht über eine Datei); die Fehlermeldung bekommt nur ein kurzes Stück der Programmausgabe.
+// (er geht über eine Datei); die Fehlermeldung bekommt nur ein kurzes, vom Key bereinigtes Stück der Ausgabe.
 func runTailscale(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = 2 * time.Second
@@ -32,10 +31,8 @@ func runTailscale(ctx context.Context, name string, args ...string) (string, err
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String() + stdout.String())
-		if len(msg) > 200 {
-			msg = msg[:200]
-		}
+		// Erst den Key ersetzen, dann kürzen (tailnet.Scrub).
+		msg := tailnet.Scrub(ctx, stderr.String()+stdout.String())
 		if msg != "" {
 			return stdout.String(), errors.New(err.Error() + ": " + msg)
 		}

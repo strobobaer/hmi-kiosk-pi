@@ -48,10 +48,31 @@ func TestHostnameFrom(t *testing.T) {
 	if !ValidHostname(HostnameFrom("Ä/ö x")) {
 		t.Error("abgeleiteter Name muss gültig sein")
 	}
+	for in, want := range map[string]string{"Halle 3 ": "halle-3", "Ölwanne": "lwanne", " - ": "pdh-terminal", "---": "pdh-terminal", "-a-": "a"} {
+		if got := HostnameFrom(in); got != want {
+			t.Errorf("HostnameFrom(%q) = %q, erwartet %q", in, got, want)
+		}
+	}
+	if got := HostnameFrom(strings.Repeat("a", 62) + " b"); got != strings.Repeat("a", 62) {
+		t.Errorf("Schnitt nach 63 Zeichen: %q", got)
+	}
+}
+
+func TestValidHostname(t *testing.T) {
+	for _, h := range []string{"", "-a", "a-", "A", "a b", "a_b", strings.Repeat("a", 64)} {
+		if ValidHostname(h) {
+			t.Errorf("%q angenommen", h)
+		}
+	}
+	for _, h := range []string{"a", "halle-3---s-ge", strings.Repeat("a", 63)} {
+		if !ValidHostname(h) {
+			t.Errorf("%q abgelehnt", h)
+		}
+	}
 }
 
 func TestValidateKey(t *testing.T) {
-	for _, k := range []string{"", "a\nb", "a\rb", "a\x00b", "a\x7fb", strings.Repeat("k", 513), "a b"} {
+	for _, k := range []string{"", "a\nb", "a\rb", "a\x00b", "a\x7fb", strings.Repeat("k", 513), "a b", "a\u0085b", "a\u2028b", "k\xffk", "kä"} {
 		if err := ValidateKey(k); err == nil {
 			t.Errorf("%q muss abgelehnt werden", k)
 		} else if k != "" && strings.Contains(err.Error(), k) {

@@ -43,8 +43,9 @@ func tailnetEnv(t *testing.T, ft *fakeTailnet) *adminEnv {
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
+	old := log.Writer()
 	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(log.Default().Writer()) })
+	t.Cleanup(func() { log.SetOutput(old) })
 	return &buf
 }
 

@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"strings"
 
 	"hmikiosk/internal/helperapi"
+	"hmikiosk/internal/tailnet"
 )
 
 // Die Befehle der Tailnet-Steuerung. tailnet-up nimmt JSON {"key","host"}: Der Auth-Key geht nur über eine
@@ -29,9 +29,12 @@ const (
 	maxTailnetKey  = 512
 	tailnetBinary  = "tailscale"
 	maxTailnetArgs = 2048
+	// maxTailnetStatus: Mehr von "tailscale status --json" wird nicht gelesen.
+	maxTailnetStatus = 256 << 10
 )
 
-var tailnetHostRe = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)
+// Ein DNS-Label: 1 bis 63 Zeichen aus [a-z0-9-], am Anfang und Ende kein "-".
+var tailnetHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // parseTailnetUp liest den Wert von tailnet-up streng: genau die Felder key und host, nichts dahinter.
 // Fehlertexte nennen den Inhalt nie.
@@ -63,7 +66,7 @@ func parseTailnetUp(arg string) (key, host string, err error) {
 		return "", "", errors.New("Der Auth-Key ist zu lang")
 	}
 	for i := 0; i < len(key); i++ {
-		if c := key[i]; c <= 0x20 || c == 0x7f {
+		if c := key[i]; c < 0x21 || c > 0x7e {
 			return "", "", errors.New("Der Auth-Key enthält ein ungültiges Zeichen")
 		}
 	}
@@ -80,12 +83,18 @@ func (s *Server) tailnetUp(ctx context.Context, arg string) error {
 	if err != nil {
 		return err
 	}
+	// Erst prüfen, ob tailscale (jetzt) vorhanden ist; sonst bleibt der Key unberührt.
+	if s.HasTool != nil && !s.HasTool(tailnetBinary) {
+		return notInstalledError{tailnetBinary}
+	}
 	path := s.TailnetKeyPath
 	if path == "" {
 		path = defaultTailnetKeyPath
 	}
+	// --timeout lässt tailscale vor der Frist des Helfers (commandTimeout, 30 s) selbst mit einer Meldung enden.
+	ctx = tailnet.WithSecret(ctx, key)
 	err = withTailnetKeyFile(path, key, func() error {
-		return s.run(ctx, tailnetBinary, "up", "--reset", "--auth-key=file:"+path, "--hostname="+host)
+		return s.run(ctx, tailnetBinary, "up", "--reset", "--auth-key=file:"+path, "--hostname="+host, "--timeout=25s")
 	})
 	if err != nil {
 		return errors.New(strings.ReplaceAll(err.Error(), key, "***"))
@@ -104,7 +113,7 @@ func (s *Server) tailnetStatus(ctx context.Context, _ string) (any, error) {
 	if s.ExecOut == nil {
 		return nil, errors.New("Tailscale nicht abfragbar")
 	}
-	out, err := s.ExecOut(ctx, tailnetBinary, "status", "--json")
+	out, err := s.ExecOut(ctx, tailnetBinary, "status", "--json", "--peers=false")
 	if err != nil {
 		var ni notInstalledError
 		if errors.As(err, &ni) {
@@ -120,7 +129,7 @@ func (s *Server) tailnetStatus(ctx context.Context, _ string) (any, error) {
 			TailscaleIPs []string
 		}
 	}
-	if err := json.NewDecoder(bytes.NewReader([]byte(out))).Decode(&in); err != nil {
+	if err := json.NewDecoder(io.LimitReader(strings.NewReader(out), maxTailnetStatus)).Decode(&in); err != nil {
 		return nil, errors.New("Tailscale-Status nicht lesbar")
 	}
 	b, _ := json.Marshal(in)

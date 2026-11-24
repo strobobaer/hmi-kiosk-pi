@@ -7,8 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"hmikiosk/internal/tailnet"
 )
 
 var binaryNames = []string{"mount", "umount", "blkid", "sync", "rfkill", "systemctl", "timedatectl", "mkfs.ext4", "debugfs"}
@@ -70,12 +71,18 @@ func newOSRunner() (ExecOut, error) {
 	return func(ctx context.Context, name string, args ...string) (string, error) {
 		p, ok := paths[name]
 		if !ok {
+			optional := false
 			for _, o := range optionalBinaryNames {
-				if o == name {
-					return "", notInstalledError{name}
-				}
+				optional = optional || o == name
 			}
-			return "", fmt.Errorf("Programm %q nicht erlaubt", name)
+			if !optional {
+				return "", fmt.Errorf("Programm %q nicht erlaubt", name)
+			}
+			// Optionale Programme werden bei jedem Aufruf neu gesucht: Eine spätere Installation
+			// (z. B. Tailscale) gilt sofort, ohne dass der Helfer neu startet.
+			if p = lookupBinary(name); p == "" {
+				return "", notInstalledError{name}
+			}
 		}
 		cmd := exec.CommandContext(ctx, p, args...)
 		cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
@@ -83,10 +90,8 @@ func newOSRunner() (ExecOut, error) {
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		if err := cmd.Run(); err != nil {
-			msg := strings.TrimSpace(stderr.String() + stdout.String())
-			if len(msg) > 200 {
-				msg = msg[:200]
-			}
+			// Erst Geheimnisse ersetzen, dann kürzen: ein angeschnittener Auth-Key bliebe sonst unerkannt.
+			msg := tailnet.Scrub(ctx, stderr.String()+stdout.String())
 			if msg != "" {
 				return "", fmt.Errorf("%w: %s", err, msg)
 			}

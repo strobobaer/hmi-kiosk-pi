@@ -1,8 +1,10 @@
 package tailnet
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +57,7 @@ func TestCLIUpKeyNotInArgs(t *testing.T) {
 		t.Errorf("Datei existiert noch: %v", err)
 	}
 	joined := strings.Join(args, " ")
-	for _, want := range []string{" up ", "--reset", "--hostname=halle-3", "--unattended"} {
+	for _, want := range []string{" up ", "--reset", "--hostname=halle-3", "--unattended", "--timeout=50s"} {
 		if !strings.Contains(" "+joined+" ", want) {
 			t.Errorf("%q fehlt in %q", want, joined)
 		}
@@ -98,6 +100,48 @@ func TestCLIUpRejectsBadInputBeforeFile(t *testing.T) {
 	}
 }
 
+// Der Runner bekommt den Key über den Kontext, um ihn vor dem Kürzen aus der Ausgabe zu entfernen.
+func TestCLIUpPassesSecretToRunner(t *testing.T) {
+	run := func(ctx context.Context, _ string, _ ...string) (string, error) {
+		msg := Scrub(ctx, strings.Repeat("x", 180)+secretKey)
+		return "", errors.New(msg)
+	}
+	err := NewCLI(fakeBin(t), run).Up(context.Background(), secretKey, "x")
+	if err == nil || strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "tskey-auth") {
+		t.Fatalf("Fehler: %v", err)
+	}
+}
+
+// Misslingt das Löschen, steht nur der Pfad im Protokoll, nie der Key.
+func TestCLIUpLogsFailedRemoval(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	oldFn, oldTries, oldDelay := removeFile, removeTries, removeDelay
+	t.Cleanup(func() { log.SetOutput(os.Stderr); removeFile, removeTries, removeDelay = oldFn, oldTries, oldDelay })
+	removed := 0
+	removeFile = func(string) error { removed++; return errors.New("in use") }
+	removeTries, removeDelay = 3, 0
+	var path string
+	run := func(_ context.Context, _ string, a ...string) (string, error) {
+		for _, x := range a {
+			if p, ok := strings.CutPrefix(x, "--auth-key=file:"); ok {
+				path = p
+			}
+		}
+		return "", nil
+	}
+	if err := NewCLI(fakeBin(t), run).Up(context.Background(), secretKey, "x"); err != nil {
+		t.Fatal(err)
+	}
+	oldFn(path)
+	if removed != 3 {
+		t.Errorf("Versuche: %d", removed)
+	}
+	if !strings.Contains(buf.String(), path) || strings.Contains(buf.String(), "SECRET") {
+		t.Errorf("Protokoll: %q", buf.String())
+	}
+}
+
 func TestCLIUpPermissionError(t *testing.T) {
 	run := func(context.Context, string, ...string) (string, error) {
 		return "", errors.New("Access is denied")
@@ -130,7 +174,7 @@ func TestCLIStatusAndDown(t *testing.T) {
 	if err := c.Down(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || strings.Join(got[0], " ") != "status --json" || strings.Join(got[1], " ") != "logout" {
+	if len(got) != 2 || strings.Join(got[0], " ") != "status --json --peers=false" || strings.Join(got[1], " ") != "logout" {
 		t.Fatalf("Aufrufe: %q", got)
 	}
 }

@@ -71,7 +71,7 @@ func ParseStatus(b []byte) (Status, error) {
 }
 
 // HostnameFrom leitet den Tailscale-Hostnamen aus dem Gerätenamen ab: Kleinschreibung, jedes Zeichen außerhalb
-// von [a-z0-9-] wird einzeln zu "-", höchstens 63 Zeichen. Leer ergibt "pdh-terminal".
+// von [a-z0-9-] wird einzeln zu "-", höchstens 63 Zeichen, "-" an Anfang und Ende entfallen. Leer ergibt "pdh-terminal".
 func HostnameFrom(deviceName string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(deviceName) {
@@ -84,15 +84,17 @@ func HostnameFrom(deviceName string) string {
 			b.WriteByte('-')
 		}
 	}
-	if b.Len() == 0 {
+	// Ein DNS-Label beginnt und endet mit Buchstabe oder Ziffer (tailscale weist andere ab).
+	h := strings.Trim(b.String(), "-")
+	if h == "" {
 		return DefaultHost
 	}
-	return b.String()
+	return h
 }
 
-// ValidHostname prüft einen Hostnamen: 1 bis 63 Zeichen aus [a-z0-9-].
+// ValidHostname prüft einen Hostnamen: 1 bis 63 Zeichen aus [a-z0-9-], am Anfang und Ende kein "-".
 func ValidHostname(h string) bool {
-	if h == "" || len(h) > MaxHostLen {
+	if h == "" || len(h) > MaxHostLen || h[0] == '-' || h[len(h)-1] == '-' {
 		return false
 	}
 	for i := 0; i < len(h); i++ {
@@ -104,8 +106,9 @@ func ValidHostname(h string) bool {
 	return true
 }
 
-// ValidateKey prüft einen Auth-Key auf das, was ihn als Dateiinhalt unschädlich macht: nicht leer, höchstens
-// 512 Bytes, keine Steuerzeichen (auch kein Zeilenumbruch) und keine Leerzeichen. Der Key steht nie im Fehlertext.
+// ValidateKey prüft einen Auth-Key auf das, was ihn als Dateiinhalt unschädlich macht: 1 bis 512 Bytes, nur
+// sichtbares ASCII (0x21 bis 0x7E, also kein Leerzeichen, Steuerzeichen oder Zeilenumbruch). Der Key steht nie im
+// Fehlertext.
 func ValidateKey(key string) error {
 	switch {
 	case key == "":
@@ -114,8 +117,8 @@ func ValidateKey(key string) error {
 		return fmt.Errorf("Der Auth-Key ist zu lang (höchstens %d Zeichen).", MaxKeyLen)
 	}
 	for i := 0; i < len(key); i++ {
-		if c := key[i]; c <= 0x20 || c == 0x7f {
-			return errors.New("Der Auth-Key enthält ein ungültiges Zeichen (Leerzeichen, Zeilenumbruch oder Steuerzeichen).")
+		if c := key[i]; c < 0x21 || c > 0x7e {
+			return errors.New("Der Auth-Key enthält ein ungültiges Zeichen (Leerzeichen, Zeilenumbruch, Steuer- oder Nicht-ASCII-Zeichen).")
 		}
 	}
 	return nil
@@ -127,8 +130,8 @@ func redact(err error, key string) error {
 		return nil
 	}
 	msg := err.Error()
-	if key != "" && strings.Contains(msg, key) {
+	if key != "" {
 		msg = strings.ReplaceAll(msg, key, "***")
 	}
-	return errors.New(msg)
+	return errors.New(keyTokenRe.ReplaceAllString(msg, "tskey-***"))
 }

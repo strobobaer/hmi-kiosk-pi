@@ -2,6 +2,7 @@ package helper
 
 import (
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -38,4 +39,21 @@ func withTailnetKeyFile(path, key string, fn func() error) error {
 		return errors.New("Schlüsseldatei nicht schreibbar")
 	}
 	return fn()
+}
+
+// removeStaleTailnetKey entfernt beim Start des Helfers eine Schlüsseldatei, die ein abgebrochener Aufruf
+// (SIGKILL, Absturz) zurückgelassen hat. Fehlt der Ordner oder die Datei, ist nichts zu tun.
+func (s *Server) removeStaleTailnetKey() {
+	path := s.TailnetKeyPath
+	if path == "" {
+		path = defaultTailnetKeyPath
+	}
+	d, err := openStateDir(filepath.Dir(path), false)
+	if err != nil {
+		return
+	}
+	defer d.Close()
+	if err := syscall.Unlinkat(int(d.Fd()), filepath.Base(path)); err != nil && !errors.Is(err, syscall.ENOENT) {
+		log.Printf("Alte Tailscale-Schlüsseldatei nicht entfernbar: %v", err)
+	}
 }

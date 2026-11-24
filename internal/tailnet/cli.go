@@ -3,10 +3,39 @@ package tailnet
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// MaxStatusBytes begrenzt, wie viel der Statusausgabe gelesen wird.
+const MaxStatusBytes = 256 << 10
+
+// upTimeout beendet "tailscale up" selbst mit einer lesbaren Meldung, bevor die Admin-Seite (60 s) aufgibt.
+const upTimeout = "50s"
+
+// Das Löschen der Schlüsseldatei wird wiederholt (Virenscanner und Indexdienst halten Dateien kurz offen).
+var (
+	removeFile  = os.Remove
+	removeTries = 5
+	removeDelay = 200 * time.Millisecond
+)
+
+// removeKeyFile löscht die Schlüsseldatei; misslingt es, steht nur die Tatsache und der Pfad im Protokoll.
+func removeKeyFile(path string) {
+	for i := 0; i < removeTries; i++ {
+		err := removeFile(path)
+		if err == nil || os.IsNotExist(err) {
+			return
+		}
+		if i+1 < removeTries {
+			time.Sleep(removeDelay)
+		}
+	}
+	log.Printf("tailnet: Schlüsseldatei konnte nicht gelöscht werden: %s", path)
+}
 
 // ExecOut startet ein Programm ohne Shell und liefert seine Standardausgabe.
 type ExecOut func(ctx context.Context, name string, args ...string) (string, error)
@@ -45,7 +74,10 @@ func (c *cli) Status(ctx context.Context) (Status, error) {
 	if !c.installed() {
 		return Status{}, nil
 	}
-	out, err := c.run(ctx, c.bin, "status", "--json")
+	out, err := c.run(ctx, c.bin, "status", "--json", "--peers=false")
+	if len(out) > MaxStatusBytes {
+		out = out[:MaxStatusBytes]
+	}
 	if st, perr := ParseStatus([]byte(out)); perr == nil {
 		return st, nil // auch ein beendeter Dienst liefert den Stand
 	}
@@ -75,14 +107,15 @@ func (c *cli) Up(ctx context.Context, authKey, hostname string) error {
 		return errors.New("Schlüsseldatei nicht anlegbar: " + err.Error())
 	}
 	path := f.Name()
-	defer os.Remove(path)
+	defer removeKeyFile(path)
 	_ = f.Chmod(0o600) // CreateTemp legt schon mit 0600 an; unter Windows ohne Wirkung
 	_, werr := f.WriteString(authKey)
 	cerr := f.Close()
 	if werr != nil || cerr != nil {
 		return errors.New("Schlüsseldatei nicht schreibbar")
 	}
-	_, err = c.run(ctx, c.bin, "up", "--reset", "--auth-key=file:"+path, "--hostname="+hostname, "--unattended")
+	// Der Key wird auch aus der Ausgabe von tailscale entfernt, bevor diese gekürzt wird (Scrub im Runner).
+	_, err = c.run(WithSecret(ctx, authKey), c.bin, "up", "--reset", "--auth-key=file:"+path, "--hostname="+hostname, "--unattended", "--timeout="+upTimeout)
 	if err != nil {
 		err = redact(err, authKey)
 		low := strings.ToLower(err.Error())

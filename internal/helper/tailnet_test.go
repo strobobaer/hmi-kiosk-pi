@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hmikiosk/internal/tailnet"
 )
 
 const tnKey = "tskey-auth-kSECRET123CNTRL-abcdefghijkl"
@@ -64,7 +66,7 @@ func TestHelperTailnetUp(t *testing.T) {
 		t.Fatalf("Aufrufe: %q", e.calls)
 	}
 	c := e.calls[0]
-	if c[0] != "tailscale" || c[1] != "up" || c[2] != "--reset" || c[3] != "--auth-key=file:"+e.keyPath || c[4] != "--hostname=halle-3" || len(c) != 5 {
+	if c[0] != "tailscale" || c[1] != "up" || c[2] != "--reset" || c[3] != "--auth-key=file:"+e.keyPath || c[4] != "--hostname=halle-3" || c[5] != "--timeout=25s" || len(c) != 6 {
 		t.Fatalf("Befehl: %q", c)
 	}
 	for _, a := range c {
@@ -90,6 +92,10 @@ func TestHelperTailnetUpRejectsBadInput(t *testing.T) {
 		"Key mit NUL":            tnArg("tskey\x00xyz", "halle"),
 		"Key mit Leerzeichen":    tnArg("tskey xyz", "halle"),
 		"Key zu lang":            tnArg(strings.Repeat("k", 513), "halle"),
+		"Key mit NEL":            tnArg("tskey\u0085xyz", "halle"),
+		"Key nicht ASCII":        tnArg("tskeyäxyz", "halle"),
+		"Host führender -":       tnArg(tnKey, "-halle"),
+		"Host endender -":        tnArg(tnKey, "halle-"),
 		"Host Großbuchstabe":     tnArg(tnKey, "Halle"),
 		"Host Leerzeichen":       tnArg(tnKey, "ha lle"),
 		"Host leer":              tnArg(tnKey, ""),
@@ -196,7 +202,7 @@ func TestHelperTailnetStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(gotArgs, " ") != "tailscale status --json" {
+	if strings.Join(gotArgs, " ") != "tailscale status --json --peers=false" {
 		t.Errorf("Befehl: %q", gotArgs)
 	}
 	b, _ := json.Marshal(data)
@@ -224,4 +230,49 @@ func TestHelperTailnetStatus(t *testing.T) {
 	if _, err := e.srv.DispatchData(context.Background(), CmdTailnetStatus, ""); err == nil {
 		t.Error("ohne ExecOut kein Fehler")
 	}
+}
+
+// tailscale muss vor dem Schreiben des Keys da sein (und wird bei jedem Aufruf neu gefragt).
+func TestHelperTailnetUpChecksToolFirst(t *testing.T) {
+	linuxOnly(t)
+	e := newTailnetEnv(t)
+	present := false
+	e.srv.HasTool = func(name string) bool { return present && name == "tailscale" }
+	err := e.srv.Dispatch(context.Background(), CmdTailnetUp, tnArg(tnKey, "halle"))
+	if err == nil || !strings.Contains(err.Error(), "nicht installiert") || strings.Contains(err.Error(), tnKey) {
+		t.Fatalf("Fehler: %v", err)
+	}
+	if len(e.calls) != 0 {
+		t.Errorf("tailscale gestartet: %q", e.calls)
+	}
+	present = true
+	if err := e.srv.Dispatch(context.Background(), CmdTailnetUp, tnArg(tnKey, "halle")); err != nil {
+		t.Fatalf("nach der Installation: %v", err)
+	}
+}
+
+// Der Key geht über den Kontext an den Runner, damit er vor dem Kürzen entfernt wird.
+func TestHelperTailnetUpScrubsOutputBeforeCut(t *testing.T) {
+	linuxOnly(t)
+	e := newTailnetEnv(t)
+	e.srv.exec = func(ctx context.Context, _ string, _ ...string) error {
+		return errors.New(tailnet.Scrub(ctx, strings.Repeat("x", 170)+" "+tnKey))
+	}
+	err := e.srv.Dispatch(context.Background(), CmdTailnetUp, tnArg(tnKey, "halle"))
+	if err == nil || strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "tskey-auth") {
+		t.Fatalf("Fehler: %v", err)
+	}
+}
+
+func TestHelperRemovesStaleTailnetKeyAtStart(t *testing.T) {
+	linuxOnly(t)
+	e := newTailnetEnv(t)
+	if err := os.WriteFile(e.keyPath, []byte(tnKey), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.removeStaleTailnetKey()
+	if _, err := os.Lstat(e.keyPath); !os.IsNotExist(err) {
+		t.Fatalf("Rest nicht entfernt: %v", err)
+	}
+	e.srv.removeStaleTailnetKey() // ohne Datei kein Fehler
 }
