@@ -125,6 +125,7 @@ type service struct {
 	updates   *updatecheck.Service
 	presence  appcore.AdminPresence
 	client    Client
+	route     *Route                             // Wegwahl Haupt-/Ausweichadresse; s.client trägt sie
 	slides    *slides.Store                      // Zwischenspeicher der Folienschau (globales Terminal)
 	funcs     *FuncSync                          // Abgleich der Funktionen mit PDH
 	cards     *card.Service                      // Kartenleser; sein Hub speist SSE und Admin-Seite
@@ -173,6 +174,8 @@ func newService(o Options) (*service, error) {
 	}
 	s.cards = card.NewService(card.NewHub(time.Now), log.Printf)
 	s.slides = &slides.Store{Dir: filepath.Join(o.DataDir, slidesDirName)}
+	s.route = NewRoute("", "")
+	s.client = Client{Route: s.route}
 	s.funcs = NewFuncSync(o.DataDir, s.client)
 	s.display = oled.NewService(log.Printf)
 
@@ -208,7 +211,17 @@ func newService(o Options) (*service, error) {
 	}
 	// Die Richtlinie vom Helfer-Start gilt bis hierhin; abgeglichen wird trotzdem.
 	s.origins.Set(config.PDHOrigins(s.config().PDH))
+	s.route.SetURLs(s.config().PDH.URL, s.config().PDH.FallbackURL)
 	return s, nil
+}
+
+// probePrimary prüft für die Wegwahl die Hauptadresse mit dem Gerätegeheimnis.
+func (s *service) probePrimary(ctx context.Context, base string) error {
+	d, err := LoadDevice(s.o.DataDir)
+	if err != nil || d == nil {
+		return errUnreachable
+	}
+	return s.client.Probe(ctx, *d, base)
 }
 
 // callHelper ruft den root-Helfer; ohne Helfer (Windows) gibt es nichts abzugleichen.
@@ -249,6 +262,7 @@ func (s *service) apply(c config.Config) {
 	s.cfg, s.cfgWarn = c, "" // Der Aufrufer hat gespeichert, config.json ist also wieder gültig.
 	s.mu.Unlock()
 	s.origins.Set(config.PDHOrigins(c.PDH))
+	s.route.SetURLs(c.PDH.URL, c.PDH.FallbackURL)
 	s.cards.Apply(s.cardSettings(c.Card))
 	s.display.Apply(statusDisplaySettings(c.StatusDisplay))
 	s.portChanged(c.LocalPort())
@@ -557,6 +571,7 @@ func (s *service) serve(parent context.Context) error {
 	background(func() { s.origins.Run(ctx) })
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 	background(func() { s.funcs.Run(ctx) })
+	background(func() { s.route.Run(ctx, s.probePrimary) })
 
 	// Die Startseite ist die Grundlage der Anzeige, aber nie Bedingung für die Admin-Seite über HTTPS: Ein nicht
 	// bindbarer Port (belegt, von Windows reserviert, vom Admin falsch eingestellt) ist ein Problem der Umgebung.
@@ -578,12 +593,20 @@ func (s *service) serve(parent context.Context) error {
 		}
 	}
 	bound := Bound{}
-	origin := func() string { return cardOrigin(s.config().PDH) }
+	origins := func() []string { return cardOrigins(s.config().PDH) }
 	cardAPI := http.NewServeMux()
-	cardAPI.Handle("/api/card/events", card.EventsHandler(s.cards.Hub(), s.cards, origin))
-	cardAPI.Handle("/api/card/result", card.ResultHandler(origin, s.windowForeground, s.notifier()))
-	cardAPI.Handle("/api/slides/cache", slides.CacheHandler(s.slides, origin, s.applyCards))
-	cardAPI.Handle("/api/keyboard/{action}", keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI())))
+	cardAPI.Handle("/api/card/events", byOrigin(origins, func(origin func() string) http.Handler {
+		return card.EventsHandler(s.cards.Hub(), s.cards, origin)
+	}))
+	cardAPI.Handle("/api/card/result", byOrigin(origins, func(origin func() string) http.Handler {
+		return card.ResultHandler(origin, s.windowForeground, s.notifier())
+	}))
+	cardAPI.Handle("/api/slides/cache", byOrigin(origins, func(origin func() string) http.Handler {
+		return slides.CacheHandler(s.slides, origin, s.applyCards)
+	}))
+	cardAPI.Handle("/api/keyboard/{action}", byOrigin(origins, func(origin func() string) http.Handler {
+		return keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI()))
+	}))
 	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)
 	serveLocal := func(l net.Listener) *http.Server {
@@ -1086,6 +1109,7 @@ func (s *service) adminDeps() web.AdminDeps {
 func (s *service) adminProduct() *web.AdminProduct {
 	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
 	p.funcs = s.funcs
+	p.tailnet = s.tailnetCtl()
 	p.local, p.adminPort, p.saved = s.localState, s.adminPort, s.savedLocalPort
 	if s.o.Kiosk && onWindows {
 		p.kiosk, p.logoff = true, logoffUser

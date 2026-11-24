@@ -81,6 +81,7 @@ func serveMain() {
 	srv.HealthyMarker = *marker
 	srv.ReapplyNTPOnStart = true
 	srv.ExecOut = out
+	srv.HasTool = helper.OSHasTool
 	srv.Backup.HasTool = helper.OSHasTool
 	srv.Backup.FilesDataDir = *root
 	srv.Net.SavedPath = *netSaved

@@ -16,6 +16,14 @@ const (
 	CmdNetStatus  = "net-status"
 )
 
+// Befehle der Tailnet-Steuerung (Protokoll zum Helfer): tailnet-status liest, tailnet-up meldet mit einem
+// Auth-Key an (Wert: JSON {"key","host"}), tailnet-down meldet ab.
+const (
+	CmdTailnetStatus = "tailnet-status"
+	CmdTailnetUp     = "tailnet-up"
+	CmdTailnetDown   = "tailnet-down"
+)
+
 // NetDeadlineSec ist die Rückfallfrist nach net-apply.
 const NetDeadlineSec = 120
 

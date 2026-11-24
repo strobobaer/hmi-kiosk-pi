@@ -113,3 +113,55 @@ func TestValidateSplit(t *testing.T) {
 		t.Error("Validate prüft PDH nicht")
 	}
 }
+
+func TestValidatePDHFallback(t *testing.T) {
+	many := make([]string, MaxWebOrigins)
+	for i := range many {
+		many[i] = fmt.Sprintf("https://h%d.firma.de:443", i)
+	}
+	tests := []struct {
+		name    string
+		p       PDHCfg
+		wantErr string
+	}{
+		{"leer", PDHCfg{URL: "https://pdh.lan"}, ""},
+		{"https", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.tail1234.ts.net"}, ""},
+		{"https mit Port", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.tail1234.ts.net:8443"}, ""},
+		{"http trotz Erlaubnis", PDHCfg{URL: "https://pdh.lan", FallbackURL: "http://pdh.ts.net", AllowHTTP: true}, "Ausweichadresse ungültig"},
+		{"pfad", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.ts.net/x"}, "Ausweichadresse ungültig"},
+		{"gleich der Hauptadresse", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.lan"}, "Ausweichadresse ungültig"},
+		{"gleich mit Standardport", PDHCfg{URL: "https://pdh.lan:443", FallbackURL: "https://pdh.lan"}, "Ausweichadresse ungültig"},
+		{"IPv4", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://100.64.1.2"}, "IP-Adressen gehen nicht"},
+		{"IPv6", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://[fd7a:115c:a1e0::1]"}, "IP-Adressen gehen nicht"},
+		{"Großbuchstaben", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://PDH.ts.net"}, "Ausweichadresse ungültig"},
+		{"Zusatz grenze mit Ausweich", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.ts.net", ExtraOrigins: many[:MaxWebOrigins-2]}, ""},
+		{"zu viele mit Ausweich", PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.ts.net", ExtraOrigins: many[:MaxWebOrigins-1]}, "Zu viele zusätzliche Adressen"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidatePDH(tc.p)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unerwartet: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Fehler %v, erwartet mit %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPDHOriginsFallback(t *testing.T) {
+	p := PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.t.ts.net", ExtraOrigins: []string{"https://cdn.x:443"}}
+	want := []string{"https://pdh.lan:443", "https://pdh.t.ts.net:443", "https://cdn.x:443"}
+	if got := PDHOrigins(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	p.FallbackURL = ""
+	want = []string{"https://pdh.lan:443", "https://cdn.x:443"}
+	if got := PDHOrigins(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ohne Ausweichadresse: got %v want %v", got, want)
+	}
+}

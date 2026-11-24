@@ -228,8 +228,93 @@ func TestCardOrigin(t *testing.T) {
 		"http://pdh.lan:8080":      "http://pdh.lan:8080",
 		"":                         "",
 	} {
-		if got := cardOrigin(config.PDHCfg{URL: in, ExtraOrigins: []string{"https://cdn.example:443"}}); got != want {
+		if got := cardOrigin(config.PDHCfg{URL: in, ExtraOrigins: []string{"https://cdn.example:443"}}, in); got != want {
 			t.Errorf("cardOrigin(%q) = %q, erwartet %q", in, got, want)
 		}
+	}
+}
+
+// namedURL nennt einen Testserver unter einem Namen, den die Konfiguration zulässt (nur Namen, keine IP-Adressen).
+func namedURL(s *routeSrv, host string) string {
+	_, port, _ := net.SplitHostPort(s.Listener.Addr().String())
+	return "https://" + host + ":" + port
+}
+
+// namedClient wählt jeden Namen auf 127.0.0.1 an und vertraut den Testzertifikaten (gültig für example.com).
+func namedClient(srvs ...*routeSrv) *http.Client {
+	tr := trustClient(srvs...).Transport.(*http.Transport)
+	tr.TLSClientConfig.ServerName = "example.com"
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		_, port, _ := net.SplitHostPort(addr)
+		return (&net.Dialer{}).DialContext(ctx, network, "127.0.0.1:"+port)
+	}
+	return &http.Client{Transport: tr}
+}
+
+// fallbackStart richtet eine Startseite mit nicht erreichbarer Hauptadresse und laufender Ausweichadresse ein.
+func fallbackStart(t *testing.T) (h http.Handler, mainURL, fbURL string, rt *Route) {
+	t.Helper()
+	main, fb := newRouteSrv(200), newRouteSrv(200)
+	t.Cleanup(fb.Close)
+	mainURL, fbURL = namedURL(main, "pdh.lan"), namedURL(fb, "pdh.tail1234.ts.net")
+	main.Close()
+	dir := t.TempDir()
+	if err := SaveDevice(dir, Device{DeviceID: "a1-1", Secret: testSecret, User: "Anna", URL: mainURL}); err != nil {
+		t.Fatal(err)
+	}
+	rt = NewRoute(mainURL, fbURL)
+	c := Client{HTTP: namedClient(main, fb), Route: rt}
+	cfg := func() config.PDHCfg { return config.PDHCfg{URL: mainURL, FallbackURL: fbURL} }
+	return StartHandler(dir, cfg, c, nil, nil), mainURL, fbURL, rt
+}
+
+func TestStartUsesFallbackAction(t *testing.T) {
+	h, mainURL, fbURL, rt := fallbackStart(t)
+	w := startReq(t, h, "GET", "/start", "127.0.0.1:8080")
+	if rt.Name() != "tailnet" {
+		t.Fatalf("Route %q, erwartet tailnet: %s", rt.Name(), w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `action="`+fbURL+`/terminal/geraet"`) || strings.Contains(body, `action="`+mainURL) {
+		t.Errorf("Action nicht auf Ausweichadresse: %s", body)
+	}
+	want := "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; form-action " + mainURL + " " + fbURL
+	if got := w.Header().Get("Content-Security-Policy"); got != want {
+		t.Errorf("CSP %q, erwartet %q", got, want)
+	}
+}
+
+// Das Tor bleibt: Ein Gerät, das auf der Ausweichadresse gekoppelt ist, gilt als nicht gekoppelt.
+func TestStartGateUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	main, fb := newRouteSrv(200), newRouteSrv(200)
+	defer main.Close()
+	defer fb.Close()
+	mainURL, fbURL := namedURL(main, "pdh.lan"), namedURL(fb, "pdh.tail1234.ts.net")
+	if err := SaveDevice(dir, Device{DeviceID: "a1-1", Secret: testSecret, User: "Anna", URL: fbURL}); err != nil {
+		t.Fatal(err)
+	}
+	c := Client{HTTP: namedClient(main, fb), Route: NewRoute(mainURL, fbURL)}
+	h := StartHandler(dir, func() config.PDHCfg { return config.PDHCfg{URL: mainURL, FallbackURL: fbURL} }, c, nil, nil)
+	w := startReq(t, h, "GET", "/start", "127.0.0.1:8080")
+	if !strings.Contains(w.Body.String(), "nicht gekoppelt") || strings.Contains(w.Body.String(), "<form") {
+		t.Errorf("erwartet nicht gekoppelt: %s", w.Body)
+	}
+}
+
+func TestCardOriginFollowsRoute(t *testing.T) {
+	p := config.PDHCfg{URL: "https://pdh.lan", FallbackURL: "https://pdh.tail1234.ts.net"}
+	for base, want := range map[string]string{
+		"https://pdh.lan":                 "https://pdh.lan",
+		"https://pdh.tail1234.ts.net":     "https://pdh.tail1234.ts.net",
+		"https://pdh.tail1234.ts.net:443": "https://pdh.tail1234.ts.net",
+		"https://pdh.ts.net:8443":         "https://pdh.ts.net:8443",
+	} {
+		if got := cardOrigin(p, base); got != want {
+			t.Errorf("cardOrigin(%q) = %q, erwartet %q", base, got, want)
+		}
+	}
+	if got := cardOrigin(config.PDHCfg{}, ""); got != "" {
+		t.Errorf("leer: %q", got)
 	}
 }

@@ -1,0 +1,131 @@
+#!/bin/sh
+# hmi-kiosk-tailscale-state: Zustandsordner von tailscaled auf der Datenpartition anlegen, prüfen und an das Gerät
+# binden. Läuft als root vor tailscaled (ExecStartPre=+ im Drop-in tailscaled.service.d/hmi-kiosk.conf, ohne den
+# Namensraum des Dienstes, damit der Ordner vor dem Einbinden entstehen kann).
+#
+# Im Betrieb liegt / unter einem RAM-Overlay (overlayroot=tmpfs); /var/lib/tailscale wäre nach jedem Neustart leer
+# und die Anmeldung am Tailnet verloren. Darum bindet das Drop-in /data/system/tailscale per BindPaths= auf
+# /var/lib/tailscale ein; tailscaled behält seinen Standardpfad. Das Einbinden hält den geprüften Ordner fest: Tauscht
+# jemand später /data/system aus, schreibt tailscaled trotzdem weiter in diesen Ordner.
+#
+# /data gehört dem Dienstbenutzer: /data/system und der Ordner darin müssen echte Ordner sein (keine Verweise), root
+# gehören, /data/system darf für niemanden sonst schreibbar sein, der Zustandsordner hat 0700 (wie openStateDir des
+# Helfers). Ist etwas davon nicht so, endet das Skript mit 1 und tailscaled startet nicht (lieber kein Tailnet als ein
+# Knotenschlüssel an einem Ort, den der Dienstbenutzer bestimmt).
+#
+# Bindung an das Gerät: In .pdh-serial steht die Seriennummer des Geräts, zu dem der Zustand gehört (Lesart wie
+# hmi-kiosk-identity). Läuft die Karte in einem anderen Gerät (Klon, Sicherung auf einem zweiten Pi), wird der
+# Tailscale-Zustand verworfen: Die Kopie ist danach „nicht angemeldet“ und benutzt nie die Schlüssel des Originals.
+# Ist die Seriennummer nicht lesbar, wird nichts gelöscht.
+#
+# Pfade überschreibbar für den Test (test-tailscale-state.sh).
+DIR=${HMI_TAILSCALE_STATE_DIR:-/data/system/tailscale}
+PROC=${HMI_TAILSCALE_STATE_PROC:-/proc}
+SYS=${HMI_TAILSCALE_STATE_SYS:-/sys}
+PARENT=$(dirname "$DIR")
+NAME=$(basename "$DIR")
+MARK=.pdh-serial
+
+log() { echo "hmi-kiosk-tailscale-state: $*" >&2; }
+die() {
+	log "$*; tailscaled startet nicht"
+	exit 1
+}
+
+# owned_tight <pfad> <maske>: echter Ordner, root gehörend, keine Rechte aus der Maske.
+owned_tight() {
+	[ ! -L "$1" ] || die "$1 ist ein Verweis"
+	[ -d "$1" ] || die "$1 ist kein Ordner"
+	[ "$(stat -c %u "$1")" = 0 ] || die "$1 gehört nicht root"
+	[ $((0$(stat -c %a "$1") & $2)) -eq 0 ] || die "$1 hat zu weite Rechte ($(stat -c %a "$1"))"
+}
+
+# enter <pfad>: in den Ordner wechseln und prüfen, dass es wirklich dieser Ordner ist (kein Verweis unterwegs).
+enter() {
+	up=$(cd -P "$(dirname "$1")" 2>/dev/null && pwd -P) || die "Elternordner von $1 nicht erreichbar"
+	cd -P "$1" 2>/dev/null || die "$1 nicht erreichbar"
+	[ "$(pwd -P)" = "${up%/}/$(basename "$1")" ] || die "$1 ist kein echter Ordner (Verweis)"
+}
+
+# read_serial gibt die Hardware-Kennung aus (wie identity.sh und internal/platform.HardwareID): Seriennummer des
+# Raspberry Pi, sonst DMI-Produkt-UUID; klein geschrieben, nur [0-9a-z-], höchstens 64 Zeichen.
+read_serial() {
+	for f in "$PROC/device-tree/serial-number" "$SYS/class/dmi/id/product_uuid"; do
+		if [ -L "$f" ] || [ ! -f "$f" ]; then continue; fi
+		v=$(head -c 128 "$f" 2>/dev/null | tr -d '\000' | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+		case $v in
+		'' | *[!0-9a-z-]*) continue ;;
+		esac
+		if [ "${#v}" -gt 64 ] || [ -z "$(printf '%s' "$v" | tr -d '0-')" ]; then continue; fi
+		printf '%s' "$v"
+		return 0
+	done
+	return 1
+}
+
+# write_mark schreibt die Seriennummer atomar (im geprüften Zustandsordner, cwd).
+write_mark() {
+	tmp=.$MARK.tmp$$
+	rm -f "$tmp"
+	if (
+		umask 077
+		set -C
+		printf '%s\n' "$1" >"$tmp"
+	); then
+		sync "$tmp" 2>/dev/null || sync
+		if mv -f "$tmp" "$MARK"; then
+			return 0
+		fi
+	fi
+	rm -f "$tmp"
+	log "$DIR/$MARK nicht geschrieben"
+}
+
+# /data/system legt sonst der erste Start an (root, 0755); fehlt es, hier genauso.
+if [ ! -e "$PARENT" ] && [ ! -L "$PARENT" ]; then
+	install -d -o root -g root -m 0755 "$PARENT" 2>/dev/null || die "$PARENT nicht anlegbar"
+fi
+owned_tight "$PARENT" 0022
+
+# Alles Weitere relativ zum geöffneten Ordner, nicht mehr zum Pfad, den der Dienstbenutzer tauschen könnte.
+enter "$PARENT"
+owned_tight . 0022
+
+if [ ! -e "$NAME" ] && [ ! -L "$NAME" ]; then
+	mkdir -m 0700 "$NAME" 2>/dev/null || die "$DIR nicht anlegbar"
+	log "$DIR angelegt"
+fi
+[ ! -L "$NAME" ] || die "$DIR ist ein Verweis"
+[ -d "$NAME" ] || die "$DIR ist kein Ordner"
+# Ein Ordner, der nicht root gehört, stammt nicht von hier; sein Inhalt wird nicht übernommen.
+[ "$(stat -c %u "$NAME")" = 0 ] || die "$DIR gehört nicht root"
+chmod 0700 "$NAME" || die "$DIR: Rechte nicht setzbar"
+enter "$PWD/$NAME"
+owned_tight . 0077
+[ "$(stat -c %a .)" = 700 ] || die "$DIR hat nicht 0700"
+
+# Bindung an das Gerät.
+if ! serial=$(read_serial); then
+	log "Seriennummer nicht lesbar; Tailnet-Zustand bleibt unverändert"
+	exit 0
+fi
+stored=""
+if [ -f "$MARK" ] && [ ! -L "$MARK" ] && [ "$(stat -c %s "$MARK")" -le 256 ]; then
+	stored=$(head -n 1 "$MARK")
+fi
+if [ -z "$stored" ]; then
+	# Neuer (oder noch nie gebundener) Zustand: an dieses Gerät binden. Ohne Marke kann nur ein Zustand aus diesem
+	# Abbild vor der Bindung liegen; er bleibt.
+	[ -z "$(find . -mindepth 1 -maxdepth 1 ! -name "$MARK" -print -quit)" ] ||
+		log "Tailnet-Zustand ohne Gerätebindung vorgefunden, an dieses Gerät gebunden"
+	write_mark "$serial"
+	exit 0
+fi
+if [ "$stored" = "$serial" ]; then
+	exit 0
+fi
+# Anderes Gerät: alles im Zustandsordner löschen (find und rm folgen keinen Verweisen), dann neu binden.
+find . -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + || die "Tailnet-Zustand nicht löschbar"
+write_mark "$serial"
+log "Tailnet-Zustand verworfen: anderes Gerät (geklonte Karte)"
+exit 0

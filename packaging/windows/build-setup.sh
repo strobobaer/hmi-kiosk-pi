@@ -72,7 +72,25 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 scripts/dgo build -ldflags "$ldflags" -o
 [ -s "$win/pdh-terminal.exe" ] && [ -s "$win/pdh-terminal-start.exe" ] && [ -s "$win/pdh-terminal-kiosk.exe" ] || die "Die Programme wurden nicht gebaut."
 
 echo "== Setup (Inno Setup)"
-docker run --rm -v "$(host_path "$root"):/work" "$INNO_IMAGE" "/DAppVersion=$version" packaging/windows/pdh-terminal.iss
+# Tailscale: packaging/windows/tailscale.env (TAILSCALE_VERSION, TAILSCALE_MSI_SHA256) macht das Setup fähig, Tailscale
+# bei Bedarf nachzuladen. Fehlt die Datei oder ein Wert, entfällt der Abschnitt (der Bau geht trotzdem).
+inno_defs=()
+if [ -f packaging/windows/tailscale.env ]; then
+	TAILSCALE_VERSION="" TAILSCALE_MSI_SHA256=""
+	# shellcheck source=/dev/null
+	. packaging/windows/tailscale.env
+	if [ -n "$TAILSCALE_VERSION" ] && [ -n "$TAILSCALE_MSI_SHA256" ]; then
+		[[ "$TAILSCALE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "TAILSCALE_VERSION in tailscale.env ist ungültig: \"$TAILSCALE_VERSION\"."
+		[[ "$TAILSCALE_MSI_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "TAILSCALE_MSI_SHA256 in tailscale.env ist keine SHA-256 (64 Kleinbuchstaben-Hex)."
+		inno_defs=("/DTailscaleVersion=$TAILSCALE_VERSION" "/DTailscaleSha256=$TAILSCALE_MSI_SHA256")
+		echo "   Tailscale $TAILSCALE_VERSION wird vom Setup bei Bedarf nachgeladen."
+	else
+		echo "   tailscale.env unvollständig: das Setup lädt Tailscale nicht nach."
+	fi
+else
+	echo "   Keine tailscale.env: das Setup lädt Tailscale nicht nach."
+fi
+docker run --rm -v "$(host_path "$root"):/work" "$INNO_IMAGE" "/DAppVersion=$version" ${inno_defs[@]+"${inno_defs[@]}"} packaging/windows/pdh-terminal.iss
 [ -s "$setup" ] || die "Das Setup wurde nicht gebaut ($setup fehlt)."
 
 echo "== Update-Paket (signiert)"

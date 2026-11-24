@@ -103,6 +103,8 @@ Das PDH-Terminal ist ein eigenes Produkt (Abbild `pdh-terminal-<Version>.img.xz`
 
 Danach meldet die Startseite sich bei PDH selbst an. Ist PDH nicht erreichbar, versucht sie es alle 30 Sekunden erneut. Die Admin-Seite kehrt nach 2 Minuten ohne Eingabe zur Startseite zurück. Zustände, Entkoppeln, Sicherung, Zertifikat und Kartenleser: `docs/betrieb.md`, Abschnitt 4.
 
+**Ausweichadresse über das Tailnet (ab 0.5.0, freiwillig):** Fällt der Weg zum PDH-Server aus, arbeitet das Terminal über Tailscale weiter. Server und Tailnet einrichten: `docs/tailnet-server-einrichtung.md`; am Terminal: Feld „Ausweichadresse (Tailnet)“ auf der Seite „PDH“ und der Menüpunkt „Tailnet“ (`docs/betrieb.md`, Abschnitt 4).
+
 ## PDH-Terminal unter Windows installieren
 
 Das PDH-Terminal läuft auch auf einem **Windows-11-PC** (64 Bit, Microsoft Edge) und meldet dort per Kartenleser an, während andere Programme laufen.

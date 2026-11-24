@@ -42,7 +42,109 @@ var errUnreachable = errors.New("PDH nicht erreichbar")
 
 // Client spricht die Terminal-API von PDH. HTTP nil: Standardclient (10 s, keine
 // Weiterleitungen, Systemzertifikate).
-type Client struct{ HTTP *http.Client }
+type Client struct {
+	HTTP *http.Client
+	// Route wählt zwischen Haupt- und Ausweichadresse (Tailnet); nil: immer d.URL, wie bisher.
+	Route *Route
+}
+
+// target liefert Ziel und Weg einer Anfrage für d aus einem einzigen Schnappschuss der Route: die aktive Adresse,
+// wenn d.URL deren Hauptadresse ist, sonst d.URL. route ist "tailnet" nur, wenn das Ziel die aktive Ausweichadresse
+// ist; ein Gerät mit anderer Adresse geht direkt und ohne Route ("lan").
+func (c Client) target(d Device) (base, route string) {
+	if c.Route != nil {
+		primary, active, _ := c.Route.Snapshot()
+		if sameBase(d.URL, primary) {
+			if sameBase(active, primary) {
+				return active, "lan"
+			}
+			return active, "tailnet"
+		}
+	}
+	return strings.TrimRight(d.URL, "/"), "lan"
+}
+
+// base ist die Adresse, an die Anfragen für d gehen (siehe target).
+func (c Client) base(d Device) string {
+	base, _ := c.target(d)
+	return base
+}
+
+// fail meldet einen Transportfehler auf base an die Route; wahr, wenn auf die Ausweichadresse gewechselt wurde.
+// Ist ctx des Aufrufers selbst abgelaufen oder abgebrochen, ist das kein Fehler des Weges: kein Wechsel.
+func (c Client) fail(ctx context.Context, base string, err error) bool {
+	return c.Route != nil && ctx.Err() == nil && c.Route.Fail(base, err)
+}
+
+// cancelBody gibt den Zeitgeber der Anfrage frei, sobald der Rumpf geschlossen wird.
+type cancelBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b cancelBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
+// send führt die Anfrage gegen die aktive Adresse aus (Frist requestTimeout je Versuch). Bei einem Netzfehler, der
+// auf die Ausweichadresse umschaltet, wird genau einmal gegen die neue Adresse wiederholt; build baut dafür die
+// Anfrage neu (auch den Rumpf). Antworten von PDH (auch Fehlerstatus) und TLS-Fehler schalten nie um. Ziel und
+// Wegangabe (route, für X-Terminal-Route) stammen je Versuch aus demselben Schnappschuss der Route. Scheitert auch
+// die Wiederholung, wird das der Route gemeldet (stößt die Prüfung der Hauptadresse an).
+func (c Client) send(ctx context.Context, d Device, build func(base, route string) (*http.Request, error)) (*http.Response, error) {
+	base, route := c.target(d)
+	resp, err := c.attempt(ctx, base, route, build)
+	if err != nil && c.fail(ctx, base, err) {
+		base, route = c.target(d)
+		resp, err = c.attempt(ctx, base, route, build)
+		if err != nil {
+			c.fail(ctx, base, err)
+		}
+	}
+	return resp, err
+}
+
+func (c Client) attempt(ctx context.Context, base, route string, build func(base, route string) (*http.Request, error)) (*http.Response, error) {
+	actx, cancel := context.WithTimeout(ctx, requestTimeout)
+	req, err := build(base, route)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp, err := c.client().Do(req.WithContext(actx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = cancelBody{resp.Body, cancel}
+	return resp, nil
+}
+
+// Probe prüft die Hauptadresse base mit dem Gerätegeheimnis (für Route.Run): erreichbar bei 200 oder 401.
+func (c Client) Probe(ctx context.Context, d Device, base string) error {
+	if !sameBase(d.URL, base) {
+		return errUnreachable // das Geheimnis geht nur an die Adresse, für die es gilt
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/terminal/v1/device", nil)
+	if err != nil {
+		return errUnreachable
+	}
+	req.Header.Set("Authorization", "Bearer "+d.Secret)
+	req.Header.Set("Accept", "application/json")
+	setClientHeaders(req, "lan")
+	resp, err := c.client().Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	readBody(resp)
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnauthorized {
+		return nil
+	}
+	return errUnreachable
+}
 
 func (c Client) client() *http.Client {
 	var hc http.Client
@@ -56,15 +158,24 @@ func (c Client) client() *http.Client {
 	return &hc
 }
 
-// transportErr übersetzt Netzfehler in Text ohne Einzelheiten aus Go.
-func transportErr(err error) (State, error) {
+// isTLSErr erkennt Zertifikats-/TLS-Fehler.
+func isTLSErr(err error) bool {
 	var (
 		cv  *tls.CertificateVerificationError
 		ua  x509.UnknownAuthorityError
 		hn  x509.HostnameError
 		inv x509.CertificateInvalidError
+		sr  x509.SystemRootsError
+		rh  tls.RecordHeaderError
+		al  tls.AlertError
 	)
-	if errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &inv) {
+	return errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &inv) ||
+		errors.As(err, &sr) || errors.As(err, &rh) || errors.As(err, &al)
+}
+
+// transportErr übersetzt Netzfehler in Text ohne Einzelheiten aus Go.
+func transportErr(err error) (State, error) {
+	if isTLSErr(err) {
 		return StateUntrusted, ErrUntrusted
 	}
 	return StateUnreachable, errUnreachable
@@ -132,7 +243,7 @@ func (c Client) PairMove(ctx context.Context, baseURL, code, name string, prev *
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	setClientHeaders(req)
+	setClientHeaders(req, "")
 	resp, err := c.client().Do(req)
 	if err != nil {
 		_, e := transportErr(err)
@@ -166,16 +277,16 @@ func (c Client) PairMove(ctx context.Context, baseURL, code, name string, prev *
 // Check fragt PDH, ob die Kopplung noch gilt. Ein Fehler kommt nur mit
 // StateUnreachable oder StateUntrusted; StateRevoked ist ein gewöhnliches Ergebnis.
 func (c Client) Check(ctx context.Context, d Device) (State, error) {
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(d.URL, "/")+"/api/terminal/v1/device", nil)
-	if err != nil {
-		return StateUnreachable, errUnreachable
-	}
-	req.Header.Set("Authorization", "Bearer "+d.Secret)
-	req.Header.Set("Accept", "application/json")
-	setClientHeaders(req)
-	resp, err := c.client().Do(req)
+	resp, err := c.send(ctx, d, func(base, route string) (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, base+"/api/terminal/v1/device", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+d.Secret)
+		req.Header.Set("Accept", "application/json")
+		setClientHeaders(req, route)
+		return req, nil
+	})
 	if err != nil {
 		return transportErr(err)
 	}
@@ -191,7 +302,7 @@ func (c Client) Check(ctx context.Context, d Device) (State, error) {
 }
 
 // setClientHeaders trägt die Version des Terminals in jede Anfrage an PDH ein (freiwillige Kopfzeilen für PDH).
-func setClientHeaders(req *http.Request) {
+func setClientHeaders(req *http.Request, route string) {
 	v := release.Version
 	if v == "" {
 		v = "dev"
@@ -199,6 +310,10 @@ func setClientHeaders(req *http.Request) {
 	req.Header.Set("X-Terminal-Version", v)
 	req.Header.Set("User-Agent", "pdh-terminal/"+v)
 	setAdminURLHeader(req)
+	if route == "" {
+		route = "lan"
+	}
+	req.Header.Set("X-Terminal-Route", route) // lan oder tailnet; ältere PDH ignorieren die Kopfzeile
 	// Nur bei einem eingestellten Port: Die PDH-Seiten erreichen das Terminal (Kartenstrom, Tastatur) unter
 	// http://127.0.0.1:<Port>. Beim Grundwert 8080 bleibt die Anfrage wie bisher.
 	if p := localport.Get(); p != localport.Default {

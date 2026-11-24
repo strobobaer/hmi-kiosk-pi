@@ -29,6 +29,11 @@ func (c *Client) callData(ctx context.Context, cmd string) (json.RawMessage, err
 	return c.roundTrip(ctx, cmd, "")
 }
 
+// CallData ist Call für Befehle, die Daten zurückgeben (auch mit Wert).
+func (c *Client) CallData(ctx context.Context, cmd, arg string) (json.RawMessage, error) {
+	return c.roundTrip(ctx, cmd, arg)
+}
+
 func (c *Client) roundTrip(ctx context.Context, cmd, arg string) (json.RawMessage, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", c.socket)

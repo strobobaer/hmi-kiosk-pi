@@ -78,18 +78,18 @@ func TestSetClientHeadersAdminURL(t *testing.T) {
 	a, _ := newTestAdminURL(map[string]string{"pdh.firma.de:443": "192.168.1.7", "pdh.firma.de:8080": "192.168.1.7"}, &n)
 	adminURLState = a
 	req, _ := http.NewRequest("GET", "https://pdh.firma.de/api", nil)
-	setClientHeaders(req)
+	setClientHeaders(req, "")
 	if req.Header.Get("X-Terminal-Admin-URL") != "" {
 		t.Error("ohne Port darf die Kopfzeile fehlen")
 	}
 	a.setPort("8443")
-	setClientHeaders(req)
+	setClientHeaders(req, "")
 	if got := req.Header.Get("X-Terminal-Admin-URL"); got != "https://192.168.1.7:8443/admin/" {
 		t.Errorf("Kopfzeile: %q", got)
 	}
 	req, _ = http.NewRequest("GET", "http://pdh.firma.de:8080/api", nil)
 	req.Header.Set("Authorization", "Bearer x")
-	setClientHeaders(req)
+	setClientHeaders(req, "")
 	if got := req.Header.Get("X-Terminal-Admin-URL"); got != "https://192.168.1.7:8443/admin/" {
 		t.Errorf("Kopfzeile mit Port: %q", got)
 	}

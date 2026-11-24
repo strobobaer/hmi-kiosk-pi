@@ -16,8 +16,10 @@ set -eu
 KIOSK_UID=1100
 REQUIRED_PACKAGES="labwc xwayland wvkbd chromium remmina remmina-plugin-vnc tigervnc-viewer openbox rfkill x11-utils
 xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs
-iputils-arping iputils-ping network-manager"
+iputils-arping iputils-ping network-manager tailscale"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
+# sha256 von packaging/image/stage-hmi/00-tailscale/files/tailscale-archive-keyring.gpg
+TAILSCALE_KEYRING_SHA256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service hmi-kiosk-network.service"
 
 usage() {
@@ -395,6 +397,51 @@ masked getty@tty1.service || msg="$msg; getty@tty1.service nicht maskiert"
 [ -e "$R/var/lib/systemd/linger/hmikiosk" ] || msg="$msg; linger für hmikiosk fehlt"
 [ -f "$R/usr/share/icons/hmi-blank/cursors/default" ] || msg="$msg; Zeigerthema hmi-blank fehlt"
 if [ -z "$msg" ]; then ok dienste "$UNITS vorhanden und aktiviert; Dienst als hmikiosk, Helfer als root"; else bad dienste "${msg#; }"; fi
+
+# Tailscale: Paket aus der signierten Quelle, Dienst an, aber nicht am Tailnet angemeldet (das macht der Helfer)
+msg=""
+installed tailscale || msg="$msg; tailscale nicht installiert"
+[ -x "$R/usr/bin/tailscale" ] || msg="$msg; /usr/bin/tailscale fehlt (der Helfer sucht es dort)"
+enabled_in multi-user.target tailscaled.service || msg="$msg; tailscaled.service nicht aktiviert"
+grep -Fqx 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main' \
+	"$R/etc/apt/sources.list.d/tailscale.list" 2>/dev/null || msg="$msg; /etc/apt/sources.list.d/tailscale.list ohne signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg"
+[ -s "$R/usr/share/keyrings/tailscale-archive-keyring.gpg" ] || msg="$msg; Schlüsselbund tailscale-archive-keyring.gpg fehlt"
+[ "$(sha256sum "$R/usr/share/keyrings/tailscale-archive-keyring.gpg" 2>/dev/null | cut -d" " -f1)" = "$TAILSCALE_KEYRING_SHA256" ] || msg="$msg; Schlüsselbund weicht von der eingecheckten Datei ab (sha256)"
+if [ -z "$msg" ]; then ok tailscale "tailscale installiert, tailscaled aktiviert, Quelle mit signed-by-Schlüsselbund"; else bad tailscale "${msg#; }"; fi
+
+# Zustand von tailscaled auf /data: / liegt im RAM-Overlay, sonst wäre die Anmeldung nach jedem Neustart weg. Das
+# Drop-in bindet den geprüften Ordner /data/system/tailscale auf /var/lib/tailscale ein (BindPaths=); ExecStart und
+# --state des Pakets bleiben.
+msg=""
+ts=tailscaled.service.d/hmi-kiosk.conf
+if [ ! -f "$S/$ts" ] || [ -L "$S/$ts" ]; then
+	msg="$msg; Drop-in $ts fehlt"
+else
+	unit_has "$ts" RequiresMountsFor=/data || msg="$msg; $ts ohne RequiresMountsFor=/data"
+	unit_has "$ts" ExecStartPre=+/usr/local/sbin/hmi-kiosk-tailscale-state || msg="$msg; $ts ohne ExecStartPre=+/usr/local/sbin/hmi-kiosk-tailscale-state"
+	unit_has "$ts" BindPaths=/data/system/tailscale:/var/lib/tailscale || msg="$msg; $ts ohne BindPaths=/data/system/tailscale:/var/lib/tailscale"
+	if grep -q '^ExecStart=' "$S/$ts"; then msg="$msg; $ts überschreibt ExecStart des Pakets"; fi
+	if grep -Eq '^BindPaths=-' "$S/$ts"; then msg="$msg; $ts bindet optional (BindPaths=-), ohne Ordner liefe der Zustand ins Overlay"; fi
+fi
+st=$R/usr/local/sbin/hmi-kiosk-tailscale-state
+if [ ! -x "$st" ] || [ "$(stat -c '%U %a' "$st" 2>/dev/null)" != "root 755" ]; then
+	msg="$msg; $st fehlt oder nicht root/755"
+fi
+pu=""
+for u in "$R/usr/lib/systemd/system/tailscaled.service" "$R/lib/systemd/system/tailscaled.service"; do
+	if [ -f "$u" ]; then
+		pu=$u
+		break
+	fi
+done
+if [ -z "$pu" ]; then
+	msg="$msg; tailscaled.service des Pakets fehlt"
+else
+	grep -q '^ExecStart=.* --state=/var/lib/tailscale/tailscaled\.state ' "$pu" ||
+		msg="$msg; tailscaled.service des Pakets legt den Zustand nicht nach /var/lib/tailscale (Ziel von BindPaths)"
+	grep -q '^EnvironmentFile=.*/etc/default/tailscaled' "$pu" || msg="$msg; tailscaled.service des Pakets liest /etc/default/tailscaled nicht (PORT, FLAGS)"
+fi
+if [ -z "$msg" ]; then ok tailscale-zustand "Zustand von tailscaled auf /data/system/tailscale (BindPaths im Drop-in $ts, an das Gerät gebunden)"; else bad tailscale-zustand "${msg#; }"; fi
 
 # Hardware-Watchdog
 if grep -qx 'RuntimeWatchdogSec=15s' "$R/etc/systemd/system.conf.d/watchdog.conf" 2>/dev/null; then

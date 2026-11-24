@@ -16,6 +16,7 @@ import (
 	"hmikiosk/internal/localport"
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/oled"
+	"hmikiosk/internal/tailnet"
 	"hmikiosk/internal/web"
 )
 
@@ -35,12 +36,15 @@ const checkTimeout = 5 * time.Second
 
 // pdhView ist, was die Seite PDH anzeigt. Weder Code noch Geheimnis kommen darin vor.
 type pdhView struct {
-	URL, DeviceName, Extra, DefaultName string
-	AllowHTTP                           bool
-	Paired                              bool
-	User, Since                         string
-	State, StateClass                   string
-	Notice                              string
+	URL, FallbackURL, DeviceName, Extra, DefaultName string
+	// Route ist der Verbindungsweg („verbunden über: …“), RouteClass seine Farbe (ok/warn), RouteErr der letzte
+	// Fehler auf der Hauptadresse (nur bei Tailnet); leer, solange keine Wegwahl besteht.
+	Route, RouteClass, RouteErr string
+	AllowHTTP                   bool
+	Paired                      bool
+	User, Since                 string
+	State, StateClass           string
+	Notice                      string
 
 	// Lokale Startseite: LocalPort ist der Wert im Feld, Port/AdminPort der tatsächlich benutzte Port der
 	// Startseite und der lokalen Admin-Seite, Pending der gespeicherte, aber erst nach dem Neustart gültige.
@@ -73,6 +77,10 @@ type adminProduct struct {
 	kiosk  bool
 	logoff func() error
 
+	// tailnet steuert Tailscale (Pi: über den Helfer, Windows: tailscale.exe); nil: kein Abschnitt „Tailnet“.
+	tailnet   tailnet.Ctl
+	tailnetMu sync.Mutex
+
 	learnMu    sync.Mutex
 	learnCache *learnResult // Antwort der letzten erfolgreichen Anlernanfrage, für ein zweites Absenden
 }
@@ -88,6 +96,11 @@ func Admin(dataDir string, client Client, cards *card.Service, display *oled.Ser
 
 func (p *adminProduct) product() *web.AdminProduct {
 	ap := p.baseProduct()
+	if p.tailnet != nil {
+		ap.Nav = append(ap.Nav, web.NavItem{Section: "tailnet", Label: "Tailnet", Path: "/admin/tailnet"})
+		ap.Pages["tailnet"] = tailnetPage
+		ap.Routes = append(ap.Routes, p.tailnetRoutes()...)
+	}
 	if p.kiosk {
 		ap.Nav = append(ap.Nav, web.NavItem{Section: "kiosk", Label: "Kiosk", Path: "/admin/kiosk"})
 		ap.Pages["winkiosk"] = kioskPage
@@ -184,9 +197,17 @@ func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *ht
 		shown = *form
 	}
 	v := pdhView{
-		URL: shown.URL, AllowHTTP: shown.AllowHTTP, DeviceName: shown.DeviceName,
+		URL: shown.URL, FallbackURL: shown.FallbackURL, AllowHTTP: shown.AllowHTTP, DeviceName: shown.DeviceName,
 		Extra: strings.Join(shown.ExtraOrigins, "\n"), DefaultName: defaultName(), Notice: notice,
 		DefaultPort: localport.Default,
+	}
+	if rt := p.client.Route; rt != nil && cfg.PDH.URL != "" && cfg.PDH.FallbackURL != "" {
+		st := rt.Status()
+		if st.Name == "tailnet" {
+			v.Route, v.RouteClass, v.RouteErr = "verbunden über: Tailnet seit "+st.Since.Local().Format("15:04"), "warn", st.LastErr
+		} else {
+			v.Route, v.RouteClass = "verbunden über: LAN", "ok"
+		}
 	}
 	v.LocalPort = strconv.Itoa(cfg.LocalPort())
 	if port != nil {
@@ -246,9 +267,10 @@ func (p *adminProduct) settings(f web.AdminFrame, w http.ResponseWriter, r *http
 		return
 	}
 	in := config.PDHCfg{
-		URL:        strings.TrimSpace(r.PostFormValue("url")),
-		AllowHTTP:  r.PostFormValue("allowHttp") != "",
-		DeviceName: strings.TrimSpace(r.PostFormValue("deviceName")),
+		URL:         strings.TrimSpace(r.PostFormValue("url")),
+		AllowHTTP:   r.PostFormValue("allowHttp") != "",
+		FallbackURL: strings.TrimSpace(r.PostFormValue("fallbackUrl")),
+		DeviceName:  strings.TrimSpace(r.PostFormValue("deviceName")),
 	}
 	for _, line := range strings.Split(r.PostFormValue("extraOrigins"), "\n") {
 		s := strings.TrimSpace(line)
@@ -266,6 +288,9 @@ func (p *adminProduct) settings(f web.AdminFrame, w http.ResponseWriter, r *http
 	oldURL := ""
 	if c, err := f.Load(); err == nil {
 		oldURL = c.PDH.URL
+		if _, ok := r.PostForm["fallbackUrl"]; !ok {
+			in.FallbackURL = c.PDH.FallbackURL // Formular ohne das Feld: gespeicherte Ausweichadresse behalten
+		}
 	}
 	if err := f.Update(func(c *config.Config) error { c.PDH = in; return nil }); err != nil {
 		p.render(f, w, r, http.StatusBadRequest, err.Error(), "", &in)

@@ -396,13 +396,13 @@ func TestAdminShowsActualPortAndProblem(t *testing.T) {
 func TestClientHeadersCarryNonDefaultPortOnly(t *testing.T) {
 	resetLocalPort(t)
 	req, _ := http.NewRequest(http.MethodGet, "https://pdh.example/x", nil)
-	setClientHeaders(req)
+	setClientHeaders(req, "")
 	if v := req.Header.Get("X-Terminal-Local-Port"); v != "" {
 		t.Errorf("Grundwert: Kopfzeile %q", v)
 	}
 	localport.Set(18080)
 	req, _ = http.NewRequest(http.MethodGet, "https://pdh.example/x", nil)
-	setClientHeaders(req)
+	setClientHeaders(req, "")
 	if v := req.Header.Get("X-Terminal-Local-Port"); v != "18080" {
 		t.Errorf("Kopfzeile %q", v)
 	}

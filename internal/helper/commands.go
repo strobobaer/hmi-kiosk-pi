@@ -87,6 +87,9 @@ var commands = map[string]command{
 	CmdNetStatus:      {runData: (*Server).netStatus},
 	CmdSetWebOrigins:  {takesArg: true, run: (*Server).setWebOrigins},
 	CmdSetLocalPort:   {takesArg: true, run: (*Server).setLocalPort},
+	CmdTailnetStatus:  {runData: (*Server).tailnetStatus},
+	CmdTailnetUp:      {takesArg: true, run: (*Server).tailnetUp},
+	CmdTailnetDown:    {run: (*Server).tailnetDown},
 }
 
 // Dispatch führt einen Befehl aus. Fehlertexte sind für die Admin-Seite bestimmt.
