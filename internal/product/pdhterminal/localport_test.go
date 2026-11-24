@@ -1,0 +1,474 @@
+package pdhterminal
+
+import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"hmikiosk/internal/config"
+	"hmikiosk/internal/localport"
+)
+
+// freePortPair liefert einen Port P, bei dem P und P+1 auf 127.0.0.1 frei sind.
+func freePortPair(t *testing.T) int {
+	t.Helper()
+	for range 50 {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := l.Addr().(*net.TCPAddr).Port
+		l.Close()
+		if p < 1024 || p > 65000 {
+			continue
+		}
+		l2, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(p+1))
+		if err != nil {
+			continue
+		}
+		l2.Close()
+		return p
+	}
+	t.Fatal("kein freies Portpaar")
+	return 0
+}
+
+func writeRaw(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func resetLocalPort(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() { localport.Set(0) })
+}
+
+func TestNewServiceDefaultPort(t *testing.T) {
+	resetLocalPort(t)
+	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if s.o.LocalAddr != "127.0.0.1:8080" || s.o.LocalAdminAddr != "127.0.0.1:8081" || localport.Get() != 8080 || s.port != 8080 {
+		t.Fatalf("Grundwert: %s %s %d", s.o.LocalAddr, s.o.LocalAdminAddr, localport.Get())
+	}
+}
+
+func TestNewServiceTakesPortFromConfig(t *testing.T) {
+	resetLocalPort(t)
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Kiosk.LocalPort = 18080
+	if err := config.Open(data).Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newService(Options{DataDir: data, RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if s.o.LocalAddr != "127.0.0.1:18080" || s.o.LocalAdminAddr != "127.0.0.1:18081" {
+		t.Fatalf("Adressen: %s %s", s.o.LocalAddr, s.o.LocalAdminAddr)
+	}
+	if localport.Get() != 18080 || localport.StartURL() != "http://127.0.0.1:18080/" || s.port != 18080 {
+		t.Fatalf("localport: %d", localport.Get())
+	}
+	if localAdminOrigin() != "http://127.0.0.1:18081" {
+		t.Fatalf("Ursprung der Admin-Seite am Terminal: %s", localAdminOrigin())
+	}
+}
+
+// Ausdrücklich angegebene Adressen (Tests, Entwicklung) gelten weiter; der Port aus der Konfiguration bestimmt dann nur die Prüfungen.
+func TestNewServiceExplicitAddrWins(t *testing.T) {
+	resetLocalPort(t)
+	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), LocalAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+		HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if s.o.LocalAddr != "127.0.0.1:0" || s.o.LocalAdminAddr != "127.0.0.1:0" {
+		t.Fatalf("Adressen: %s %s", s.o.LocalAddr, s.o.LocalAdminAddr)
+	}
+}
+
+// Ungültiger Port in der Datei: Rückfall wie bei jedem ungültigen Wert (hier: Grundeinstellung ohne guten Stand).
+func TestNewServiceInvalidPortInFileFallsBack(t *testing.T) {
+	resetLocalPort(t)
+	data := t.TempDir()
+	good := config.Default()
+	st := config.Open(data)
+	if err := st.Save(good); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkGood(); err != nil {
+		t.Fatal(err)
+	}
+	writeRaw(t, data, `{"schemaVersion":1,"terminal":{"id":"x","name":"T","role":"normal"},"defaultMode":"takeover",`+
+		`"client":{"profile":"remmina","quality":2,"colorDepth":32,"scale":true},"kiosk":{"inactivityMinutes":15,"local_port":80},`+
+		`"display":{"graphicsProfile":"labwc"},"update":{"repo":"strobobaer/hmi-kiosk-pi","prerelease":true}}`)
+	s, err := newService(Options{DataDir: data, RunDir: t.TempDir(), HardwareID: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if s.port != 8080 || s.o.LocalAddr != "127.0.0.1:8080" {
+		t.Fatalf("Port %d %s", s.port, s.o.LocalAddr)
+	}
+	if !strings.Contains(s.cfgWarn, "Port der lokalen Startseite") {
+		t.Errorf("Warnung: %q", s.cfgWarn)
+	}
+}
+
+type helperLog struct {
+	mu    sync.Mutex
+	calls []string
+	err   error
+}
+
+func (h *helperLog) call(_ context.Context, cmd, arg string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls = append(h.calls, cmd+" "+arg)
+	return h.err
+}
+
+func (h *helperLog) got() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.calls...)
+}
+
+func fastRestart(t *testing.T) {
+	t.Helper()
+	old := restartDelay
+	restartDelay = 10 * time.Millisecond
+	t.Cleanup(func() { restartDelay = old })
+}
+
+func newPortService(t *testing.T, h *helperLog) *service {
+	t.Helper()
+	resetLocalPort(t)
+	fastRestart(t)
+	s, err := newService(Options{DataDir: t.TempDir(), RunDir: t.TempDir(), HardwareID: func() string { return "" }, HelperCall: h.call})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.close)
+	return s
+}
+
+func TestApplyPortChangeSetsPolicyThenRestarts(t *testing.T) {
+	h := &helperLog{}
+	s := newPortService(t, h)
+	c := config.Default()
+	c.Kiosk.LocalPort = 18080
+	s.apply(c)
+	select {
+	case err := <-s.exit:
+		if !errors.Is(err, ErrRestart) {
+			t.Fatalf("Ende mit %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("kein Neustart angefordert")
+	}
+	var ports []string
+	for _, c := range h.got() {
+		if strings.HasPrefix(c, "set-local-port ") {
+			ports = append(ports, c)
+		}
+	}
+	if len(ports) != 1 || ports[0] != "set-local-port 18080" {
+		t.Fatalf("Helferaufrufe: %v", h.got())
+	}
+}
+
+func TestApplySamePortDoesNotRestart(t *testing.T) {
+	h := &helperLog{}
+	s := newPortService(t, h)
+	s.apply(config.Default())
+	c := config.Default()
+	c.Kiosk.LocalPort = 8080 // ausdrücklich der Grundwert ist dasselbe
+	s.apply(c)
+	select {
+	case err := <-s.exit:
+		t.Fatalf("Neustart ohne Portänderung: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	for _, c := range h.got() {
+		if strings.HasPrefix(c, "set-local-port") {
+			t.Fatalf("Helferaufruf ohne Portänderung: %v", h.got())
+		}
+	}
+}
+
+// Schlägt das Setzen der Richtlinie fehl, läuft das Terminal weiter auf dem alten Port (sonst bliebe Chromium gesperrt).
+func TestApplyPortChangeHelperFailureKeepsRunning(t *testing.T) {
+	h := &helperLog{err: errors.New("Helfer nicht erreichbar")}
+	s := newPortService(t, h)
+	c := config.Default()
+	c.Kiosk.LocalPort = 18080
+	s.apply(c)
+	select {
+	case err := <-s.exit:
+		t.Fatalf("Neustart trotz Fehler: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	s.mu.RLock()
+	warns := strings.Join(s.warnings, "|")
+	s.mu.RUnlock()
+	if !strings.Contains(warns, "18080") || !strings.Contains(warns, "Helfer nicht erreichbar") {
+		t.Errorf("Warnung fehlt: %q", warns)
+	}
+	// Ein neuer Versuch ist möglich.
+	h.mu.Lock()
+	h.err = nil
+	h.mu.Unlock()
+	s.apply(c)
+	select {
+	case err := <-s.exit:
+		if !errors.Is(err, ErrRestart) {
+			t.Fatalf("Ende mit %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("zweiter Versuch ohne Neustart")
+	}
+}
+
+// Beim Start gleicht der Dienst die Richtlinie mit dem Port ab (auch auf den Grundwert zurück).
+func TestServeSyncsPolicyPortAtStart(t *testing.T) {
+	resetLocalPort(t)
+	for _, p := range []int{0, 18080} {
+		h := &helperLog{}
+		data := t.TempDir()
+		cfg := config.Default()
+		cfg.Kiosk.LocalPort = p
+		if p == 18080 {
+			p = freePortPair(t)
+			cfg.Kiosk.LocalPort = p
+		}
+		if err := config.Open(data).Save(cfg); err != nil {
+			t.Fatal(err)
+		}
+		rootFS = t.TempDir()
+		ready := make(chan Bound, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			done <- Run(ctx, Options{
+				DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:0",
+				LocalAddr: "127.0.0.1:0", LocalAdminAddr: "127.0.0.1:0",
+				HelperCall: h.call, HardwareID: func() string { return "t" },
+				Ready: func(b Bound) { ready <- b },
+			})
+		}()
+		select {
+		case <-ready:
+		case err := <-done:
+			t.Fatalf("Ende: %v", err)
+		case <-time.After(20 * time.Second):
+			t.Fatal("Start")
+		}
+		want := "set-local-port " + strconv.Itoa(cfg.LocalPort())
+		waitUntil(t, "set-local-port beim Start", func() bool {
+			for _, c := range h.got() {
+				if c == want {
+					return true
+				}
+			}
+			return false
+		})
+		cancel()
+		<-done
+	}
+	rootFS = "/"
+}
+
+// Die Startseite bindet den Port aus der Konfiguration (ohne ausdrückliche Adresse) und nur ihn.
+func TestRunBindsConfiguredPort(t *testing.T) {
+	resetLocalPort(t)
+	p := freePortPair(t)
+	q := freePortPair(t) // Port der Admin-Seite über HTTPS: nicht p+1 (Windows vergibt freie Ports der Reihe nach)
+	for q-p < 3 && p-q < 3 {
+		q = freePortPair(t)
+	}
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Kiosk.LocalPort = p
+	if err := config.Open(data).Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	rootFS = t.TempDir()
+	t.Cleanup(func() { rootFS = "/" })
+	ready := make(chan Bound, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			DataDir: data, RunDir: t.TempDir(), AdminAddr: "127.0.0.1:" + strconv.Itoa(q),
+			HelperCall: func(context.Context, string, string) error { return nil },
+			HardwareID: func() string { return "t" },
+			Ready:      func(b Bound) { ready <- b },
+		})
+	}()
+	var b Bound
+	select {
+	case b = <-ready:
+	case err := <-done:
+		t.Fatalf("Ende: %v", err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("Start")
+	}
+	if b.Local != "127.0.0.1:"+strconv.Itoa(p) || b.LocalAdmin != "127.0.0.1:"+strconv.Itoa(p+1) {
+		t.Errorf("gebunden: %q %q", b.Local, b.LocalAdmin)
+	}
+	cancel()
+	<-done
+}
+
+func TestPortBusyTextNamesPortAndHint(t *testing.T) {
+	got := portBusyText("127.0.0.1:18080", startPortHint)
+	if !strings.Contains(got, "Port 18080 belegt") || !strings.Contains(got, "Port im Admin-Bereich ändern") {
+		t.Errorf("Text: %q", got)
+	}
+}
+
+// --- Admin-Seite ---
+
+func TestAdminLocalPortSaveAndShow(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	body := e.get("/admin/pdh").Body.String()
+	for _, w := range []string{"Port der lokalen Startseite", "Die lokale Admin-Seite nutzt den Port darüber. Ändern, wenn 8080 auf diesem Rechner gesperrt oder belegt ist.", `name="localPort"`} {
+		if !strings.Contains(body, w) {
+			t.Errorf("Seite zeigt %q nicht", w)
+		}
+	}
+	if !strings.Contains(body, "8080") || !strings.Contains(body, "8081") {
+		t.Errorf("benutzter Port nicht angezeigt")
+	}
+	r := e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}})
+	if r.Code != 200 {
+		t.Fatalf("Speichern: %d %s", r.Code, r.Body.String())
+	}
+	c, _, _ := e.store.Load()
+	if c.Kiosk.LocalPort != 18080 {
+		t.Fatalf("gespeichert: %d", c.Kiosk.LocalPort)
+	}
+	if !strings.Contains(r.Body.String(), "neu gestartet") || !strings.Contains(r.Body.String(), "18080") {
+		t.Errorf("Hinweis auf den Neustart fehlt: %s", r.Body.String())
+	}
+	// Der Grundwert wird als leer gespeichert (die Datei bleibt wie vor der Änderung).
+	r = e.post("/admin/pdh/localport", url.Values{"localPort": {"8080"}})
+	c, _, _ = e.store.Load()
+	if r.Code != 200 || c.Kiosk.LocalPort != 0 {
+		t.Fatalf("Grundwert: %d %d", r.Code, c.Kiosk.LocalPort)
+	}
+	r = e.post("/admin/pdh/localport", url.Values{"localPort": {""}})
+	c, _, _ = e.store.Load()
+	if r.Code != 200 || c.Kiosk.LocalPort != 0 {
+		t.Fatalf("leer: %d %d", r.Code, c.Kiosk.LocalPort)
+	}
+}
+
+func TestAdminLocalPortRejectsInvalid(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	e.product.adminPort = func() int { return 9443 }
+	for _, tc := range []struct{ in, want string }{
+		{"abc", "Zahl"},
+		{"80", "zwischen 1024 und 65534"},
+		{"1023", "zwischen 1024 und 65534"},
+		{"65535", "zwischen 1024 und 65534"},
+		{"-1", "zwischen 1024 und 65534"},
+		{"99999999999999999999", "Zahl"},
+		{"9443", "Admin-Seite"},
+		{"9442", "Admin-Seite"},
+		{"8080.5", "Zahl"},
+	} {
+		r := e.post("/admin/pdh/localport", url.Values{"localPort": {tc.in}})
+		if r.Code != 400 || !strings.Contains(r.Body.String(), tc.want) {
+			t.Errorf("%q: %d, erwartet %q:\n%s", tc.in, r.Code, tc.want, r.Body.String())
+		}
+		if c, _, _ := e.store.Load(); c.Kiosk.LocalPort != 0 {
+			t.Errorf("%q gespeichert: %d", tc.in, c.Kiosk.LocalPort)
+		}
+	}
+	// Der falsche Wert bleibt im Feld stehen.
+	r := e.post("/admin/pdh/localport", url.Values{"localPort": {"80"}})
+	if !strings.Contains(r.Body.String(), `value="80"`) {
+		t.Errorf("Eingabe nicht erhalten: %s", r.Body.String())
+	}
+}
+
+// Andere Einstellungen der PDH-Seite lassen den Port unberührt.
+func TestAdminPDHSettingsKeepLocalPort(t *testing.T) {
+	resetLocalPort(t)
+	e := newAdminEnv(t, Client{})
+	e.post("/admin/pdh/localport", url.Values{"localPort": {"18080"}})
+	if r := e.post("/admin/pdh/settings", url.Values{"url": {"https://pdh.firma.de"}}); r.Code != 200 {
+		t.Fatalf("%d %s", r.Code, r.Body.String())
+	}
+	if c, _, _ := e.store.Load(); c.Kiosk.LocalPort != 18080 {
+		t.Fatalf("Port verloren: %d", c.Kiosk.LocalPort)
+	}
+}
+
+func TestAdminShowsActualPortAndProblem(t *testing.T) {
+	resetLocalPort(t)
+	localport.Set(18080)
+	e := newAdminEnvWith(t, Client{}, func(p *adminProduct) {
+		p.local = func() localState {
+			return localState{Port: 18080, Problem: "Port 18080 belegt, Startseite nicht verfügbar"}
+		}
+	})
+	body := e.get("/admin/pdh").Body.String()
+	if !strings.Contains(body, "18080") || !strings.Contains(body, "18081") || !strings.Contains(body, "Startseite nicht verfügbar") {
+		t.Errorf("Anzeige: %s", body)
+	}
+}
+
+// PDH erfährt den eingestellten Port über eine freiwillige Kopfzeile; beim Grundwert fehlt sie (Anfragen wie bisher).
+func TestClientHeadersCarryNonDefaultPortOnly(t *testing.T) {
+	resetLocalPort(t)
+	req, _ := http.NewRequest(http.MethodGet, "https://pdh.example/x", nil)
+	setClientHeaders(req)
+	if v := req.Header.Get("X-Terminal-Local-Port"); v != "" {
+		t.Errorf("Grundwert: Kopfzeile %q", v)
+	}
+	localport.Set(18080)
+	req, _ = http.NewRequest(http.MethodGet, "https://pdh.example/x", nil)
+	setClientHeaders(req)
+	if v := req.Header.Get("X-Terminal-Local-Port"); v != "18080" {
+		t.Errorf("Kopfzeile %q", v)
+	}
+}
+
+// Die Startseite prüft den Host mit dem eingestellten Port, auch die Routen für die PDH-Seite (Karte, Tastatur).
+func TestStartHandlerChecksConfiguredPort(t *testing.T) {
+	resetLocalPort(t)
+	localport.Set(18080)
+	h, _ := startSetup(t, Client{}, false)
+	for _, host := range []string{"127.0.0.1:18080", "localhost:18080"} {
+		if w := startReq(t, h, "GET", "/start", host); w.Code != 200 {
+			t.Errorf("Host %s: %d", host, w.Code)
+		}
+	}
+	for _, host := range []string{"127.0.0.1:8080", "localhost:8080", "127.0.0.1:18081", "evil:18080", "127.0.0.1"} {
+		if w := startReq(t, h, "GET", "/start", host); w.Code != http.StatusForbidden {
+			t.Errorf("Host %s: %d, erwartet 403", host, w.Code)
+		}
+	}
+}

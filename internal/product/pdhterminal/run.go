@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,7 @@ import (
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/helperapi"
 	"hmikiosk/internal/keyboard"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/notify"
@@ -37,6 +39,8 @@ import (
 
 // Vorgaben der Adressen und Pfade; sie gelten wie beim HMI-Kiosk, damit Helfer,
 // Chromium-Richtlinie (feste Freigabe 8080/8081) und Einheiten gleich bleiben.
+// DefaultLocalAddr und DefaultLocalAdminAddr sind die Grundwerte; ohne ausdrückliche Adresse gilt
+// der Port aus der Konfiguration (Kiosk.LocalPort, siehe localport), und die lokale Admin-Seite liegt einen Port darüber.
 const (
 	DefaultLocalAddr      = "127.0.0.1:8080"
 	DefaultAdminAddr      = ":8443"
@@ -56,9 +60,9 @@ const (
 // Options sind die Startwerte des Dienstes. Adressen dürfen Port 0 nennen.
 type Options struct {
 	DataDir, RunDir string
-	LocalAddr       string // Startseite, nur Loopback
+	LocalAddr       string // Startseite, nur Loopback; leer: 127.0.0.1 mit dem Port aus der Konfiguration (Grundwert 8080)
 	AdminAddr       string // Admin-Seite über HTTPS
-	LocalAdminAddr  string // Admin-Seite am Terminal, nur Loopback
+	LocalAdminAddr  string // Admin-Seite am Terminal, nur Loopback; leer: der Port der Startseite + 1 (Grundwert 8081)
 	// HelperSocket ist der Socket des root-Helfers; leer heisst: kein Helfer (Windows).
 	HelperSocket    string
 	ChromiumEnabled bool
@@ -100,8 +104,15 @@ const (
 // restartDelay ist die Frist zwischen Update-Aktivierung und Neustart (Windows); Tests verkürzen sie.
 var restartDelay = 2 * time.Second
 
-// localAdminOrigin ist der Ursprung der Admin-Seite am Terminal (für den Systemstand).
-var localAdminOrigin = strings.TrimSuffix(web.LocalAdminURL, "/admin/")
+// localAdminOrigin ist der Ursprung der Admin-Seite am Terminal (für den Systemstand); er folgt dem eingestellten Port.
+func localAdminOrigin() string { return strings.TrimSuffix(web.LocalAdminURL(), "/admin/") }
+
+// helperSetLocalPort ist der Helferbefehl, der den Port der Startseite in die Chromium-Richtlinie schreibt
+// (helper.CmdSetLocalPort; das Paket helper gehört dem root-Prozess und wird hier nicht eingebunden).
+const helperSetLocalPort = "set-local-port"
+
+// startPortHint ist die Folge, die bei belegtem oder gesperrtem Port der Startseite genannt wird.
+const startPortHint = "Startseite nicht verfügbar – Port im Admin-Bereich ändern (PDH, Lokale Startseite)"
 
 type service struct {
 	o         Options
@@ -134,6 +145,9 @@ type service struct {
 	warnings []string
 	markGood bool
 	hwID     string
+
+	port       int         // Port der Startseite, mit dem dieser Lauf gestartet ist (localport); ändert sich nur durch Neustart
+	portSwitch atomic.Bool // ein Wechsel auf einen anderen Port ist eingeplant
 }
 
 // Run führt den Dienst aus, bis ctx endet; ein geordnetes Ende ergibt nil.
@@ -149,9 +163,7 @@ func newService(o Options) (*service, error) {
 	if o.DataDir == "" || o.RunDir == "" {
 		return nil, errors.New("Datenordner und Laufzeitordner müssen angegeben sein")
 	}
-	o.LocalAddr = orDefault(o.LocalAddr, DefaultLocalAddr)
 	o.AdminAddr = orDefault(o.AdminAddr, DefaultAdminAddr)
-	o.LocalAdminAddr = orDefault(o.LocalAdminAddr, DefaultLocalAdminAddr)
 	s := &service{o: o, store: config.Open(o.DataDir), exit: make(chan error, 1)}
 	if o.HelperSocket != "" {
 		s.helper = helperapi.New(o.HelperSocket)
@@ -179,6 +191,11 @@ func newService(o Options) (*service, error) {
 	s.updates = appcore.NewUpdateCheck(release.PDHTerminal, func() config.UpdateCfg { return s.config().Update }, nil)
 	s.cleanupStartup()
 	loadFailed := s.loadConfig()
+	// Der Port der Startseite kommt aus der Konfiguration (Grundwert 8080) und gilt für diesen Lauf.
+	localport.Set(s.config().LocalPort())
+	s.port = localport.Get()
+	s.o.LocalAddr = orDefault(o.LocalAddr, localport.Addr())
+	s.o.LocalAdminAddr = orDefault(o.LocalAdminAddr, localport.AdminAddr())
 	s.hwID = s.detectHardwareID()
 	s.claimHardware(loadFailed)
 	s.openBox(loadFailed)
@@ -230,6 +247,81 @@ func (s *service) apply(c config.Config) {
 	s.origins.Set(config.PDHOrigins(c.PDH))
 	s.cards.Apply(s.cardSettings(c.Card))
 	s.display.Apply(statusDisplaySettings(c.StatusDisplay))
+	s.portChanged(c.LocalPort())
+}
+
+// helperCall ruft den Helfer (in Tests ersetzt durch Options.HelperCall).
+func (s *service) helperCall(ctx context.Context, cmd, arg string) error {
+	if s.o.HelperCall != nil {
+		return s.o.HelperCall(ctx, cmd, arg)
+	}
+	return s.callHelper(ctx, cmd, arg)
+}
+
+const policyPortTimeout = 15 * time.Second
+
+// syncPolicyPort schreibt den Port der Startseite in die Chromium-Richtlinie (Linux; unter Windows gibt es keinen
+// Helfer und keine Richtlinie). Beim Start geschieht das immer, auch beim Grundwert: Es macht einen früher
+// fehlgeschlagenen Rückwechsel gut. Ein älterer Helfer kennt den Befehl nicht; beim Grundwert ist das kein Fehler.
+func (s *service) syncPolicyPort(ctx context.Context, port int) error {
+	cctx, cancel := context.WithTimeout(ctx, policyPortTimeout)
+	defer cancel()
+	return s.helperCall(cctx, helperSetLocalPort, strconv.Itoa(port))
+}
+
+// portChanged: Hat die gespeicherte Konfiguration einen anderen Port als dieser Lauf, schreibt der Dienst die
+// Richtlinie neu und startet danach selbst neu (kurz verzögert, damit die Antwort der Admin-Seite noch ankommt).
+// Misslingt das Schreiben der Richtlinie, läuft das Terminal auf dem alten Port weiter: Chromium bliebe sonst auf dem
+// neuen Port gesperrt.
+func (s *service) portChanged(want int) {
+	if want == s.port || !s.portSwitch.CompareAndSwap(false, true) {
+		return
+	}
+	time.AfterFunc(restartDelay, func() {
+		defer s.portSwitch.Store(false)
+		want := s.config().LocalPort()
+		if want == s.port {
+			return
+		}
+		if err := s.syncPolicyPort(context.Background(), want); err != nil {
+			s.warn(fmt.Sprintf("Port der Startseite %d nicht übernommen, das Terminal läuft weiter auf Port %d: %v", want, s.port, err))
+			return
+		}
+		log.Printf("Port der Startseite wechselt von %d auf %d, das Terminal startet neu", s.port, want)
+		s.requestExit(ErrRestart)
+	})
+}
+
+// localState beschreibt, welchen Port die Startseite tatsächlich benutzt (für die Admin-Seite).
+type localState struct {
+	Port    int    // Port der Startseite dieses Laufs; die lokale Admin-Seite liegt einen darüber
+	Problem string // Grund, wenn die Startseite oder die Admin-Seite am Terminal nicht gebunden ist
+}
+
+func (s *service) localState() localState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var parts []string
+	for _, k := range []string{problemStart, problemLocal} {
+		if m := s.problems[k]; m != "" {
+			parts = append(parts, m)
+		}
+	}
+	return localState{Port: s.port, Problem: strings.Join(parts, "; ")}
+}
+
+// adminPort ist der Port der Admin-Seite über HTTPS (gebunden, sonst aus der Adresse, sonst 8443).
+func (s *service) adminPort() int {
+	addr := s.o.AdminAddr
+	if p := s.adminAddr.Load(); p != nil {
+		addr = *p
+	}
+	if _, ps, err := net.SplitHostPort(addr); err == nil {
+		if p, err := strconv.Atoi(ps); err == nil && p > 0 {
+			return p
+		}
+	}
+	return config.DefaultAdminPort
 }
 
 // cardSettings liefert die Leser-Einstellungen: Mit Zwischenspeicher gilt das Terminal als globales
@@ -344,6 +436,15 @@ func (s *service) serve(parent context.Context) error {
 	s.cards.Apply(s.cardSettings(s.config().Card))
 	s.display.Apply(statusDisplaySettings(s.config().StatusDisplay))
 	background(func() { s.origins.Run(ctx) })
+	background(func() {
+		if err := s.syncPolicyPort(ctx, s.port); err != nil && ctx.Err() == nil {
+			if s.port == localport.Default {
+				log.Printf("Port der Startseite nicht in die Richtlinie geschrieben (Grundwert, die Richtlinie des Pakets gilt): %v", err)
+			} else {
+				s.warn(fmt.Sprintf("Die Chromium-Richtlinie erlaubt den Port %d der Startseite womöglich nicht: %v", s.port, err))
+			}
+		}
+	})
 	background(func() { appcore.RunUpdateCheck(ctx, s.updates) })
 	background(func() { s.funcs.Run(ctx) })
 
@@ -379,8 +480,8 @@ func (s *service) serve(parent context.Context) error {
 		bound.Local = l.Addr().String()
 		local = serveLocal(l)
 	} else {
-		s.warn(fmt.Sprintf("Startseite nicht verfügbar: %v", err))
-		s.setProblem(problemStart, portBusyText(s.o.LocalAddr, "Startseite nicht verfügbar"))
+		s.warn(fmt.Sprintf("Startseite nicht verfügbar: %v. Der Port lässt sich im Admin-Bereich ändern (PDH, Lokale Startseite).", err))
+		s.setProblem(problemStart, portBusyText(s.o.LocalAddr, startPortHint))
 	}
 
 	remote, onTerminal := web.NewAdminHandlers(s.adminDeps())
@@ -392,8 +493,8 @@ func (s *service) serve(parent context.Context) error {
 	}
 	stopLocalAdmin, err := appcore.ServeLocalAdmin(ctx, s.o.LocalAdminAddr, onTerminal, &s.presence)
 	if err != nil {
-		s.warn(fmt.Sprintf("Admin-Seite am Terminal nicht verfügbar: %v", err))
-		s.setProblem(problemLocal, "Port belegt, Admin-Seite am Terminal nicht verfügbar")
+		s.warn(fmt.Sprintf("Admin-Seite am Terminal nicht verfügbar: %v. Der Port der Startseite lässt sich im Admin-Bereich ändern (PDH, Lokale Startseite), die Admin-Seite liegt einen Port darüber.", err))
+		s.setProblem(problemLocal, portBusyText(s.o.LocalAdminAddr, "Admin-Seite am Terminal nicht verfügbar – Port im Admin-Bereich ändern (PDH, Lokale Startseite)"))
 	} else {
 		bound.LocalAdmin = s.o.LocalAdminAddr
 	}
@@ -678,7 +779,7 @@ var staysUpWithoutStart = onWindows
 // portRetryEvery ist die Frist, nach der ein belegter Port neu versucht wird; Tests verkürzen sie.
 var portRetryEvery = 30 * time.Second
 
-// portBusyText: „Port 8080 belegt, <folge>“.
+// portBusyText: „Port 8080 belegt, <folge>“ (der tatsächliche Port aus der Adresse).
 func portBusyText(addr, consequence string) string {
 	if _, p, err := net.SplitHostPort(addr); err == nil && p != "" {
 		return fmt.Sprintf("Port %s belegt, %s", p, consequence)
@@ -829,7 +930,7 @@ func (s *service) adminDeps() web.AdminDeps {
 		Activate:  activate,
 	}
 	if s.helper != nil { // der Systemstand ist ein Linux-Begriff; ohne Helfer (Windows) gibt es keine Prüfung
-		installer.SystemLevel = func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) }
+		installer.SystemLevel = func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin()) }
 	}
 	return web.AdminDeps{
 		Keyboard:             kbd,
@@ -862,6 +963,7 @@ func (s *service) adminDeps() web.AdminDeps {
 func (s *service) adminProduct() *web.AdminProduct {
 	p := newAdminProduct(s.o.DataDir, s.client, s.cards, s.display)
 	p.funcs = s.funcs
+	p.local, p.adminPort = s.localState, s.adminPort
 	if s.o.Kiosk && onWindows {
 		p.kiosk, p.logoff = true, logoffUser
 	}

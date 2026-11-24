@@ -659,7 +659,7 @@ Für die verwaltete Verteilung gibt es `PDH-Terminal-<Version>.msi` (je PC, 64 B
 - **Setup ohne Code-Signatur:** SmartScreen zeigt „Unbekannter Herausgeber“ (siehe Installation).
 - **Fenster mit höheren Rechten:** Karten des Lesers landen dort im Fenster (Absatz „USB-Leser unter Windows (Hinweis)“).
 - Abschnitte der Admin-Seite, die den Helfer brauchen (Netzwerk, Zeit, Sicherung, Abbild), fehlen unter Windows.
-- Läuft Edge nicht oder ist Port 8080 oder 8443 belegt, zeigt das Tray-Symbol rot („Port 8080 belegt“) und die Selbstprüfung den Grund. Das Terminal bleibt dabei oben (es endet nicht, der Starter zählt es nicht als Fehlstart) und versucht Edge und die Ports alle 30 Sekunden neu; ist ein Port wieder frei, wird er ohne Neustart gebunden. Die Gesundmeldung des Starters steht trotzdem, weil der Prozess selbst gesund ist.
+- Läuft Edge nicht oder ist Port 8080 (Startseite, einstellbar, siehe „Port der lokalen Startseite“) oder 8443 belegt, zeigt das Tray-Symbol rot („Port 8080 belegt“) und die Selbstprüfung den Grund. Das Terminal bleibt dabei oben (es endet nicht, der Starter zählt es nicht als Fehlstart) und versucht Edge und die Ports alle 30 Sekunden neu; ist ein Port wieder frei, wird er ohne Neustart gebunden. Die Gesundmeldung des Starters steht trotzdem, weil der Prozess selbst gesund ist.
 - Das Terminal ist ein Programm ohne Konsolenfenster. Beenden geht über das Tray-Symbol („Beenden“) oder im Task-Manager.
 
 ### Funktionen, Tastatur und Farben (ab 0.4.3)
@@ -690,6 +690,21 @@ Jede Anfrage an PDH trägt zusätzlich `X-Terminal-Admin-URL: https://<IP des Ge
 3. Windows-Kiosk: Nach `-setup` und Neustart erscheint die Windows-Tastatur beim Antippen eines Feldes in Edge (Touch), und zwar auch mit angeschlossenem USB-Kartenleser; sie verschwindet beim Verlassen. Nach dem Rückbau sind die beiden TabletTip-Werte entfernt. (Der Wert `TouchKeyboardTapInvoke` und das Verhalten von Edge im Kiosk-Modus sind auf der Zielversion von Windows zu bestätigen.)
 4. Farben: Admin-Seite, Startseite, Meldeseiten und Offline-Folienschau zeigen denselben Hintergrund wie die PDH-Terminalseite (kein sichtbarer Sprung beim Wechsel).
 5. Abgleich gegen ein PDH mit der neuen Schnittstelle: am Terminal ändern, in PDH ändern (jünger gewinnt), PDH kurz trennen und wieder verbinden.
+
+### Port der lokalen Startseite (ab 0.4.6)
+
+Die Startseite des Terminals läuft nur auf diesem Rechner (`127.0.0.1`), ab Werk an **Port 8080**, die lokale Admin-Seite einen Port darüber (**8081**). Ist 8080 auf einem Rechner gesperrt oder belegt (Windows meldet dann „Startseite nicht verfügbar: listen tcp 127.0.0.1:8080: bind: An attempt was made to access a socket in a way forbidden by its access permissions“; das passiert oft, wenn Hyper-V, WSL oder Docker den Bereich reserviert haben), lässt sich der Port ändern:
+
+1. Admin-Seite über HTTPS öffnen (`https://<IP>:8443/admin/`, unter Windows das Tray-Symbol oder die Verknüpfung „PDH-Terminal Admin“; sie ist unabhängig von 8080 erreichbar).
+2. Reiter **PDH**, Abschnitt **Lokale Startseite**, Feld **Port der lokalen Startseite**: neuen Port eintragen (leer oder 8080 ist der Grundwert) und speichern.
+3. Das Terminal startet danach selbst neu und zeigt die Startseite am neuen Port; die lokale Admin-Seite liegt am Port darüber. Der Abschnitt zeigt den tatsächlich benutzten Port und, falls die Startseite nicht gebunden werden konnte, den Grund.
+
+Regeln: erlaubt sind **1024 bis 65534**; weder der Port noch der Port darüber darf der Port der HTTPS-Admin-Seite sein (ab Werk 8443). Ungültige Werte lehnt die Admin-Seite beim Speichern mit einer Meldung ab; eine Konfigurationsdatei mit ungültigem Wert gilt wie jede andere ungültige Datei (Rückfall auf den letzten guten Stand). Der Wert gehört zum Rechner und steht in `config.json` unter `kiosk.local_port` (fehlt der Wert oder ist er 0, gilt 8080); Export und Import übernehmen ihn nicht. Mit dem Grundwert bleibt alles wie vor 0.4.6 (Chromium-Richtlinie, Adressen, Verknüpfungen).
+
+- *Raspberry Pi:* Der Dienst schreibt den Port über den root-Helfer (Befehl `set-local-port`, Datei `<Daten>/system/local-port`) in die Chromium-Richtlinie `/etc/chromium/policies/managed/hmi-kiosk.json`. Sie erlaubt genau `127.0.0.1` und `localhost` an Port und Port+1, nichts weiter; derselbe Stand wird beim Start des Helfers wieder geschrieben. Misslingt das Schreiben (zum Beispiel mit einem älteren Helfer ohne den Befehl), startet das Terminal **nicht** neu, läuft auf dem bisherigen Port weiter, und unter **System** steht eine Warnung.
+- *Windows:* Es gibt keine Richtlinie und keine festen Adressen in Starter, Autostart oder Setup; der Starter startet das Programm nach dem Speichern neu, Edge bekommt die Adresse am neuen Port. Ist der Port belegt oder gesperrt, zeigt das Tray-Symbol rot „Port <Port> belegt, Startseite nicht verfügbar – Port im Admin-Bereich ändern“.
+- *PDH:* Bei einem anderen Port als 8080 trägt jede Anfrage an PDH zusätzlich `X-Terminal-Local-Port: <Port>`. Die PDH-Seiten erreichen das Terminal (Kartenstrom, Bildschirmtastatur) unter `http://127.0.0.1:<Port>`; das Skript der PDH-Seite (`CARD_ORIGIN`) muss den Port aus der Kopfzeile verwenden, sonst arbeiten Kartenleser und Tastatur in den PDH-Seiten nur am Grundwert 8080. Die Startseite und die Anmeldung bei PDH laufen unabhängig davon.
+- Die HMI-Kiosk-Variante bleibt bei 8080/8081 (kein Feld in der Admin-Seite).
 
 ### Bekannte Einschränkungen
 

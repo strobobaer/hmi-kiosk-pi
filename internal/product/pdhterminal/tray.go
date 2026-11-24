@@ -52,7 +52,7 @@ const (
 	problemEdge  = "edge"
 	problemAdmin = "port-admin"
 	problemLocal = "port-local"
-	problemStart = "port-start" // Startseite (8080) nicht gebunden
+	problemStart = "port-start" // Startseite (Port aus der Konfiguration, Grundwert 8080) nicht gebunden
 )
 
 // setProblem merkt einen Grund für die rote Färbung (leer: erledigt) und färbt das Symbol neu.

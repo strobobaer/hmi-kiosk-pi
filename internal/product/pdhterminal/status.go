@@ -65,7 +65,7 @@ func (s *service) status() web.SystemStatus {
 		add("Der Schreibschutz (Overlay auf /) ist nicht aktiv.")
 	}
 	if s.helper != nil {
-		if have := platform.InstalledSystemLevel(rootFS, localAdminOrigin); have < release.PDHTerminal.SystemLevel {
+		if have := platform.InstalledSystemLevel(rootFS, localAdminOrigin()); have < release.PDHTerminal.SystemLevel {
 			add(fmt.Sprintf("Die Systemteile dieses Geräts (Stand %d) sind älter, als diese Programmversion braucht (Stand %d). "+
 				"Sie funktionieren erst nach einem neuen SD-Abbild oder erneutem install.sh aus dem Bundle dieser Version "+
 				"(vorher die Konfiguration sichern).", have, release.PDHTerminal.SystemLevel))

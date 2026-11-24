@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/product/pdhterminal/card"
 	"hmikiosk/internal/product/pdhterminal/oled"
 	"hmikiosk/internal/web"
@@ -38,6 +40,14 @@ type pdhView struct {
 	User, Since                         string
 	State, StateClass                   string
 	Notice                              string
+
+	// Lokale Startseite: LocalPort ist der Wert im Feld, Port/AdminPort der tatsächlich benutzte Port der
+	// Startseite und der lokalen Admin-Seite, Pending der gespeicherte, aber erst nach dem Neustart gültige.
+	LocalPort       string
+	Port, AdminPort int
+	Pending         int
+	PortProblem     string
+	DefaultPort     int
 }
 
 type adminProduct struct {
@@ -48,6 +58,10 @@ type adminProduct struct {
 	display *oled.Service
 	// probe prüft das Statusdisplay (Variable für Tests).
 	probe func(bus string, addr int) error
+	// local meldet den tatsächlich benutzten Port der Startseite; nil: der eingestellte Port (localport).
+	local func() localState
+	// adminPort liefert den Port der Admin-Seite über HTTPS (für die Kollisionsprüfung); nil: 8443.
+	adminPort func() int
 	// kiosk: Windows-Kiosk, die Seite hat den Abschnitt „Kiosk“; logoff meldet den Benutzer ab (Windows:
 	// ExitWindowsEx(EWX_LOGOFF), Tests ersetzen es).
 	kiosk  bool
@@ -123,6 +137,7 @@ func (p *adminProduct) baseProduct() *web.AdminProduct {
 			}},
 			{Method: http.MethodPost, Path: "/admin/functions", Handle: p.functionsSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/settings", Handle: p.settings},
+			{Method: http.MethodPost, Path: "/admin/pdh/localport", Handle: p.localPortSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/pair", Handle: p.pair},
 			{Method: http.MethodPost, Path: "/admin/pdh/unpair", Handle: p.unpair},
 			{Method: http.MethodGet, Path: "/admin/card", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
@@ -148,6 +163,11 @@ func defaultName() string {
 
 // render zeigt die Seite PDH. form (nicht nil) ersetzt die gespeicherten Werte im Formular.
 func (p *adminProduct) render(f web.AdminFrame, w http.ResponseWriter, r *http.Request, status int, errMsg, notice string, form *config.PDHCfg) {
+	p.renderPort(f, w, r, status, errMsg, notice, form, nil)
+}
+
+// renderPort wie render; port (nicht nil) ersetzt den gespeicherten Port im Feld der lokalen Startseite.
+func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *http.Request, status int, errMsg, notice string, form *config.PDHCfg, port *string) {
 	cfg, err := f.Load()
 	if err != nil {
 		f.Render(w, http.StatusInternalServerError, "pdh", "pdh", "PDH", err.Error(), pdhView{})
@@ -160,6 +180,19 @@ func (p *adminProduct) render(f web.AdminFrame, w http.ResponseWriter, r *http.R
 	v := pdhView{
 		URL: shown.URL, AllowHTTP: shown.AllowHTTP, DeviceName: shown.DeviceName,
 		Extra: strings.Join(shown.ExtraOrigins, "\n"), DefaultName: defaultName(), Notice: notice,
+		DefaultPort: localport.Default,
+	}
+	v.LocalPort = strconv.Itoa(cfg.LocalPort())
+	if port != nil {
+		v.LocalPort = *port
+	}
+	ls := localState{Port: localport.Get()}
+	if p.local != nil {
+		ls = p.local()
+	}
+	v.Port, v.AdminPort, v.PortProblem = ls.Port, ls.Port+1, ls.Problem
+	if want := cfg.LocalPort(); want != ls.Port {
+		v.Pending = want
 	}
 	dev, derr := LoadDevice(p.dataDir)
 	switch {
@@ -231,6 +264,58 @@ func (p *adminProduct) settings(f web.AdminFrame, w http.ResponseWriter, r *http
 		notice = "Kopplung entfernt, weil die PDH-Adresse geändert wurde."
 	}
 	p.render(f, w, r, http.StatusOK, "", notice, nil)
+}
+
+// localPortSave speichert den Port der lokalen Startseite. Er wirkt nach dem Neustart des Dienstes, den der
+// Dienst nach dem Speichern selbst auslöst (service.portChanged).
+func (p *adminProduct) localPortSave(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		p.render(f, w, r, http.StatusBadRequest, "Formular unlesbar", "", nil)
+		return
+	}
+	raw := strings.TrimSpace(r.PostFormValue("localPort"))
+	fail := func(msg string) {
+		p.renderPort(f, w, r, http.StatusBadRequest, msg, "", nil, &raw)
+	}
+	port := 0
+	if raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			fail(fmt.Sprintf("Port der lokalen Startseite muss eine Zahl sein: %q", raw))
+			return
+		}
+		port = n
+	}
+	adminPort := config.DefaultAdminPort
+	if p.adminPort != nil {
+		adminPort = p.adminPort()
+	}
+	if err := config.ValidateLocalPort(port, adminPort); err != nil {
+		fail(err.Error())
+		return
+	}
+	if port == localport.Default {
+		port = 0 // der Grundwert steht nicht in der Datei
+	}
+	if err := f.Update(func(c *config.Config) error { c.Kiosk.LocalPort = port; return nil }); err != nil {
+		fail(err.Error())
+		return
+	}
+	notice := "Einstellung gespeichert."
+	if want := localport.Default; port != 0 || localport.Get() != want {
+		if eff := portOrDefault(port); eff != localport.Get() {
+			f.Logf("Port der lokalen Startseite auf %d gestellt", eff)
+			notice = fmt.Sprintf("Gespeichert. Das Terminal wird neu gestartet; danach ist die Startseite unter Port %d und die lokale Admin-Seite unter Port %d erreichbar.", eff, eff+1)
+		}
+	}
+	p.render(f, w, r, http.StatusOK, "", notice, nil)
+}
+
+func portOrDefault(p int) int {
+	if p == 0 {
+		return localport.Default
+	}
+	return p
 }
 
 func (p *adminProduct) pair(f web.AdminFrame, w http.ResponseWriter, r *http.Request) {

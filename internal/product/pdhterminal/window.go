@@ -75,7 +75,7 @@ func (s *service) startEdge(ctx context.Context, startURL string) <-chan struct{
 		if s.o.Kiosk {
 			// Im Kiosk bleibt Edge nach einem Neustart sichtbar und vorn; Admin-Geste und „Zurück“ laufen über
 			// dieselbe Überwachung.
-			sup.SetEdgeKiosk(web.LocalAdminURL)
+			sup.SetEdgeKiosk(web.LocalAdminURL())
 		}
 		if f := restartHook(s.o.Kiosk, func(n int) {
 			log.Printf("Edge neu gestartet (%d), Fenster wird minimiert", n)
