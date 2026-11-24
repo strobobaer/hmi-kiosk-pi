@@ -115,7 +115,10 @@ func TestAdminSavePassesURLsToRoute(t *testing.T) {
 
 func TestAdminShowsRoute(t *testing.T) {
 	rt := NewRoute("https://pdh.firma.de", "https://pdh.t.ts.net")
-	at := time.Date(2026, 11, 24, 9, 5, 0, 0, time.Local)
+	old := time.Local
+	time.Local = time.FixedZone("test", 5*3600+1800)
+	t.Cleanup(func() { time.Local = old })
+	at := time.Date(2026, 11, 24, 9, 5, 0, 0, time.UTC) // lokal 14:35
 	rt.now = func() time.Time { return at }
 	e := newAdminEnv(t, Client{Route: rt})
 	e.setPDH(config.PDHCfg{URL: "https://pdh.firma.de", FallbackURL: "https://pdh.t.ts.net"})
@@ -125,7 +128,7 @@ func TestAdminShowsRoute(t *testing.T) {
 	}
 	rt.Fail("https://pdh.firma.de", &netErrText{"dial <b>x</b>"})
 	b = e.get("/admin/pdh").Body.String()
-	if !strings.Contains(b, `msg warn" title="`) || !strings.Contains(b, "verbunden über: Tailnet seit 09:05") {
+	if !strings.Contains(b, `msg warn" title="`) || !strings.Contains(b, "verbunden über: Tailnet seit 14:35") {
 		t.Errorf("Tailnet: %s", b)
 	}
 	if strings.Contains(b, "<b>x</b>") || !strings.Contains(b, "&lt;b&gt;x&lt;/b&gt;") {
@@ -138,3 +141,22 @@ type netErrText struct{ s string }
 func (e *netErrText) Error() string   { return e.s }
 func (e *netErrText) Timeout() bool   { return true }
 func (e *netErrText) Temporary() bool { return true }
+
+// Ohne Ausweichadresse, ohne Wegwahl oder ohne Hauptadresse bleibt die Seite wie bisher (keine Weg-Zeile).
+func TestAdminNoRouteLine(t *testing.T) {
+	cases := map[string]struct {
+		rt  *Route
+		cfg config.PDHCfg
+	}{
+		"ohne Ausweichadresse": {NewRoute("https://pdh.firma.de", ""), config.PDHCfg{URL: "https://pdh.firma.de"}},
+		"ohne Route":           {nil, config.PDHCfg{URL: "https://pdh.firma.de", FallbackURL: "https://pdh.t.ts.net"}},
+		"ohne Hauptadresse":    {NewRoute("", "https://pdh.t.ts.net"), config.PDHCfg{FallbackURL: "https://pdh.t.ts.net"}},
+	}
+	for name, c := range cases {
+		e := newAdminEnv(t, Client{Route: c.rt})
+		e.setPDH(c.cfg)
+		if b := e.get("/admin/pdh").Body.String(); strings.Contains(b, "verbunden über") {
+			t.Errorf("%s: Weg-Zeile vorhanden", name)
+		}
+	}
+}

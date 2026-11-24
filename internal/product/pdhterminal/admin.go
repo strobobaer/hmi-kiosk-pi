@@ -191,7 +191,7 @@ func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *ht
 		Extra: strings.Join(shown.ExtraOrigins, "\n"), DefaultName: defaultName(), Notice: notice,
 		DefaultPort: localport.Default,
 	}
-	if rt := p.client.Route; rt != nil && cfg.PDH.URL != "" {
+	if rt := p.client.Route; rt != nil && cfg.PDH.URL != "" && cfg.PDH.FallbackURL != "" {
 		st := rt.Status()
 		if st.Name == "tailnet" {
 			v.Route, v.RouteClass, v.RouteErr = "verbunden über: Tailnet seit "+st.Since.Local().Format("15:04"), "warn", st.LastErr
