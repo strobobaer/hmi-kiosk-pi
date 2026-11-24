@@ -22,7 +22,9 @@ var binaryDirs = []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
 // notInstalledError meldet ein optionales Programm, das auf dem Gerät fehlt.
 type notInstalledError struct{ name string }
 
-func (e notInstalledError) Error() string { return fmt.Sprintf("Programm %s ist nicht installiert", e.name) }
+func (e notInstalledError) Error() string {
+	return fmt.Sprintf("Programm %s ist nicht installiert", e.name)
+}
 
 // NewOSExec löst die benötigten Programme einmalig in festen Verzeichnissen auf
 // und startet später nur diese absoluten Pfade, ohne Shell und mit leerer Umgebung.
