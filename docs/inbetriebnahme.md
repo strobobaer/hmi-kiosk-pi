@@ -20,6 +20,7 @@ Der Betrieb danach steht in [betrieb.md](betrieb.md).
 10. Prüfung mit zwei Terminals
 11. Andere Linux-Systeme (install.sh)
 12. Offene Punkte nur auf Hardware
+13. PDH-Terminal: Tailnet-Rückfall (ab 0.5.0)
 
 ## 1. Vorbereitung am Entwicklungsrechner
 
@@ -562,4 +563,33 @@ Diese Liste ist die Abnahme am Gerät. Alles andere ist ohne Hardware geprüft (
 28. [ ] Start von einem USB-Laufwerk: Gerät `sda`, Partitionen `sda1` bis `sda3`, erster Start wie auf der SD-Karte.
 29. [ ] Auf SSD und auf USB: SD-Sicherung (dateiweise und Abbild) und Wiederherstellung funktionieren; bei Systemlaufwerk am USB-Anschluss bietet die Sicherung dieses Laufwerk nie als Ziel an, ein zweiter Stick wird gefunden.
 
+**PDH-Terminal: Tailnet-Rückfall (Abschnitt 13)**
+
+30. [ ] Am Pi-Abbild: `tailscale version` liefert eine Version, `systemctl is-enabled tailscaled` meldet `enabled`, die Admin-Seite zeigt „nicht angemeldet“. Anmeldung mit einem Auth-Key gelingt, die Anmeldung überlebt einen Neustart, am Terminal nach der Anmeldung kein Schlüssel in `journalctl`.
+31. [ ] Am Windows-PC (Setup.exe): `C:\Program Files\Tailscale\tailscale.exe` vorhanden, Anmeldung ohne angemeldeten Benutzer möglich (`--unattended`); Setup-Protokoll nennt den Tailscale-Schritt.
+32. [ ] Wechsel auf das Tailnet bei gesperrtem LAN-Weg nach etwa einer Minute, Rückkehr nach höchstens 5 Minuten, Kartenleser und Tastatur arbeiten auf beiden Wegen.
+
 Alle Punkte erledigt: Die Abweichungen in Abschnitt 14 der Spezifikation nachtragen, die alte Karte des ersten Terminals erst danach löschen.
+
+## 13. PDH-Terminal: Tailnet-Rückfall (ab 0.5.0)
+
+Gilt für das PDH-Terminal (Abbild `pdh-terminal-<Version>.img.xz`, Windows-Setup), nicht für HMI-Kiosk. Der Rückfall über das Tailnet ist freiwillig; ohne die Schritte hier arbeitet das Terminal wie vor 0.5.0.
+
+**Im Abbild und im Setup ist bereits enthalten:**
+
+- *Pi:* Tailscale aus der signierten Tailscale-Paketquelle (Schlüssel-Fingerabdruck `2596 A99E AAB3 3821 893C 0A79 458C A832 957F 5868`, `verify-image.sh` prüft Paket, Schlüsselbund (SHA-256), Paketquelle und Dienst), `tailscaled` eingeschaltet, **nicht angemeldet**. Der Bau braucht Zugriff auf `pkgs.tailscale.com`.
+- *Windows:* `PDH-Terminal-Setup-<Version>.exe` installiert Tailscale 1.104.7 still nach, falls es fehlt (Download mit SHA-256-Prüfung; ein Fehler dabei kommt nur ins Setup-Protokoll und bricht die Installation nicht ab). Das MSI installiert Tailscale nicht; die IT verteilt es getrennt ([betrieb.md](betrieb.md), „MSI“).
+
+**Einmalig auf dem Server und im Tailnet** ([tailnet-server-einrichtung.md](tailnet-server-einrichtung.md)):
+
+1. Auf dem PDH-Server `tailscale serve` einrichten (Standard: `sudo tailscale serve --bg --https=443 http://localhost:8090`) und den `ts.net`-Namen ablesen (`tailscale status`).
+2. In der Tailnet-Richtlinie `tag:pdh-terminal` anlegen und nur den Zugriff auf den PDH-Server, Port 443, erlauben.
+3. Einen Auth-Key mit dem Tag erzeugen: vorab freigegeben, nicht ephemeral, wiederverwendbar bei mehreren Terminals.
+
+**Je Terminal**, nach dem Koppeln (README, „PDH-Terminal einrichten“, Schritt 6):
+
+1. Admin-Seite, Reiter **PDH**: im Feld **Ausweichadresse (Tailnet)** den Namen eintragen, zum Beispiel `https://pdh.<tailnet>.ts.net`, speichern. Die Statuszeile „verbunden über: LAN“ erscheint.
+2. Menüpunkt **Tailnet**: Status „nicht angemeldet“, den Auth-Key einfügen, „Anmelden“. Der Status zeigt danach „angemeldet als …“. Der Key wird nicht gespeichert; einen wiederverwendbaren Key nach der letzten Anmeldung in der Tailscale-Verwaltung widerrufen.
+3. **Probe:** Den Weg zur Hauptadresse unterbrechen (Netzwerkkabel zum PDH-Server oder Sperre). Nach etwa einer Minute steht auf dem Reiter PDH „verbunden über: Tailnet seit hh:mm“ und PDH bleibt bedienbar. Weg freigeben: spätestens nach 5 Minuten kehrt das Terminal selbst zu „LAN“ zurück.
+
+Zustände, Regeln für den Wechsel und Fehlersuche: [betrieb.md](betrieb.md), Abschnitt 4 „Ausweichadresse und Tailnet“.

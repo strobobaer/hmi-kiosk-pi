@@ -7,7 +7,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung, da
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen (je Produkt)
 3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
-4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser, Kartenleser und Statusdisplay, Windows)
+4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser, Kartenleser und Statusdisplay, Windows, Ausweichadresse und Tailnet)
 5. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -451,6 +451,7 @@ Die Startseite meldet das Gerät mit einem Geheimnis bei PDH an. Es entsteht bei
 | **gesperrt** | In PDH gesperrt. Die Startseite zeigt „Gerät in PDH gesperrt …“. | Am Gerät die Admin-Seite öffnen (5 Sekunden oben rechts drücken), in PDH einen neuen Code erzeugen und neu koppeln. |
 | **nicht erreichbar** | PDH antwortet nicht (Netz, Adresse). Die Startseite versucht es alle 30 Sekunden erneut. | Adresse und Netz prüfen. |
 | **Zertifikat von PDH wird nicht vertraut** | PDH zeigt ein Zertifikat, dem das Gerät nicht vertraut. | Siehe Abschnitt „Zertifikat“ unten. |
+| **nicht erreichbar**, Ausweichadresse gesetzt | Haupt- und Ausweichadresse antworten nicht. | Netz prüfen; für das Tailnet: Abschnitt „Tailnet“ (angemeldet? Richtlinie? `tailscale serve` am Server?). |
 
 - **Entkoppeln** (Admin-Seite „PDH“) löscht das Geheimnis nur auf dem Gerät. PDH kennt das Gerät dann weiter, bis es dort gesperrt wird: In PDH unter „Gekoppelte Geräte“ des Benutzers **Sperren** drücken. Gesperrt verliert das Gerät seine Sitzung spätestens nach 30 Sekunden.
 
@@ -460,7 +461,7 @@ Das Geheimnis ist **nicht** Teil der Sicherung. Bei der Sicherung als Abbild wer
 
 ### Zertifikat (bekannte Einschränkung)
 
-Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat von PDH wird nicht vertraut“. Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
+Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat von PDH wird nicht vertraut“. Bei einem Zertifikatsfehler wechselt das Terminal **nicht** auf die Ausweichadresse (Abschnitt „Ausweichadresse und Tailnet“). Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
 
 ### Kartenleser
 
@@ -708,6 +709,53 @@ Regeln: erlaubt sind **1024 bis 65534**; weder der Port noch der Port darüber d
 - *PDH:* Bei einem anderen Port als 8080 trägt jede Anfrage an PDH zusätzlich `X-Terminal-Local-Port: <Port>`. Die PDH-Seiten erreichen das Terminal (Kartenstrom, Bildschirmtastatur) unter `http://127.0.0.1:<Port>`; das Skript der PDH-Seite (`CARD_ORIGIN`) muss den Port aus der Kopfzeile verwenden, sonst arbeiten Kartenleser und Tastatur in den PDH-Seiten nur am Grundwert 8080. Die Startseite und die Anmeldung bei PDH laufen unabhängig davon.
 - Die HMI-Kiosk-Variante bleibt bei 8080/8081 (kein Feld in der Admin-Seite).
 
+### Ausweichadresse und Tailnet (ab 0.5.0)
+
+Fällt der normale Weg zum PDH-Server aus (LAN gestört oder gesperrt), kann das Terminal über das **Tailnet** (Tailscale) weiterarbeiten. Ohne eingetragene Ausweichadresse verhält sich das Terminal wie vor 0.5.0. Einrichtung auf dem Server und im Tailnet: [tailnet-server-einrichtung.md](tailnet-server-einrichtung.md).
+
+**Ausweichadresse:** Admin-Seite, Reiter **PDH**, Feld **Ausweichadresse (Tailnet)** (Konfiguration `pdh.fallbackUrl`). Erlaubt ist nur ein reiner Ursprung mit `https://`, zum Beispiel `https://pdh.<tailnet>.ts.net` (kein Pfad; `http://` geht auch mit dem Haken „unverschlüsselt erlauben“ nicht), und die Adresse muss sich von der Hauptadresse unterscheiden. `100.x`-Adressen gehen nicht (kein Zertifikat). Ein ungültiger Wert wird beim Speichern abgelehnt; das Feld darf leer bleiben.
+
+**Anzeige:** Ist eine Ausweichadresse gesetzt, zeigt der Reiter PDH die Zeile **verbunden über: LAN** oder **verbunden über: Tailnet seit hh:mm** (bei Tailnet zusätzlich der letzte Fehler auf der Hauptadresse). Ohne Ausweichadresse fehlt die Zeile.
+
+**Wann das Terminal wechselt:**
+
+| Fall | Verhalten |
+|---|---|
+| Hauptadresse nicht erreichbar: Verbindung abgelehnt, keine Route, DNS-Fehler, Zeitüberschreitung, Verbindung abgebrochen | Wechsel auf die Ausweichadresse, **eine** Wiederholung der Anfrage gleich danach. |
+| Zertifikatsfehler | **Kein Wechsel.** Es bleibt bei „Zertifikat von PDH wird nicht vertraut“. |
+| Gerät gesperrt oder entkoppelt (401/403) | Kein Wechsel, Anzeige wie bisher. |
+| HTTP-Fehler des Servers (zum Beispiel 5xx) | Kein Wechsel. |
+| Abgebrochene Anfrage (Abbruch von der Seite aus) | Kein Wechsel. |
+| Beide Adressen nicht erreichbar | Offline-Seite und Folien wie bisher; neuer Versuch alle 30 Sekunden, Hauptadresse zuerst. |
+
+**Rückkehr:** Solange das Terminal über das Tailnet arbeitet, prüft es die Hauptadresse alle **5 Minuten**; gelingt das, kehrt es von selbst zurück. Ein Zertifikatsfehler der Ausweichadresse erscheint auf dem Reiter PDH.
+
+**Kopplung:** Sie bleibt an die **Hauptadresse** gebunden („gekoppelt“ heißt weiterhin: gespeicherte Adresse gleich Hauptadresse). Gekoppelt wird nur über die Hauptadresse, über die Ausweichadresse geht das nicht. Gerätekennung und Geheimnis gelten für beide Adressen (derselbe Server). Das Geheimnis geht nur dann an die Ausweichadresse, wenn das Gerät mit der Hauptadresse gekoppelt ist. Wer die Hauptadresse ändert, koppelt neu wie bisher.
+
+**Kartenleser, Tastatur, Folien:** Die Seiten beider Adressen dürfen den Kartenleser und die Tastatur des Geräts ansprechen (Seitenursprung beider Adressen ist erlaubt, in der Prüfung des Geräts wie in der Chromium-Richtlinie), unabhängig davon, welcher Weg gerade aktiv ist.
+
+**Meldung an PDH:** Jede Anfrage trägt `X-Terminal-Route: lan` oder `tailnet`. PDH zeigt den Weg in der Liste der Kiosk-Terminals an, sobald es die Kopfzeile auswertet (mit der PDH-Version, die zu diesem Release gehört); ältere PDH ignorieren sie, und ein Terminal ohne Kopfzeile gilt dort als „LAN“.
+
+### Tailnet (Admin-Seite, ab 0.5.0)
+
+Menüpunkt **Tailnet** (nur im PDH-Terminal). Er zeigt den Zustand von Tailscale auf dem Gerät:
+
+| Status | Bedeutung | Was tun |
+|---|---|---|
+| **nicht installiert** | Tailscale fehlt auf dem Gerät (Windows: kein `tailscale.exe`). | Pi: Abbild ab 0.5.0 verwenden. Windows: Setup.exe ab 0.5.0 erneut ausführen; beim MSI verteilt die IT Tailscale getrennt (Abschnitt „MSI“). |
+| **nicht angemeldet** | Tailscale ist installiert, das Gerät gehört noch keinem Tailnet. | Anmelden (unten). |
+| **angemeldet als `<Name>` · `<DNS-Name>` · `<IP>`** | Das Gerät ist im Tailnet. | Nichts. Die Ausweichadresse eintragen, falls noch nicht geschehen. |
+
+**Anmelden:** Auth-Key (Tag `tag:pdh-terminal`, vorab freigegeben, **nicht** ephemeral; Erzeugen: [tailnet-server-einrichtung.md](tailnet-server-einrichtung.md), Abschnitt 4) in das Feld einfügen, „Anmelden“. Der Rechnername im Tailnet ergibt sich aus dem Gerätenamen (PDH-Einstellung, sonst Rechnername). Der Key wird **nicht gespeichert und nicht protokolliert**; das Terminal reicht ihn über eine temporäre Datei weiter, die gleich danach gelöscht wird, nie in der Befehlszeile. Bei einem ungültigen oder abgelaufenen Key zeigt die Seite die Meldung von Tailscale, und das Gerät bleibt abgemeldet.
+
+**Abmelden:** Der Knopf „Abmelden“ meldet das Gerät im Tailnet ab. Danach ist die Ausweichadresse nicht mehr erreichbar; das Terminal arbeitet über die Hauptadresse.
+
+Technisch:
+
+- *Raspberry Pi:* Tailscale kommt im Abbild aus der **signierten Tailscale-Paketquelle** (Schlüssel-Fingerabdruck `2596 A99E AAB3 3821 893C 0A79 458C A832 957F 5868`), der Dienst `tailscaled` ist eingeschaltet, das Gerät ist **nicht angemeldet**. Anmelden und Abmelden laufen über den root-Helfer (nicht als Kiosk-Benutzer): `tailscale up --reset --auth-key=file:… --hostname=<aus dem Gerätenamen> --timeout=25s`. Auf einem System aus dem Bundle (`install.sh`) installiert das Skript Tailscale nicht; fehlt es dort, steht „nicht installiert“.
+- *Windows:* Setup.exe installiert Tailscale 1.104.7 still nach, falls `C:\Program Files\Tailscale\tailscale.exe` fehlt (Download mit SHA-256-Prüfung, Einzelheiten im Abschnitt „Windows“, Installation und MSI). Anmelden mit `tailscale.exe up … --unattended`, damit Tailscale auch ohne angemeldeten Benutzer läuft. Die Deinstallation des Terminals entfernt Tailscale nicht.
+- Das Gerät erreicht im Tailnet nur, was die Richtlinie erlaubt (Server-Anleitung, Abschnitt 3).
+
 ### Bekannte Einschränkungen
 
 - Die Bildschirmtastatur erscheint auf den PDH-Seiten erst, wenn deren Skript die Tastatur-Schnittstelle des Geräts aufruft (Vertrag, Abschnitt 9); auf der Admin-Seite des Geräts funktioniert sie bereits.
@@ -752,6 +800,9 @@ Regeln: erlaubt sind **1024 bis 65534**; weder der Port noch der Port darüber d
 | Admin-Passwort vergessen | Es gibt keine Rücksetzung in der Admin-Seite. | Neues Abbild schreiben (Ersatzkarte), Admin-Passwort festlegen, **Name und Rolle des Geräts setzen**, danach die gesicherte Konfiguration importieren (auch die eines anderen Terminals: der Import behält Name, Kennung und Rolle des Geräts). Das Admin-Passwort ist nicht in der Sicherung. |
 | Admin-Seite meldet **500 „Konfiguration nicht lesbar“** | Siehe unten. | Siehe unten. |
 | Admin-Seite leitet nach der Anmeldung auf „Schlüssel reparieren“ um | Die Schlüsseldatei (`secrets.key`) fehlt oder ist beschädigt, obwohl verschlüsselte Werte gespeichert sind. | Abschnitt „Schlüssel prüfen und reparieren“. Alternativ aus einer Sicherung wiederherstellen. |
+| Reiter PDH zeigt „verbunden über: Tailnet“, obwohl das LAN wieder geht | Die Hauptadresse wird erst alle 5 Minuten geprüft. | Bis zu 5 Minuten warten. Bleibt es dabei, nennt die Zeile den letzten Fehler auf der Hauptadresse (Name, Port, Zertifikat). |
+| Ausweichadresse wird abgelehnt | Kein reiner `https://`-Ursprung, mit Pfad, gleich der Hauptadresse oder eine `100.x`-Adresse. | Form `https://<server>.<tailnet>.ts.net` verwenden. |
+| Tailnet-Anmeldung schlägt fehl | Key ungültig, abgelaufen, verbraucht oder ohne Erlaubnis für das Tag; kein Netz zu Tailscale. | Meldung auf der Seite lesen, neuen Key erzeugen (Server-Anleitung, Abschnitt 4). |
 | Warnung „Der Schreibschutz (Overlay auf /) ist nicht aktiv.“ (System) | Das Overlay ist aus, zum Beispiel nach Wartung. | `overlayroot=tmpfs:recurse=0` in `cmdline.txt` wieder einfügen (Abschnitt 3). |
 | Warnung „Kein Monitor erkannt“ (System) | Bildschirm nicht erkannt, es gilt 1920×1080. | Kabel und Bildschirm prüfen oder unter System die Auflösung fest eintragen. |
 | Warnung zur Konfiguration | Die letzte Konfigurationsdatei war defekt, das Gerät läuft mit der letzten guten Fassung. | Einstellungen prüfen, bei Bedarf aus der Sicherung wiederherstellen. |
