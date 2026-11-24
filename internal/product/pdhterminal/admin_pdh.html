@@ -4,6 +4,8 @@
   <h2>PDH-Server</h2>
   {{if .Notice}}<p class="msg ok" role="status">{{.Notice}}</p>{{end}}
   <p>Adresse: {{if .URL}}{{.URL}}{{else}}nicht eingestellt{{end}}</p>
+  {{if .FallbackURL}}<p>Ausweichadresse: {{.FallbackURL}}</p>{{end}}
+  {{if .Route}}<p>Weg: <span class="msg {{.RouteClass}}"{{if .RouteErr}} title="{{.RouteErr}}"{{end}}>{{.Route}}</span></p>{{end}}
   {{if .Paired}}
   <p>Zustand: gekoppelt als „{{.User}}“{{if .Since}} seit {{.Since}}{{end}} · <span class="msg {{.StateClass}}">{{.State}}</span></p>
   <form method="post" action="/admin/pdh/unpair" class="stack" data-confirm="Kopplung auf diesem Terminal entfernen?">
@@ -22,6 +24,10 @@
     <label>PDH-Adresse
       <input type="text" name="url" value="{{.URL}}" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://pdh.firma.de">
     </label>
+    <label>Ausweichadresse (Tailnet)
+      <input type="text" name="fallbackUrl" value="{{.FallbackURL}}" inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://pdh.tailnet.ts.net">
+    </label>
+    <p class="hint">Zweiter Weg zum selben PDH-Server, z. B. https://pdh.&lt;tailnet&gt;.ts.net – wird nur bei Netzwerkfehlern benutzt.</p>
     <label class="check"><input type="checkbox" name="allowHttp" value="1"{{if .AllowHTTP}} checked{{end}}> Unverschlüsselt (http://) erlauben</label>
     <label>Gerätename
       <input type="text" name="deviceName" value="{{.DeviceName}}" autocapitalize="off" spellcheck="false" placeholder="{{.DefaultName}}">
