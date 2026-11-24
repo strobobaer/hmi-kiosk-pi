@@ -12,6 +12,9 @@ type PDHCfg struct {
 	URL string `json:"url,omitempty"`
 	// AllowHTTP erlaubt http:// statt https:// (nur für Tests im lokalen Netz).
 	AllowHTTP bool `json:"allowHttp,omitempty"`
+	// FallbackURL ist die Ausweichadresse des PDH-Servers (z. B. im Tailnet), wenn die
+	// Hauptadresse nicht erreichbar ist: nur https://Rechner[:Port], kein Pfad.
+	FallbackURL string `json:"fallbackUrl,omitempty"`
 	// DeviceName ist der Name, unter dem sich das Terminal beim PDH-Server meldet.
 	DeviceName string `json:"deviceName,omitempty"`
 	// ExtraOrigins sind weitere Ursprünge, die die Webansicht laden darf (z. B. ein CDN).
@@ -42,8 +45,15 @@ func ValidatePDH(p PDHCfg) error {
 			return fmt.Errorf("PDH-Adresse: nur Adresse ohne Pfad (z. B. https://pdh.firma.de)")
 		}
 	}
-	if len(p.ExtraOrigins) > MaxWebOrigins-1 {
-		return fmt.Errorf("Zu viele zusätzliche Adressen (höchstens %d)", MaxWebOrigins-1)
+	maxExtra := MaxWebOrigins - 1
+	if p.FallbackURL != "" {
+		if err := validateFallback(p); err != nil {
+			return err
+		}
+		maxExtra-- // Die Ausweichadresse zählt gegen die Ursprungsgrenze.
+	}
+	if len(p.ExtraOrigins) > maxExtra {
+		return fmt.Errorf("Zu viele zusätzliche Adressen (höchstens %d)", maxExtra)
 	}
 	for _, o := range p.ExtraOrigins {
 		if !ValidOrigin(o) {
@@ -58,7 +68,36 @@ func ValidatePDH(p PDHCfg) error {
 	return nil
 }
 
-// PDHOrigins liefert den Ursprung des PDH-Servers (zuerst) und die Zusatzursprünge ohne Doppel.
+// validateFallback prüft die Ausweichadresse: nur https, nur Ursprung, anders als die Hauptadresse.
+func validateFallback(p PDHCfg) error {
+	f := p.FallbackURL
+	if !strings.HasPrefix(f, "https://") {
+		return fmt.Errorf("Ausweichadresse ungültig: muss mit https:// beginnen")
+	}
+	u, err := ParseWebURL(f)
+	if err != nil {
+		return fmt.Errorf("Ausweichadresse ungültig: %v", err)
+	}
+	canon := u.Scheme + "://" + strings.ToLower(u.Hostname())
+	if strings.Contains(u.Hostname(), ":") {
+		canon = u.Scheme + "://[" + strings.ToLower(u.Hostname()) + "]"
+	}
+	if u.Port() != "" {
+		canon += ":" + u.Port()
+	}
+	if f != canon {
+		return fmt.Errorf("Ausweichadresse ungültig: nur Adresse ohne Pfad (z. B. https://pdh.tailnet.ts.net)")
+	}
+	if p.URL != "" {
+		fo, _ := WebOrigin(f)
+		if mo, err := WebOrigin(p.URL); err == nil && fo == mo {
+			return fmt.Errorf("Ausweichadresse ungültig: muss sich von der PDH-Adresse unterscheiden")
+		}
+	}
+	return nil
+}
+
+// PDHOrigins liefert den Ursprung des PDH-Servers (zuerst), die Ausweichadresse und die Zusatzursprünge ohne Doppel.
 func PDHOrigins(p PDHCfg) []string {
 	out := []string{}
 	add := func(o string) {
@@ -71,6 +110,11 @@ func PDHOrigins(p PDHCfg) []string {
 	}
 	if p.URL != "" {
 		if o, err := WebOrigin(p.URL); err == nil {
+			add(o)
+		}
+	}
+	if p.FallbackURL != "" {
+		if o, err := WebOrigin(p.FallbackURL); err == nil {
 			add(o)
 		}
 	}
