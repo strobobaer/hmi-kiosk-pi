@@ -82,7 +82,7 @@ func (c *cli) Up(ctx context.Context, authKey, hostname string) error {
 	if werr != nil || cerr != nil {
 		return errors.New("Schlüsseldatei nicht schreibbar")
 	}
-	_, err = c.run(ctx, c.bin, "up", "--auth-key=file:"+path, "--hostname="+hostname, "--unattended")
+	_, err = c.run(ctx, c.bin, "up", "--reset", "--auth-key=file:"+path, "--hostname="+hostname, "--unattended")
 	if err != nil {
 		err = redact(err, authKey)
 		low := strings.ToLower(err.Error())

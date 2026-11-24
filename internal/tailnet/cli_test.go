@@ -55,7 +55,7 @@ func TestCLIUpKeyNotInArgs(t *testing.T) {
 		t.Errorf("Datei existiert noch: %v", err)
 	}
 	joined := strings.Join(args, " ")
-	for _, want := range []string{" up ", "--hostname=halle-3", "--unattended"} {
+	for _, want := range []string{" up ", "--reset", "--hostname=halle-3", "--unattended"} {
 		if !strings.Contains(" "+joined+" ", want) {
 			t.Errorf("%q fehlt in %q", want, joined)
 		}

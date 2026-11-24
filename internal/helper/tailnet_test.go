@@ -64,7 +64,7 @@ func TestHelperTailnetUp(t *testing.T) {
 		t.Fatalf("Aufrufe: %q", e.calls)
 	}
 	c := e.calls[0]
-	if c[0] != "tailscale" || c[1] != "up" || c[2] != "--auth-key=file:"+e.keyPath || c[3] != "--hostname=halle-3" || len(c) != 4 {
+	if c[0] != "tailscale" || c[1] != "up" || c[2] != "--reset" || c[3] != "--auth-key=file:"+e.keyPath || c[4] != "--hostname=halle-3" || len(c) != 5 {
 		t.Fatalf("Befehl: %q", c)
 	}
 	for _, a := range c {

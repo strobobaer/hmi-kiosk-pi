@@ -73,7 +73,8 @@ func parseTailnetUp(arg string) (key, host string, err error) {
 	return key, host, nil
 }
 
-// tailnetUp meldet das Gerät mit dem Auth-Key an.
+// tailnetUp meldet das Gerät mit dem Auth-Key an. --reset setzt alle nicht genannten Einstellungen auf den
+// Grundwert zurück; so gelingt auch eine erneute Anmeldung mit geändertem Hostnamen.
 func (s *Server) tailnetUp(ctx context.Context, arg string) error {
 	key, host, err := parseTailnetUp(arg)
 	if err != nil {
@@ -84,7 +85,7 @@ func (s *Server) tailnetUp(ctx context.Context, arg string) error {
 		path = defaultTailnetKeyPath
 	}
 	err = withTailnetKeyFile(path, key, func() error {
-		return s.run(ctx, tailnetBinary, "up", "--auth-key=file:"+path, "--hostname="+host)
+		return s.run(ctx, tailnetBinary, "up", "--reset", "--auth-key=file:"+path, "--hostname="+host)
 	})
 	if err != nil {
 		return errors.New(strings.ReplaceAll(err.Error(), key, "***"))
