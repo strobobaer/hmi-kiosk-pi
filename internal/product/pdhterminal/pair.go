@@ -56,15 +56,20 @@ func (c Client) client() *http.Client {
 	return &hc
 }
 
-// transportErr übersetzt Netzfehler in Text ohne Einzelheiten aus Go.
-func transportErr(err error) (State, error) {
+// isTLSErr erkennt Zertifikats-/TLS-Fehler.
+func isTLSErr(err error) bool {
 	var (
 		cv  *tls.CertificateVerificationError
 		ua  x509.UnknownAuthorityError
 		hn  x509.HostnameError
 		inv x509.CertificateInvalidError
 	)
-	if errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &inv) {
+	return errors.As(err, &cv) || errors.As(err, &ua) || errors.As(err, &hn) || errors.As(err, &inv)
+}
+
+// transportErr übersetzt Netzfehler in Text ohne Einzelheiten aus Go.
+func transportErr(err error) (State, error) {
+	if isTLSErr(err) {
 		return StateUntrusted, ErrUntrusted
 	}
 	return StateUnreachable, errUnreachable
