@@ -113,24 +113,36 @@ func TestAdminTailnetPageStates(t *testing.T) {
 		}
 		return r.Body.String()
 	}
+	const upForm, downForm = `action="/admin/tailnet/up"`, `action="/admin/tailnet/down"`
 	body := get()
-	if !strings.Contains(body, "nicht installiert") || strings.Contains(body, `name="authKey"`) {
+	if !strings.Contains(body, "nicht installiert") || strings.Contains(body, `name="authKey"`) ||
+		strings.Contains(body, upForm) || strings.Contains(body, downForm) {
 		t.Errorf("nicht installiert:\n%s", body)
 	}
+	// Nicht angemeldet: nur „Anmelden“.
 	ft.st = tailnet.Status{Installed: true, State: "NeedsLogin"}
 	body = get()
 	if !strings.Contains(body, "nicht angemeldet") || !strings.Contains(body, `type="password"`) ||
 		!strings.Contains(body, `name="authKey"`) || !strings.Contains(body, `autocomplete="off"`) ||
-		!strings.Contains(body, "Anmelden") || !strings.Contains(body, "Abmelden") {
+		!strings.Contains(body, upForm) || !strings.Contains(body, ">Anmelden</button>") {
 		t.Errorf("nicht angemeldet:\n%s", body)
 	}
+	if strings.Contains(body, downForm) || strings.Contains(body, `class="btn danger">Abmelden</button>`) {
+		t.Errorf("nicht angemeldet mit Knopf „Abmelden“:\n%s", body)
+	}
+	// Angemeldet: nur „Abmelden“.
 	ft.st = tailnet.Status{Installed: true, LoggedIn: true, Name: "kasse", DNSName: "kasse.t.ts.net", IP: "100.64.0.9", State: "Running"}
 	body = get()
-	if !strings.Contains(body, "angemeldet als kasse · kasse.t.ts.net · 100.64.0.9") {
+	if !strings.Contains(body, "angemeldet als kasse · kasse.t.ts.net · 100.64.0.9") ||
+		!strings.Contains(body, downForm) || !strings.Contains(body, `class="btn danger">Abmelden</button>`) {
 		t.Errorf("angemeldet:\n%s", body)
 	}
+	if strings.Contains(body, upForm) || strings.Contains(body, `name="authKey"`) || strings.Contains(body, ">Anmelden</button>") {
+		t.Errorf("angemeldet mit Formular „Anmelden“:\n%s", body)
+	}
+	// Zustand unbekannt: beide, damit der Techniker handeln kann.
 	ft.statusErr = errors.New("Helfer nicht erreichbar")
-	if body = get(); !strings.Contains(body, "nicht abfragbar") {
+	if body = get(); !strings.Contains(body, "nicht abfragbar") || !strings.Contains(body, upForm) || !strings.Contains(body, downForm) {
 		t.Errorf("Statusfehler:\n%s", body)
 	}
 	if !strings.Contains(e.get("/admin/pdh").Body.String(), `href="/admin/tailnet"`) {

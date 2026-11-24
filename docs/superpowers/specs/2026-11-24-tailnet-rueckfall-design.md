@@ -35,7 +35,9 @@ wie 0.4.x.
    Kein Wechsel bei Zertifikatsfehler (`StateUntrusted`), gesperrtem Gerät (401/403), entkoppeltem Gerät
    oder HTTP-Fehlern des Servers. Ein Zertifikatsfehler auf der Hauptadresse bleibt sichtbar.
 4. **Rückkehr:** Solange die Ausweichadresse aktiv ist, wird die Hauptadresse alle 5 Minuten geprüft
-   (leichter `GET /api/terminal/v1/device`); gelingt das, sofort zurück.
+   (leichter `GET /api/terminal/v1/device`); gelingt das, sofort zurück. Ein Netzwerkfehler auf der aktiven
+   Ausweichadresse stößt die Prüfung sofort an, höchstens einmal je 30 s (toter Rückfall, z. B. Tailscale
+   nicht angemeldet, hält das Terminal nicht 5 min fest).
 5. **Zertifikat im Tailnet:** Auf dem PDH-Server stellt `tailscale serve` HTTPS unter
    `<server>.<tailnet>.ts.net` bereit (Let's-Encrypt-Zertifikat durch Tailscale, Weiterleitung an den
    PDH-Port). Das Terminal braucht keine Ausnahme bei der Zertifikatsprüfung. `100.x`-Adressen werden
@@ -72,13 +74,18 @@ wie 0.4.x.
   - Feld „Ausweichadresse (Tailnet)“ mit Hinweis.
   - Bereich „Tailnet“: Status (nicht installiert / nicht angemeldet / angemeldet als `<name>`,
     `100.x`), Auth-Key-Feld + „Anmelden“, „Abmelden“.
-  - Statuszeile „verbunden über: LAN / Tailnet“ mit Zeitpunkt des Wechsels.
+  - Statuszeile „verbunden über: LAN / Tailnet“ mit Zeitpunkt des Wechsels; Tooltip: der Netzwerkfehler auf
+    der Hauptadresse, der den Wechsel ausgelöst hat (Fehler der Proben werden nicht festgehalten).
+  - Bereich „Tailnet“ zeigt nur die passende Aktion: „Anmelden“ bei nicht angemeldet, „Abmelden“ bei
+    angemeldet; ist der Zustand nicht abfragbar, beide.
 - **Tailscale-Steuerung** (neu, z. B. `internal/tailnet`): Status über `tailscale status --json`,
   Anmelden/Abmelden über die CLI; plattformabhängiger Pfad (Pi: `/usr/bin/tailscale`, Windows:
   `%ProgramFiles%\Tailscale\tailscale.exe`). Auf dem Pi über den vorhandenen privilegierten Helfer,
   nicht als Kiosk-Benutzer.
 - **Pi-Abbild:** Tailscale-Paketquelle + Schlüssel, Paket `tailscale`, `tailscaled` aktiviert;
-  `verify-image.sh` prüft Paket und Dienst.
+  `verify-image.sh` prüft Paket und Dienst. Der Zustand von `tailscaled` liegt auf `/data/system/tailscale`
+  (Drop-in für `tailscaled.service`), weil `/` im Betrieb ein RAM-Overlay ist; sonst wäre die Anmeldung nach
+  jedem Neustart weg.
 - **Windows-Installer:** Tailscale-Installation wie Entscheidung 6; Deinstallation des Terminals
   entfernt Tailscale nicht.
 
@@ -103,10 +110,10 @@ wie 0.4.x.
 |---|---|
 | Keine Ausweichadresse gesetzt | wie 0.4.x |
 | Hauptadresse: Netzwerkfehler, Ausweichadresse erreichbar | Wechsel, Anzeige „über Tailnet“ |
-| Beide unerreichbar | Offline-Seite/Folien wie heute, Versuche weiter im 30-s-Takt am aktiven Weg (steht er noch auf LAN, wechselt ein Netzwerkfehler auf die Ausweichadresse); zurück zur Hauptadresse nur über die Probe alle 5 min |
+| Beide unerreichbar | Offline-Seite/Folien wie heute, Versuche weiter im 30-s-Takt am aktiven Weg (steht er noch auf LAN, wechselt ein Netzwerkfehler auf die Ausweichadresse); jeder Netzwerkfehler auf der aktiven Ausweichadresse stößt sofort eine Probe der Hauptadresse an (höchstens eine je 30 s, `routeKickMin`), sonst Probe alle 5 min |
 | Hauptadresse: Zertifikatsfehler | kein Wechsel, Meldung „Zertifikat nicht vertrauenswürdig“ wie heute |
 | Gerät gesperrt/entkoppelt (über welchen Weg auch immer) | kein Wechsel, Anzeige wie heute |
-| Ausweichadresse: Zertifikatsfehler | bleibt auf Haupt bzw. offline, Admin-Seite zeigt den Fehler |
+| Ausweichadresse: Zertifikatsfehler | Der Wechsel geschieht beim Netzwerkfehler der Hauptadresse, ohne die Ausweichadresse vorher zu prüfen. Danach bleibt das Terminal auf der Ausweichadresse und zeigt den Fehler („Zertifikat von PDH wird nicht vertraut“, Startseite und Admin-Seite); der TLS-Fehler stößt keine Probe an, die Probe alle 5 min führt aber zur Hauptadresse zurück, sobald sie antwortet |
 | Tailscale nicht angemeldet | Ausweichadresse nicht erreichbar ⇒ Hinweis auf der Admin-Seite |
 | Ungültiger/abgelaufener Auth-Key | Fehlermeldung aus `tailscale up`, Key verworfen |
 

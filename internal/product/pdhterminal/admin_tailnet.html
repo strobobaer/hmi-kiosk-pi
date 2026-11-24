@@ -7,9 +7,11 @@
   <p class="hint">Tailscale ist der zweite Weg zum PDH-Server, falls das Firmennetz ausfällt. Der Rechnername im Tailnet wird aus dem Gerätenamen gebildet: {{.Host}}.</p>
 </section>
 
+{{/* Nur die passende Aktion: nicht angemeldet ⇒ Anmelden, angemeldet ⇒ Abmelden; Zustand unbekannt ⇒ beide. */}}
 {{if or (not .StatusOK) .Status.Installed}}
 <section class="panel stack">
-  <h2>Anmelden</h2>
+  <h2>{{if not .StatusOK}}Anmelden oder abmelden{{else if .Status.LoggedIn}}Abmelden{{else}}Anmelden{{end}}</h2>
+  {{if or (not .StatusOK) (not .Status.LoggedIn)}}
   <form method="post" action="/admin/tailnet/up" class="stack" autocomplete="off">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <label>Auth-Key
@@ -18,10 +20,13 @@
     <p class="hint" id="authKeyHint">Den Schlüssel in der Tailscale-Verwaltung erzeugen (Auth-Key, wird nicht gespeichert). Er wird nur zum Anmelden benutzt und weder gespeichert noch angezeigt.</p>
     <div class="actions"><button type="submit" class="btn primary">Anmelden</button></div>
   </form>
+  {{end}}
+  {{if or (not .StatusOK) .Status.LoggedIn}}
   <form method="post" action="/admin/tailnet/down" class="stack" data-confirm="Dieses Terminal vom Tailnet abmelden?">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">
     <div class="actions"><button type="submit" class="btn danger">Abmelden</button></div>
   </form>
+  {{end}}
 </section>
 {{end}}
 {{end}}
