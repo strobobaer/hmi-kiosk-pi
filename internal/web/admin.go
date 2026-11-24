@@ -428,7 +428,7 @@ func setAdminHeaders(w http.ResponseWriter, terminal bool) {
 	formAction := "'self'"
 	connect := ""
 	if terminal {
-		formAction += " " + strings.TrimSuffix(KioskURL, "/")
+		formAction += " " + strings.TrimSuffix(KioskURL(), "/")
 		connect = " connect-src 'self';"
 	}
 	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self';"+connect+" base-uri 'none'; form-action "+formAction+"; frame-ancestors 'none'")
@@ -583,7 +583,7 @@ type adminView struct {
 
 func (a *admin) writePage(w http.ResponseWriter, status int, page string, v adminView) {
 	if v.Terminal {
-		v.KioskURL, v.IdleSeconds, v.OSK = KioskURL, int(localSessionIdle/time.Second), "auto"
+		v.KioskURL, v.IdleSeconds, v.OSK = KioskURL(), int(localSessionIdle/time.Second), "auto"
 		if cfg, _, err := a.d.Store.Load(); err == nil && cfg.Kiosk.InputMode == config.InputMouse {
 			v.OSK = "manual"
 		}

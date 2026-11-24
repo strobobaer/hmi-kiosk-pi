@@ -119,6 +119,8 @@ func (a *admin) merge(ex exportFile, cur config.Config) (config.Config, error) {
 	next.Network = cur.Network
 	// Die Freigabe der Kachelseite im Netz ist ein Testzustand dieses Geräts.
 	next.Kiosk.NetworkTiles = cur.Kiosk.NetworkTiles
+	// Der Port der lokalen Startseite hängt am Rechner (gesperrte Bereiche sind verschieden).
+	next.Kiosk.LocalPort = cur.Kiosk.LocalPort
 	// Die Anbindung an PDH gehört zu diesem Gerät.
 	next.PDH = cur.PDH
 	next.Card = cur.Card // der Leser hängt an diesem Gerät

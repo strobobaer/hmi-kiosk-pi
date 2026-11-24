@@ -158,7 +158,7 @@ func (s *service) adminDeps() web.AdminDeps {
 			PublicKey:   release.PublicKey(),
 			Product:     release.HMIKiosk,
 			Platform:    release.CurrentPlatform(),
-			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin) },
+			SystemLevel: func() int { return platform.InstalledSystemLevel(rootFS, localAdminOrigin()) },
 			Activate: func(ctx context.Context, version string) error {
 				return s.helper.Call(ctx, "update-activate", version)
 			},

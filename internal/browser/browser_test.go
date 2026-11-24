@@ -11,6 +11,7 @@ import (
 
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/coord"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/session"
 )
 
@@ -323,6 +324,35 @@ func TestArgsStartAndAdmin(t *testing.T) {
 		for _, w := range []string{"--kiosk", "--touch-events=enabled", "--user-data-dir=/run/ram/profile-tiles", c.url} {
 			if !slices.Contains(got.Args, w) {
 				t.Errorf("Ziel %d: %s fehlt in %v", c.t, w, got.Args)
+			}
+		}
+	}
+}
+
+// Mit eingestelltem Port zeigen Kachelseite, Leiste, Touch-Test und Admin-Seite auf die neuen Adressen,
+// und der Grundwert kommt in keinem Argument mehr vor.
+func TestArgsFollowConfiguredLocalPort(t *testing.T) {
+	localport.Set(18080)
+	t.Cleanup(func() { localport.Set(0) })
+	for _, c := range []struct {
+		t    Target
+		want string
+	}{
+		{TargetTiles, "http://127.0.0.1:18080/"},
+		{TargetTouchTest, "http://127.0.0.1:18080/selftest/touch"},
+		{TargetBar, "--app=http://127.0.0.1:18080/bar"},
+		{TargetAdmin, "http://127.0.0.1:18081/admin/"},
+	} {
+		g := newRig(t)
+		g.run(t)
+		g.s.Show(c.t)
+		got := g.nextStart(t)
+		if !slices.Contains(got.Args, c.want) {
+			t.Errorf("Ziel %d: %s fehlt in %v", c.t, c.want, got.Args)
+		}
+		for _, a := range got.Args {
+			if strings.Contains(a, ":8080") || strings.Contains(a, ":8081") {
+				t.Errorf("Ziel %d: Grundwert in %q", c.t, a)
 			}
 		}
 	}

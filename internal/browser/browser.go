@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"hmikiosk/internal/client"
+	"hmikiosk/internal/localport"
 	"hmikiosk/internal/session"
 )
 
@@ -22,7 +23,7 @@ const (
 	TargetBar
 	TargetTouchTest // Touch-Seite der Selbstprüfung
 	TargetStart     // Startseite des Produkts (SetStartURL), etwa PDH-Terminal
-	TargetAdmin     // lokale Admin-Seite (127.0.0.1:8081)
+	TargetAdmin     // lokale Admin-Seite (127.0.0.1, Port der Startseite + 1; Grundwert 8081)
 )
 
 const (
@@ -33,8 +34,6 @@ const (
 	jobPoll     = time.Second      // Edge: so oft fragt der Überwacher nach Job und Fenster
 	windowGrace = 30 * time.Second // Edge: so lange darf das erste Fenster auf sich warten lassen
 	barHeight   = 48
-	baseURL     = "http://127.0.0.1:8080/"
-	adminURL    = "http://127.0.0.1:8081/admin/" // gleich web.LocalAdminURL; browser importiert web nicht
 )
 
 // TargetFor: Die Kachelseite endet erst, wenn die Verbindung steht. Ohne Leiste
@@ -64,7 +63,7 @@ func FindChromium(lookPath func(string) (string, error)) (string, error) {
 }
 
 // Supervisor überwacht nur den Prozess: Navigiert Chromium im selben Fenster weiter (etwa
-// über das Zahnrad zur Admin-Seite am Terminal, 127.0.0.1:8081), ist das kein Absturz und
+// über das Zahnrad zur Admin-Seite am Terminal, 127.0.0.1:8081 im Grundwert), ist das kein Absturz und
 // löst keinen Neustart aus. Ein Neustart (Absturz) zeigt wieder die Kachelseite.
 type Supervisor struct {
 	runner  client.Runner
@@ -128,6 +127,8 @@ func (s *Supervisor) args(t Target) []string {
 	edgeProfile := s.edgeProfile
 	edgeKiosk := s.edgeKiosk
 	s.mu.Unlock()
+	// Die Adressen der lokalen Seiten folgen dem eingestellten Port (localport, Grundwert 8080/8081).
+	baseURL, adminURL := localport.StartURL(), localport.AdminURL()
 	if edgeProfile != "" {
 		if edgeKiosk != "" {
 			if t == TargetAdmin {
