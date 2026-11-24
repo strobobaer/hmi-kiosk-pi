@@ -409,6 +409,35 @@ grep -Fqx 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] htt
 [ "$(sha256sum "$R/usr/share/keyrings/tailscale-archive-keyring.gpg" 2>/dev/null | cut -d" " -f1)" = "$TAILSCALE_KEYRING_SHA256" ] || msg="$msg; Schlüsselbund weicht von der eingecheckten Datei ab (sha256)"
 if [ -z "$msg" ]; then ok tailscale "tailscale installiert, tailscaled aktiviert, Quelle mit signed-by-Schlüsselbund"; else bad tailscale "${msg#; }"; fi
 
+# Zustand von tailscaled auf /data: / liegt im RAM-Overlay, sonst wäre die Anmeldung nach jedem Neustart weg.
+msg=""
+ts=tailscaled.service.d/hmi-kiosk.conf
+if [ ! -f "$S/$ts" ] || [ -L "$S/$ts" ]; then
+	msg="$msg; Drop-in $ts fehlt"
+else
+	unit_has "$ts" RequiresMountsFor=/data || msg="$msg; $ts ohne RequiresMountsFor=/data"
+	unit_has "$ts" ExecStartPre=/usr/local/sbin/hmi-kiosk-tailscale-state || msg="$msg; $ts ohne ExecStartPre=/usr/local/sbin/hmi-kiosk-tailscale-state"
+	unit_has "$ts" ExecStart= || msg="$msg; $ts hebt ExecStart= des Pakets nicht auf"
+	exec_line=$(grep '^ExecStart=.' "$S/$ts" || true)
+	[ "$(printf '%s\n' "$exec_line" | grep -c .)" = 1 ] || msg="$msg; $ts braucht genau eine ExecStart-Zeile mit Befehl"
+	# shellcheck disable=SC2016 # ${PORT} und $FLAGS stehen wörtlich in der Unit
+	for want in "--state=/data/system/tailscale/tailscaled.state" "--statedir=/data/system/tailscale" \
+		"--socket=/run/tailscale/tailscaled.sock" '--port=${PORT}' '$FLAGS'; do
+		case " $exec_line " in
+		*" $want "*) ;;
+		*) msg="$msg; ExecStart in $ts ohne $want" ;;
+		esac
+	done
+	if printf '%s\n' "$exec_line" | grep -q '/var/lib/tailscale'; then msg="$msg; $ts legt den Zustand ins Overlay (/var/lib/tailscale)"; fi
+fi
+st=$R/usr/local/sbin/hmi-kiosk-tailscale-state
+if [ ! -x "$st" ] || [ "$(stat -c '%U %a' "$st" 2>/dev/null)" != "root 755" ]; then
+	msg="$msg; $st fehlt oder nicht root/755"
+fi
+grep -q '^EnvironmentFile=.*/etc/default/tailscaled' "$R/usr/lib/systemd/system/tailscaled.service" "$R/lib/systemd/system/tailscaled.service" 2>/dev/null ||
+	msg="$msg; tailscaled.service des Pakets liest /etc/default/tailscaled nicht (PORT, FLAGS)"
+if [ -z "$msg" ]; then ok tailscale-zustand "Zustand von tailscaled auf /data/system/tailscale (Drop-in $ts)"; else bad tailscale-zustand "${msg#; }"; fi
+
 # Hardware-Watchdog
 if grep -qx 'RuntimeWatchdogSec=15s' "$R/etc/systemd/system.conf.d/watchdog.conf" 2>/dev/null; then
 	ok watchdog "RuntimeWatchdogSec=15s"

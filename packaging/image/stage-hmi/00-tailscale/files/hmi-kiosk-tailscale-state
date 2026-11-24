@@ -1,0 +1,56 @@
+#!/bin/sh
+# hmi-kiosk-tailscale-state: Zustandsordner von tailscaled auf der Datenpartition anlegen und prüfen.
+# Läuft als root vor tailscaled (ExecStartPre im Drop-in tailscaled.service.d/hmi-kiosk.conf).
+#
+# Im Betrieb liegt / unter einem RAM-Overlay (overlayroot=tmpfs); /var/lib/tailscale wäre nach jedem
+# Neustart leer und die Anmeldung am Tailnet verloren. Darum steht der Zustand (Knotenschlüssel) in
+# /data/system/tailscale.
+#
+# /data gehört dem Dienstbenutzer: /data/system und der Ordner darin müssen echte Ordner sein, root
+# gehören und für niemanden sonst schreibbar sein; Verweise werden nie verfolgt. Ist etwas davon nicht
+# so, endet das Skript mit 1 und tailscaled startet nicht (lieber kein Tailnet als ein Knotenschlüssel an
+# einem Ort, den der Dienstbenutzer bestimmt). Der Ordner selbst bekommt 0700.
+#
+# Pfad überschreibbar für den Test (test-tailscale-state.sh).
+DIR=${HMI_TAILSCALE_STATE_DIR:-/data/system/tailscale}
+PARENT=$(dirname "$DIR")
+NAME=$(basename "$DIR")
+
+log() { echo "hmi-kiosk-tailscale-state: $*" >&2; }
+die() {
+	log "$*; tailscaled startet nicht"
+	exit 1
+}
+
+# owned_tight <pfad> <maske>: echter Ordner, root gehörend, keine Rechte aus der Maske.
+owned_tight() {
+	[ ! -L "$1" ] || die "$1 ist ein Verweis"
+	[ -d "$1" ] || die "$1 ist kein Ordner"
+	[ "$(stat -c %u "$1")" = 0 ] || die "$1 gehört nicht root"
+	[ $((0$(stat -c %a "$1") & $2)) -eq 0 ] || die "$1 hat zu weite Rechte ($(stat -c %a "$1"))"
+}
+
+# /data/system legt sonst der erste Start an (root, 0755); fehlt es, hier genauso.
+if [ ! -e "$PARENT" ] && [ ! -L "$PARENT" ]; then
+	install -d -o root -g root -m 0755 "$PARENT" 2>/dev/null || die "$PARENT nicht anlegbar"
+fi
+owned_tight "$PARENT" 0022
+
+# In den Ordner wechseln und dort weiterprüfen: Alles Weitere gilt dem geöffneten Ordner, nicht mehr dem
+# Pfad, den der Dienstbenutzer tauschen könnte.
+grand=$(cd -P "$(dirname "$PARENT")" 2>/dev/null && pwd -P) || die "Elternordner von $PARENT nicht erreichbar"
+cd -P "$PARENT" 2>/dev/null || die "$PARENT nicht erreichbar"
+[ "$(pwd -P)" = "${grand%/}/$(basename "$PARENT")" ] || die "$PARENT ist kein echter Ordner (Verweis)"
+owned_tight . 0022
+
+if [ ! -e "$NAME" ] && [ ! -L "$NAME" ]; then
+	mkdir -m 0700 "$NAME" 2>/dev/null || die "$DIR nicht anlegbar"
+	log "$DIR angelegt"
+fi
+[ ! -L "$NAME" ] || die "$DIR ist ein Verweis"
+[ -d "$NAME" ] || die "$DIR ist kein Ordner"
+# Ein Ordner, der nicht root gehört, stammt nicht von hier; sein Inhalt wird nicht übernommen.
+[ "$(stat -c %u "$NAME")" = 0 ] || die "$DIR gehört nicht root"
+chmod 0700 "$NAME" || die "$DIR: Rechte nicht setzbar"
+owned_tight "$NAME" 0077
+exit 0

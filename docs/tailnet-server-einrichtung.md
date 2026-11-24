@@ -107,7 +107,7 @@ Hinweise:
 
 ## 4. Auth-Key erzeugen
 
-Pro Terminal wird einmal ein Auth-Key auf der Admin-Seite des Terminals eingegeben (Abschnitt „Tailnet“). Das Terminal speichert ihn nicht; danach hält Tailscale seinen eigenen Maschinenschlüssel.
+Pro Terminal wird einmal ein Auth-Key auf der Admin-Seite des Terminals eingegeben (Abschnitt „Tailnet“). Das Terminal speichert ihn nicht; danach hält Tailscale seinen eigenen Maschinenschlüssel, auf dem Pi auf der Datenpartition (`/data/system/tailscale`), unter Windows in `C:\ProgramData\Tailscale`. Die Anmeldung übersteht Neustart und Stromausfall; ein neuer Key ist nur für ein neues Gerät nötig oder nach dem Abmelden. Eine nach der Anmeldung kopierte SD-Karte trägt dieselbe Tailscale-Identität wie das Original: auf der Kopie ab- und neu anmelden oder Vorlagen vor der Anmeldung kopieren ([betrieb.md](betrieb.md), „SD-Sicherung auf ein anderes Gerät“, Tailnet-Identität).
 
 In der Admin-Konsole: **Settings, Keys, Generate auth key**:
 
@@ -116,7 +116,7 @@ In der Admin-Konsole: **Settings, Keys, Generate auth key**:
 | **Tags** | `tag:pdh-terminal` | Das Gerät bekommt genau die Rechte der Richtlinie oben und gehört keinem Benutzer. |
 | **Pre-approved** | an | In Tailnets mit „Device approval“ muss das Gerät nicht von Hand freigegeben werden. |
 | **Reusable** | je nach Zahl der Geräte | Für ein einzelnes Terminal nicht nötig (Key gilt einmal). Für mehrere Terminals einen wiederverwendbaren Key erzeugen, damit nicht für jedes Gerät einer nötig ist. |
-| **Ephemeral** | **aus** | Ephemeral-Geräte verschwinden aus dem Tailnet, sobald sie eine Zeit offline sind. Ein festes Terminal soll nach einem Stromausfall wieder da sein. **Für feste Terminals nicht empfohlen.** |
+| **Ephemeral** | **aus** | Ephemeral-Geräte verschwinden aus dem Tailnet, sobald sie eine Zeit offline sind. Ein festes Terminal soll nach einem Stromausfall mit derselben Identität wieder da sein (der Tailscale-Zustand bleibt auf dem Gerät erhalten, auf dem Pi unter `/data/system/tailscale`). **Für feste Terminals nicht empfohlen.** |
 | **Expiration** | kurz | Der Key wird nur bei der Anmeldung gebraucht. |
 
 Hinweise:

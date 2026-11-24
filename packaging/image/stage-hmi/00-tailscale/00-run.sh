@@ -11,3 +11,10 @@ install -m 644 -o root -g root files/tailscale-archive-keyring.gpg "${ROOTFS_DIR
 printf '%s\n' 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main' \
 	>"${ROOTFS_DIR}/etc/apt/sources.list.d/tailscale.list"
 chmod 644 "${ROOTFS_DIR}/etc/apt/sources.list.d/tailscale.list"
+
+# Zustand von tailscaled auf /data (sonst ist die Anmeldung nach jedem Neustart weg, / liegt im RAM-Overlay):
+# Drop-in mit RequiresMountsFor=/data und ExecStart=--state=/data/system/tailscale/…, dazu das Skript, das den
+# Ordner vor dem Start anlegt und prüft.
+install -d -m 755 "${ROOTFS_DIR}/usr/local/sbin" "${ROOTFS_DIR}/etc/systemd/system/tailscaled.service.d"
+install -m 755 -o root -g root files/hmi-kiosk-tailscale-state "${ROOTFS_DIR}/usr/local/sbin/hmi-kiosk-tailscale-state"
+install -m 644 -o root -g root files/tailscaled-hmi-kiosk.conf "${ROOTFS_DIR}/etc/systemd/system/tailscaled.service.d/hmi-kiosk.conf"
