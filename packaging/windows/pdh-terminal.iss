@@ -321,7 +321,7 @@ begin
     DownloadTemporaryFile('https://pkgs.tailscale.com/stable/tailscale-setup-{#TailscaleVersion}-amd64.msi', 'tailscale.msi', '{#TailscaleSha256}', nil);
     msi := ExpandConstant('{tmp}\tailscale.msi');
     rc := -1;
-    if not Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + msi + '" /qn /norestart TS_UNATTENDEDMODE=always', '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    if not Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + msi + '" /qn /norestart TS_UNATTENDEDMODE=always TS_NOLAUNCH=true', '', SW_HIDE, ewWaitUntilTerminated, rc) then
     begin
       Log('Tailscale: msiexec ließ sich nicht starten: ' + SysErrorMessage(rc));
       Exit;
