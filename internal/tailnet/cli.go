@@ -23,6 +23,41 @@ var (
 	removeDelay = 200 * time.Millisecond
 )
 
+// keyFilePrefix: fester Namensanfang der Schlüsseldatei im Temp-Ordner des Benutzers, damit eine nach einem
+// Abbruch (Abmelden der Sitzung, Task-Manager, Stromausfall) liegengebliebene Datei wiedergefunden wird.
+const keyFilePrefix = "pdh-tailnet-key-"
+
+// staleKeyAge: Ältere Schlüsseldateien gehören zu keinem laufenden "tailscale up" mehr (Frist upTimeout: 50 s).
+const staleKeyAge = time.Minute
+
+// keyDir ist der Ordner der Schlüsseldatei (Temp-Ordner des Benutzers); im Test ersetzbar.
+var keyDir = os.TempDir
+
+// sweepStaleKeyFiles löscht liegengebliebene Schlüsseldateien (älter als staleKeyAge). Im Protokoll stehen nur
+// Pfade, nie Inhalte; Verknüpfungen und Ordner bleiben unberührt.
+func sweepStaleKeyFiles(now time.Time) {
+	dir := keyDir()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if !strings.HasPrefix(e.Name(), keyFilePrefix) || !e.Type().IsRegular() {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil || now.Sub(fi.ModTime()) < staleKeyAge {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			log.Printf("tailnet: alte Schlüsseldatei nicht löschbar: %s", p)
+			continue
+		}
+		log.Printf("tailnet: alte Schlüsseldatei gelöscht: %s", p)
+	}
+}
+
 // removeKeyFile löscht die Schlüsseldatei; misslingt es, steht nur die Tatsache und der Pfad im Protokoll.
 func removeKeyFile(path string) {
 	for i := 0; i < removeTries; i++ {
@@ -55,11 +90,13 @@ type cli struct {
 }
 
 // NewCLI steuert tailscale.exe (Windows). bin leer: %ProgramFiles%\Tailscale\tailscale.exe. Fehlt die Datei,
-// meldet Status "nicht installiert".
+// meldet Status "nicht installiert". Beim Anlegen (Start des Terminals) werden liegengebliebene Schlüsseldateien
+// gelöscht.
 func NewCLI(bin string, run ExecOut) Ctl {
 	if bin == "" {
 		bin = DefaultBin()
 	}
+	sweepStaleKeyFiles(time.Now())
 	return &cli{bin: bin, run: run}
 }
 
@@ -91,7 +128,8 @@ func (c *cli) Status(ctx context.Context) (Status, error) {
 // und lesen soll: os.CreateTemp legt sie im Temp-Ordner des Benutzers (%TMP%, per Profil nur für ihn und
 // Administratoren lesbar) mit Modus 0600 an. Unter Windows bedeutet 0600 wenig (Go setzt nur das
 // Schreibschutz-Attribut); der Schutz kommt aus der ACL des Profils. Die Datei ist nur so lange da, wie
-// tailscale läuft, und wird auf jedem Weg gelöscht. Der Key steht nie in einem Argument.
+// tailscale läuft, und wird auf jedem Weg gelöscht; bleibt sie nach einem Abbruch liegen, löscht sie der nächste
+// Start oder das nächste Anmelden (sweepStaleKeyFiles). Der Key steht nie in einem Argument.
 func (c *cli) Up(ctx context.Context, authKey, hostname string) error {
 	if err := ValidateKey(authKey); err != nil {
 		return err
@@ -102,7 +140,8 @@ func (c *cli) Up(ctx context.Context, authKey, hostname string) error {
 	if !c.installed() {
 		return errNotInstalled
 	}
-	f, err := os.CreateTemp("", "tailnet-key-*")
+	sweepStaleKeyFiles(time.Now())
+	f, err := os.CreateTemp(keyDir(), keyFilePrefix+"*")
 	if err != nil {
 		return errors.New("Schlüsseldatei nicht anlegbar: " + err.Error())
 	}
