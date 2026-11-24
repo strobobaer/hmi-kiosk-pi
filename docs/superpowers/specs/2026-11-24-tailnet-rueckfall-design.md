@@ -84,8 +84,10 @@ wie 0.4.x.
   nicht als Kiosk-Benutzer.
 - **Pi-Abbild:** Tailscale-Paketquelle + Schlüssel, Paket `tailscale`, `tailscaled` aktiviert;
   `verify-image.sh` prüft Paket und Dienst. Der Zustand von `tailscaled` liegt auf `/data/system/tailscale`
-  (Drop-in für `tailscaled.service`), weil `/` im Betrieb ein RAM-Overlay ist; sonst wäre die Anmeldung nach
-  jedem Neustart weg.
+  (Drop-in für `tailscaled.service` mit `BindPaths=/data/system/tailscale:/var/lib/tailscale`, ExecStart des
+  Pakets unverändert), weil `/` im Betrieb ein RAM-Overlay ist; sonst wäre die Anmeldung nach jedem Neustart weg.
+  Der Zustand ist an die Seriennummer gebunden (`.pdh-serial`): Auf einem anderen Gerät (geklonte Karte) wird er
+  vor dem Start verworfen, die Kopie ist „nicht angemeldet“.
 - **Windows-Installer:** Tailscale-Installation wie Entscheidung 6; Deinstallation des Terminals
   entfernt Tailscale nicht.
 

@@ -107,7 +107,7 @@ Hinweise:
 
 ## 4. Auth-Key erzeugen
 
-Pro Terminal wird einmal ein Auth-Key auf der Admin-Seite des Terminals eingegeben (Abschnitt „Tailnet“). Das Terminal speichert ihn nicht; danach hält Tailscale seinen eigenen Maschinenschlüssel, auf dem Pi auf der Datenpartition (`/data/system/tailscale`), unter Windows in `C:\ProgramData\Tailscale`. Die Anmeldung übersteht Neustart und Stromausfall; ein neuer Key ist nur für ein neues Gerät nötig oder nach dem Abmelden. Eine nach der Anmeldung kopierte SD-Karte trägt dieselbe Tailscale-Identität wie das Original: auf der Kopie ab- und neu anmelden oder Vorlagen vor der Anmeldung kopieren ([betrieb.md](betrieb.md), „SD-Sicherung auf ein anderes Gerät“, Tailnet-Identität).
+Pro Terminal wird einmal ein Auth-Key auf der Admin-Seite des Terminals eingegeben (Abschnitt „Tailnet“). Das Terminal speichert ihn nicht; danach hält Tailscale seinen eigenen Maschinenschlüssel, auf dem Pi auf der Datenpartition (`/data/system/tailscale`), unter Windows in `C:\ProgramData\Tailscale`. Die Anmeldung übersteht Neustart und Stromausfall; ein neuer Key ist nur für ein neues Gerät nötig oder nach dem Abmelden. Auf dem Pi ist der Zustand an die Seriennummer gebunden: Eine kopierte SD-Karte verwirft ihn auf einem anderen Gerät beim Start und braucht dort nur eine neue Anmeldung mit einem Key; auch ein Ersatzgerät wird neu angemeldet, den Eintrag des alten Geräts unter „Machines“ entfernen ([betrieb.md](betrieb.md), „SD-Sicherung auf ein anderes Gerät“, Tailnet-Identität).
 
 In der Admin-Konsole: **Settings, Keys, Generate auth key**:
 
