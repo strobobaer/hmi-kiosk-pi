@@ -2,3 +2,4 @@
 *.png binary
 *.img binary
 *.pkg binary
+*.gpg binary

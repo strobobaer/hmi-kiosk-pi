@@ -18,6 +18,8 @@ REQUIRED_PACKAGES="labwc xwayland wvkbd chromium remmina remmina-plugin-vnc tige
 xserver-xorg-core xserver-xorg-input-libinput xinit xauth x11-xserver-utils overlayroot raspi-config fdisk e2fsprogs
 iputils-arping iputils-ping network-manager tailscale"
 FORBIDDEN_PACKAGES="remmina-plugin-secret gnome-keyring cloud-init"
+# sha256 von packaging/image/stage-hmi/00-tailscale/files/tailscale-archive-keyring.gpg
+TAILSCALE_KEYRING_SHA256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 UNITS="hmi-kiosk.service hmi-kiosk-helper.service hmi-kiosk-session.service hmi-kiosk-update-guard.service hmi-kiosk-firstboot.service hmi-kiosk-grow-data.service hmi-kiosk-identity.service hmi-kiosk-network.service"
 
 usage() {
@@ -404,6 +406,7 @@ enabled_in multi-user.target tailscaled.service || msg="$msg; tailscaled.service
 grep -Fqx 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main' \
 	"$R/etc/apt/sources.list.d/tailscale.list" 2>/dev/null || msg="$msg; /etc/apt/sources.list.d/tailscale.list ohne signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg"
 [ -s "$R/usr/share/keyrings/tailscale-archive-keyring.gpg" ] || msg="$msg; Schlüsselbund tailscale-archive-keyring.gpg fehlt"
+[ "$(sha256sum "$R/usr/share/keyrings/tailscale-archive-keyring.gpg" 2>/dev/null | cut -d" " -f1)" = "$TAILSCALE_KEYRING_SHA256" ] || msg="$msg; Schlüsselbund weicht von der eingecheckten Datei ab (sha256)"
 if [ -z "$msg" ]; then ok tailscale "tailscale installiert, tailscaled aktiviert, Quelle mit signed-by-Schlüsselbund"; else bad tailscale "${msg#; }"; fi
 
 # Hardware-Watchdog
