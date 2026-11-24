@@ -20,6 +20,13 @@
 #define FirewallRule "PDH-Terminal Admin"
 #define KioskHelper "pdh-terminal-kiosk.exe"
 #define ModeKey "SOFTWARE\PDH-Terminal"
+; Tailscale (Rückfall über das Tailnet): build-setup.sh liest packaging\windows\tailscale.env und übergibt
+; /DTailscaleVersion=x.y.z /DTailscaleSha256=<SHA-256 des MSI>. Ohne beide Werte entfällt der Abschnitt ganz.
+#ifdef TailscaleVersion
+  #ifndef TailscaleSha256
+    #error TailscaleSha256 fehlt: /DTailscaleVersion braucht /DTailscaleSha256
+  #endif
+#endif
 
 [Setup]
 ; Feste Kennung: Ein Setup mit derselben Kennung ist ein Update über die vorhandene Installation.
@@ -294,6 +301,47 @@ begin
   Result := '';
 end;
 
+#ifdef TailscaleVersion
+// Tailscale bei Bedarf nachladen und still installieren. Läuft erst nach der Installation der Dateien (ssPostInstall):
+// Ein Fehler hier (kein Netz, Prüfsumme falsch, msiexec scheitert) schreibt nur ins Protokoll und bricht nichts ab.
+// Das Setup und die Deinstallation lassen eine vorhandene Tailscale-Installation unberührt.
+procedure InstallTailscaleIfMissing();
+var
+  exe, msi: String;
+  rc: Integer;
+begin
+  try
+    exe := ExpandConstant('{commonpf64}\Tailscale\tailscale.exe');
+    if FileExists(exe) then
+    begin
+      Log('Tailscale: schon installiert (' + exe + '), nichts zu tun.');
+      Exit;
+    end;
+    Log('Tailscale: fehlt, Laden von Version {#TailscaleVersion}.');
+    DownloadTemporaryFile('https://pkgs.tailscale.com/stable/tailscale-setup-{#TailscaleVersion}-amd64.msi', 'tailscale.msi', '{#TailscaleSha256}', nil);
+    msi := ExpandConstant('{tmp}\tailscale.msi');
+    rc := -1;
+    if not Exec(ExpandConstant('{sys}\msiexec.exe'), '/i "' + msi + '" /qn TS_UNATTENDEDMODE=always', '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    begin
+      Log('Tailscale: msiexec ließ sich nicht starten: ' + SysErrorMessage(rc));
+      Exit;
+    end;
+    // 0 Erfolg, 3010 Erfolg mit ausstehendem Neustart (das Setup fordert deshalb keinen an).
+    if (rc = 0) or (rc = 3010) then
+      Log('Tailscale: installiert, Code=' + IntToStr(rc))
+    else
+    begin
+      Log('Tailscale: Installation fehlgeschlagen, Code=' + IntToStr(rc));
+      if not WizardSilent then
+        MsgBox('Tailscale ließ sich nicht installieren (Code ' + IntToStr(rc) + '). Das PDH-Terminal ist installiert; Tailscale bitte später nachinstallieren.', mbInformation, MB_OK);
+    end;
+  except
+    // Kein Netz, falsche Prüfsumme usw.: weiter installieren.
+    Log('Tailscale: nicht installiert: ' + GetExceptionMessage);
+  end;
+end;
+#endif
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   rc: Integer;
@@ -368,6 +416,9 @@ begin
       else
         SaveMode('zusatz');
     end;
+#ifdef TailscaleVersion
+    InstallTailscaleIfMissing();
+#endif
   end;
 end;
 
