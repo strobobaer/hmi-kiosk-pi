@@ -128,11 +128,15 @@ unset FAKE_UDEV_FAIL
 # Ohne udevadm im Suchpfad gilt ebenfalls touch. Der Pfad enthält nur die Stubs und die vom Skript benutzten
 # Werkzeuge, ein udevadm des Systems kann nicht einspringen.
 devices ohneudev "event0=$MOUSE"
-mkdir "$work/nopath"
-for t in sh cat tr grep head sed mkdir chmod mv basename; do ln -s "$(command -v "$t")" "$work/nopath/$t"; done
-cp "$work/bin/labwc" "$work/bin/startx" "$work/nopath/"
-if PATH="$work/nopath" command -v udevadm >/dev/null 2>&1; then bad "Testpfad enthält udevadm"; fi
-RUN_PATH="$work/nopath" check_input "auto ohne udevadm" touch labwc auto ohneudev
+if [ "$(uname -s)" = Linux ]; then
+	mkdir "$work/nopath"
+	for t in sh cat tr grep head sed mkdir chmod mv basename; do ln -s "$(command -v "$t")" "$work/nopath/$t"; done
+	cp "$work/bin/labwc" "$work/bin/startx" "$work/nopath/"
+	if PATH="$work/nopath" command -v udevadm >/dev/null 2>&1; then bad "Testpfad enthält udevadm"; fi
+	RUN_PATH="$work/nopath" check_input "auto ohne udevadm" touch labwc auto ohneudev
+else
+	echo "ÜBERSPRUNGEN auto ohne udevadm: der eingeschränkte Suchpfad braucht Linux (hier: $(uname -s)); im Container ausführen"
+fi
 
 # Touch-Controller mit zusätzlichem Zeigerknoten (gleiche Hersteller- und Modellkennung) zählt nicht als Maus.
 CTRL_TS='ID_INPUT=1

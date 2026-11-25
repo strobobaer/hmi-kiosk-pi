@@ -369,7 +369,7 @@ Für Eingaben ohne Tastatur gibt es eine Bildschirmtastatur (wvkbd, Paket `wvkbd
 
 - **Admin-Seite am Terminal:** Bei Touch-Bedienung erscheint sie beim Antippen eines Text-, Passwort- oder Zahlenfelds und verschwindet beim Verlassen des Felds oder beim Absenden.
 - **Leiste während einer Sitzung:** Der Knopf **Tastatur** blendet sie ein und aus, etwa für Eingaben im HMI.
-- **Maus-Bedienung** (HMI-Kiosk, Bedienung „Maus“): Sie erscheint nie von selbst, der Knopf in der Leiste bleibt. Beim PDH-Terminal gilt die Einstellung „Bildschirmtastatur bei Mausbedienung“ (siehe „Bedienung mit Maus oder Touch“ in Abschnitt 4).
+- **Maus-Bedienung** (HMI-Kiosk, Bedienung „Maus“): Sie erscheint nie von selbst, der Knopf in der Leiste bleibt. Ausnahme: Die Anmeldung und die Ersteinrichtung der Admin-Seite am Terminal öffnen die Tastatur immer von selbst, in jeder Bedienart und bei beiden Produkten (sonst käme ein Gerät ohne echte Tastatur nicht an die Admin-Seite, um die Einstellung zurückzunehmen). Beim PDH-Terminal gilt die Einstellung „Bildschirmtastatur bei Mausbedienung“ (siehe „Bedienung mit Maus oder Touch“ in Abschnitt 4).
 - **Layout:** wvkbd hat kein deutsches Layout. Es gilt QWERTY mit Ziffernreihe; Umlaute und ß über die Taste **Cmp** und danach den Grundbuchstaben (a, o, u, s), Sonderzeichen über die zweite Ebene.
 - **X11-Ausweichprofil:** Dort gibt es keine Bildschirmtastatur (wvkbd braucht Wayland). Der Knopf in der Leiste bleibt ohne Wirkung, Fehler entstehen keine.
 - Fehlt das Programm (z. B. install.sh-System ohne das Paket), meldet das Protokoll „Bildschirmtastatur startet nicht“ und der Dienst versucht es in wachsenden Abständen bis 30 s erneut.
