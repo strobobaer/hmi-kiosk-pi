@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -11,11 +12,11 @@ func TestDefaultIsValid(t *testing.T) {
 	}
 }
 
-func TestInputModeDefaultsToTouchAndIsChecked(t *testing.T) {
-	if Default().Kiosk.InputMode != InputTouch {
+func TestInputModeDefaultsToAutoAndIsChecked(t *testing.T) {
+	if Default().Kiosk.InputMode != InputAuto {
 		t.Fatalf("Voreinstellung %q", Default().Kiosk.InputMode)
 	}
-	for _, m := range []string{"", InputTouch, InputMouse} {
+	for _, m := range []string{"", InputTouch, InputMouse, InputAuto} {
 		c := sample()
 		c.Kiosk.InputMode = m
 		if err := Validate(c); err != nil {
@@ -26,6 +27,19 @@ func TestInputModeDefaultsToTouchAndIsChecked(t *testing.T) {
 	c.Kiosk.InputMode = "stift"
 	if Validate(c) == nil {
 		t.Error("unbekannte Bedienart angenommen")
+	} else if msg := Validate(c).Error(); !strings.Contains(msg, "Touch") || !strings.Contains(msg, "Maus") || !strings.Contains(msg, "Automatisch") {
+		t.Errorf("Fehlermeldung nennt nicht alle drei Bedienarten: %s", msg)
+	}
+}
+
+// Bestehende Dateien bleiben, wie sie sind: ein fehlender Wert wird beim Laden nicht zu „auto“.
+func TestInputModeMissingInExistingFileStaysEmpty(t *testing.T) {
+	var c Config
+	if err := json.Unmarshal([]byte(`{"kiosk":{"inactivityMinutes":15}}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Kiosk.InputMode != "" {
+		t.Fatalf("fehlender Wert wurde %q", c.Kiosk.InputMode)
 	}
 }
 

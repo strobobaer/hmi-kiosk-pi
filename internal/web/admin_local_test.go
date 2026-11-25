@@ -4,12 +4,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/inputmode"
 )
 
 // terminal ist ein Browser am Terminal: Chromium ruft http://127.0.0.1:8081 auf.
@@ -207,6 +210,20 @@ func TestLocalKeyboardModeFollowsInputMode(t *testing.T) {
 	e.mutate(func(c *config.Config) { c.Kiosk.InputMode = config.InputMouse })
 	body := e.terminal().get("/admin/login").Body.String()
 	wantContains(t, body, `data-osk="manual"`)
+}
+
+func TestLocalKeyboardModeAutoFollowsSession(t *testing.T) {
+	for mode, want := range map[string]string{"mouse": "manual", "touch": "auto"} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "input"), []byte(mode+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(inputmode.SetDir(dir))
+		e := newEnv(t)
+		e.mutate(func(c *config.Config) { c.Kiosk.InputMode = config.InputAuto })
+		body := e.terminal().get("/admin/login").Body.String()
+		wantContains(t, body, `data-osk="`+want+`"`)
+	}
 }
 
 func TestLocalBackEndsSession(t *testing.T) {

@@ -17,9 +17,10 @@
     <select name="input_mode">
       <option value="touch"{{if eq .InputMode "touch"}} selected{{end}}>Touch (Mauszeiger ausgeblendet)</option>
       <option value="mouse"{{if eq .InputMode "mouse"}} selected{{end}}>Maus (Mauszeiger sichtbar)</option>
+      <option value="auto"{{if eq .InputMode "auto"}} selected{{end}}>Automatisch (Maus erkannt → Zeiger sichtbar)</option>
     </select>
   </label>
-  <p class="hint">Die Bedienung wirkt nach dem nächsten Neustart des Terminals (System → Terminal neu starten).</p>
+  <p class="hint">Die Bedienung wirkt nach dem nächsten Neustart des Terminals (System → Terminal neu starten). „Automatisch“ prüft beim Start des Bildschirms, ob eine Maus (oder ein Touchpad) angeschlossen ist, und zeigt den Zeiger nur dann.</p>
   <fieldset class="stack">
     <legend>Daueranzeige</legend>
     <label>Festes HMI

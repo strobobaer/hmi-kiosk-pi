@@ -27,13 +27,14 @@ graphics_profile() {
 	echo labwc
 }
 
-# input_mode gibt touch oder mouse aus (Kiosk → Bedienung); ohne Angabe gilt touch.
+# input_mode gibt die eingestellte Bedienart aus (Kiosk → Bedienung): touch, mouse oder auto;
+# ohne Angabe gilt touch (Dateien vor „auto“ bleiben so).
 input_mode() {
 	for f in "$CONFIG" "$CONFIG.good"; do
 		[ -r "$f" ] || continue
 		m=$(tr -d '\n' <"$f" | grep -o '"inputMode"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/') || m=""
 		case "$m" in
-		touch | mouse)
+		touch | mouse | auto)
 			echo "$m"
 			return
 			;;
@@ -42,6 +43,33 @@ input_mode() {
 		esac
 	done
 	echo touch
+}
+
+# mouse_present ist erfolgreich, wenn ein Eingabegerät eine Maus oder ein Touchpad ist, aber kein Touchscreen
+# (udev: ID_INPUT_MOUSE oder ID_INPUT_TOUCHPAD, nicht ID_INPUT_TOUCHSCREEN). Läuft ohne root; schlägt die
+# Abfrage fehl, gilt: keine Maus. HMI_KIOSK_INPUT_DIR ersetzt /dev/input für Tests.
+mouse_present() {
+	command -v udevadm >/dev/null 2>&1 || return 1
+	# Eine eben angesteckte Maus soll schon erkannt sein; scheitert das Warten, geht es trotzdem weiter.
+	udevadm settle --timeout=3 >/dev/null 2>&1 || true
+	for dev in "${HMI_KIOSK_INPUT_DIR:-/dev/input}"/event*; do
+		[ -e "$dev" ] || continue
+		props=$(udevadm info --query=property --name="$dev" 2>/dev/null) || continue
+		# Ein Touchscreen mit Mauszeiger-Emulation zählt nicht als Maus.
+		if printf '%s\n' "$props" | grep -qx 'ID_INPUT_TOUCHSCREEN=1'; then continue; fi
+		if printf '%s\n' "$props" | grep -qx -e 'ID_INPUT_MOUSE=1' -e 'ID_INPUT_TOUCHPAD=1'; then return 0; fi
+	done
+	return 1
+}
+
+# effective_input gibt touch oder mouse aus: bei auto je nach erkannter Maus, sonst die Einstellung.
+effective_input() {
+	case "$1" in
+	auto)
+		if mouse_present; then echo mouse; else echo touch; fi
+		;;
+	*) echo "$1" ;;
+	esac
 }
 
 prepare() {
@@ -57,15 +85,22 @@ prepare() {
 	mv -f "$tmp" "$STATE_DIR/env"
 	printf '%s\n' "$profile" >"$STATE_DIR/.profile.$$"
 	mv -f "$STATE_DIR/.profile.$$" "$STATE_DIR/profile"
-	input=$(input_mode)
+	setting=$(input_mode)
+	input=$(effective_input "$setting")
+	# Das Programm liest beide Dateien (input = wirksame Bedienart, input-setting = Einstellung beim Start);
+	# der Ordner gehört dem Kiosk-Benutzer, lesbar für alle.
+	printf '%s\n' "$setting" >"$STATE_DIR/.input-setting.$$"
+	chmod 0644 "$STATE_DIR/.input-setting.$$"
+	mv -f "$STATE_DIR/.input-setting.$$" "$STATE_DIR/input-setting"
 	printf '%s\n' "$input" >"$STATE_DIR/.input.$$"
+	chmod 0644 "$STATE_DIR/.input.$$"
 	mv -f "$STATE_DIR/.input.$$" "$STATE_DIR/input"
-	echo "Grafikprofil: $profile, Bedienung: $input"
+	echo "Grafikprofil: $profile, Bedienung: $setting ($input)"
 }
 
 run_session() {
 	profile=$(cat "$STATE_DIR/profile" 2>/dev/null || graphics_profile)
-	input=$(cat "$STATE_DIR/input" 2>/dev/null || input_mode)
+	input=$(cat "$STATE_DIR/input" 2>/dev/null || effective_input "$(input_mode)")
 	export XDG_RUNTIME_DIR="$RUNTIME_DIR"
 	nocursor=""
 	if [ "$input" = touch ]; then

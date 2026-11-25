@@ -15,6 +15,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
+	"hmikiosk/internal/inputmode"
 	"hmikiosk/internal/localport"
 	"hmikiosk/internal/rfb"
 	"hmikiosk/internal/secrets"
@@ -587,7 +588,7 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 	v.StartPort = localport.Get()
 	if v.Terminal {
 		v.KioskURL, v.IdleSeconds, v.OSK = KioskURL(), int(localSessionIdle/time.Second), "auto"
-		if cfg, _, err := a.d.Store.Load(); err == nil && cfg.Kiosk.InputMode == config.InputMouse {
+		if cfg, _, err := a.d.Store.Load(); err == nil && inputmode.Effective(cfg.Kiosk.InputMode) == config.InputMouse {
 			v.OSK = "manual"
 		}
 	}

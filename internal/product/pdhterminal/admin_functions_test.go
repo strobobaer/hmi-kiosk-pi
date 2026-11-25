@@ -65,6 +65,43 @@ func TestAdminThemeCSS(t *testing.T) {
 	}
 }
 
+// Im Maus-Betrieb öffnet sich die Tastatur nicht vom Feld-Fokus aus: „show“ (so senden es alle bisherigen
+// PDH-Versionen) und „auto-show“ werden ohne Wirkung beantwortet; „hide“ und das ausdrückliche „open“ bleiben.
+func TestKeyboardPageHandlerMouseSuppressesAutoShow(t *testing.T) {
+	kb := &fakeKbd{}
+	mode := "mouse"
+	origin := func() string { return "https://pdh.firma.de" }
+	mux := http.NewServeMux()
+	mux.Handle("/api/keyboard/{action}", keyboardPageHandler(origin, web.KeyboardHandler(kb), func() string { return mode }))
+	do := func(action string) int {
+		r := httptest.NewRequest(http.MethodPost, "/api/keyboard/"+action, nil)
+		r.Header.Set("Origin", "https://pdh.firma.de")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, r)
+		return w.Code
+	}
+	for _, a := range []string{"show", "auto-show", "hide", "open"} {
+		if c := do(a); c != http.StatusNoContent {
+			t.Errorf("%s: %d", a, c)
+		}
+	}
+	if got := strings.Join(kb.calls, ","); got != "hide,show" {
+		t.Errorf("Maus: Aufrufe %q, erwartet hide,show (nur hide und ausdrückliches open)", got)
+	}
+	kb.calls, mode = nil, "touch"
+	for _, a := range []string{"show", "auto-show", "open", "hide"} {
+		if c := do(a); c != http.StatusNoContent {
+			t.Errorf("Touch %s: %d", a, c)
+		}
+	}
+	if got := strings.Join(kb.calls, ","); got != "show,show,show,hide" {
+		t.Errorf("Touch: Aufrufe %q", got)
+	}
+	if c := do("toggle"); c != http.StatusNotFound {
+		t.Errorf("toggle: %d", c)
+	}
+}
+
 type fakeKbd struct{ calls []string }
 
 func (k *fakeKbd) Show() error   { k.calls = append(k.calls, "show"); return nil }
@@ -75,7 +112,7 @@ func TestKeyboardPageHandler(t *testing.T) {
 	kb := &fakeKbd{}
 	origin := func() string { return "https://pdh.firma.de" }
 	mux := http.NewServeMux()
-	mux.Handle("/api/keyboard/{action}", keyboardPageHandler(origin, web.KeyboardHandler(kb)))
+	mux.Handle("/api/keyboard/{action}", keyboardPageHandler(origin, web.KeyboardHandler(kb), nil))
 	do := func(method, path, org string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, path, nil)
 		if org != "" {
