@@ -67,8 +67,8 @@ run() {
 		printf '{"display":{"graphicsProfile":"%s"}}\n' "$1" >"$d/config.json"
 	fi
 	export HMI_KIOSK_CONFIG="$d/config.json" HMI_KIOSK_SESSION_DIR="$d/state" XDG_RUNTIME_DIR="$d" STUB_OUT="$d/out"
-	PATH="$work/bin:$PATH" sh "$script" prepare >/dev/null
-	PATH="$work/bin:$PATH" sh "$script"
+	PATH="${RUN_PATH:-$work/bin:$PATH}" sh "$script" prepare >/dev/null
+	PATH="${RUN_PATH:-$work/bin:$PATH}" sh "$script"
 	cat "$d/out"
 }
 
@@ -125,11 +125,35 @@ devices fehler "event0=$MOUSE"
 export FAKE_UDEV_FAIL=1
 check_input "auto, udevadm scheitert" touch labwc auto fehler
 unset FAKE_UDEV_FAIL
-# Ohne udevadm im Suchpfad gilt ebenfalls touch.
+# Ohne udevadm im Suchpfad gilt ebenfalls touch. Der Pfad enthält nur die Stubs und die vom Skript benutzten
+# Werkzeuge, ein udevadm des Systems kann nicht einspringen.
 devices ohneudev "event0=$MOUSE"
-mv "$work/bin/udevadm" "$work/udevadm.weg"
-check_input "auto ohne udevadm" touch labwc auto ohneudev
-mv "$work/udevadm.weg" "$work/bin/udevadm"
+mkdir "$work/nopath"
+for t in sh cat tr grep head sed mkdir chmod mv basename; do ln -s "$(command -v "$t")" "$work/nopath/$t"; done
+cp "$work/bin/labwc" "$work/bin/startx" "$work/nopath/"
+if PATH="$work/nopath" command -v udevadm >/dev/null 2>&1; then bad "Testpfad enthält udevadm"; fi
+RUN_PATH="$work/nopath" check_input "auto ohne udevadm" touch labwc auto ohneudev
+
+# Touch-Controller mit zusätzlichem Zeigerknoten (gleiche Hersteller- und Modellkennung) zählt nicht als Maus.
+CTRL_TS='ID_INPUT=1
+ID_INPUT_MOUSE=1
+ID_INPUT_TOUCHSCREEN=1
+ID_VENDOR_ID=0eef
+ID_MODEL_ID=0001'
+CTRL_PTR='ID_INPUT=1
+ID_INPUT_MOUSE=1
+ID_VENDOR_ID=0eef
+ID_MODEL_ID=0001'
+OTHER_MOUSE='ID_INPUT=1
+ID_INPUT_MOUSE=1
+ID_VENDOR_ID=046d
+ID_MODEL_ID=c077'
+devices ctrl "event0=$CTRL_TS" "event1=$CTRL_PTR"
+check_input "auto: Touch-Controller mit Zeigerknoten" touch labwc auto ctrl
+devices ctrl2 "event0=$CTRL_PTR" "event1=$CTRL_TS"
+check_input "auto: Touch-Controller, Knoten in anderer Reihenfolge" touch labwc auto ctrl2
+devices ctrlmaus "event0=$CTRL_TS" "event1=$CTRL_PTR" "event2=$OTHER_MOUSE"
+check_input "auto: Touch-Controller und echte Maus" mouse labwc auto ctrlmaus
 
 # Feste Einstellungen und bestehende Dateien ändern sich durch eine angeschlossene Maus nicht.
 devices fest "event0=$MOUSE"

@@ -605,7 +605,7 @@ func (s *service) serve(parent context.Context) error {
 		return slides.CacheHandler(s.slides, origin, s.applyCards)
 	}))
 	cardAPI.Handle("/api/keyboard/{action}", byOrigin(origins, func(origin func() string) http.Handler {
-		return keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI()), s.inputMode)
+		return keyboardPageHandler(origin, web.KeyboardHandler(s.keyboardAPI()), s.suppressAutoKeyboard)
 	}))
 	startHandler := StartHandler(s.o.DataDir, func() config.PDHCfg { return s.config().PDH }, s.client, cardAPI, s.slides)
 	localErr := make(chan error, 1)

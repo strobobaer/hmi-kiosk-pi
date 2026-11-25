@@ -32,6 +32,21 @@ func TestInputModeDefaultsToAutoAndIsChecked(t *testing.T) {
 	}
 }
 
+func TestOSKWithMouseIsChecked(t *testing.T) {
+	for _, v := range []string{"", OSKAuto, OSKOff} {
+		c := sample()
+		c.Kiosk.OSKWithMouse = v
+		if err := Validate(c); err != nil {
+			t.Errorf("%q abgelehnt: %v", v, err)
+		}
+	}
+	c := sample()
+	c.Kiosk.OSKWithMouse = "immer"
+	if Validate(c) == nil {
+		t.Error("unbekannte Einstellung angenommen")
+	}
+}
+
 // Bestehende Dateien bleiben, wie sie sind: ein fehlender Wert wird beim Laden nicht zu „auto“.
 func TestInputModeMissingInExistingFileStaysEmpty(t *testing.T) {
 	var c Config

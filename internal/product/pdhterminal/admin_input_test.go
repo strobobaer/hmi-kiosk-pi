@@ -162,3 +162,62 @@ func TestAdminInputWindowsShowsOnlyNote(t *testing.T) {
 		t.Fatal("Konfiguration unter Windows geändert")
 	}
 }
+
+// auto→mouse bei schon erkannter Maus ändert nichts Sichtbares: kein Neustart anbieten.
+func TestAdminInputAutoToMouseWithDetectedMouseNeedsNoReboot(t *testing.T) {
+	sessionState(t, "mouse", "auto")
+	e := linuxEnv(t)
+	r := e.post("/admin/pdh/input", url.Values{"input_mode": {"mouse"}})
+	if r.Code != http.StatusOK {
+		t.Fatalf("Speichern: %d", r.Code)
+	}
+	if strings.Contains(r.Body.String(), "/admin/system/reboot") {
+		t.Fatal("Neustart angeboten, obwohl der Zeiger schon sichtbar ist")
+	}
+	// Dagegen: auto→mouse ohne erkannte Maus, und touch→mouse.
+	for _, c := range [][2]string{{"touch", "auto"}, {"touch", "touch"}} {
+		sessionState(t, c[0], c[1])
+		e := linuxEnv(t)
+		setInputMode(t, e, c[1])
+		if r := e.post("/admin/pdh/input", url.Values{"input_mode": {"mouse"}}); !strings.Contains(r.Body.String(), "/admin/system/reboot") {
+			t.Errorf("Sitzung %s/%s: Neustart fehlt", c[0], c[1])
+		}
+	}
+	// mouse→auto bei fest laufender Sitzung „mouse“: neu erkannt wird erst nach einem Start.
+	sessionState(t, "mouse", "mouse")
+	e = linuxEnv(t)
+	setInputMode(t, e, "mouse")
+	if r := e.post("/admin/pdh/input", url.Values{"input_mode": {"auto"}}); !strings.Contains(r.Body.String(), "/admin/system/reboot") {
+		t.Error("mouse→auto: Neustart fehlt")
+	}
+}
+
+func TestAdminInputKeyboardSetting(t *testing.T) {
+	sessionState(t, "", "")
+	e := linuxEnv(t)
+	body := e.get("/admin/pdh").Body.String()
+	if !strings.Contains(body, `name="osk_with_mouse"`) || !strings.Contains(body, `value="auto" selected`) || !strings.Contains(body, "keinen Tastatur-Knopf") {
+		t.Fatalf("Einstellung der Tastatur fehlt oder ist nicht vorgewählt: %s", body)
+	}
+	if r := e.post("/admin/pdh/input", url.Values{"input_mode": {"mouse"}, "osk_with_mouse": {"off"}}); r.Code != http.StatusOK {
+		t.Fatalf("Speichern: %d", r.Code)
+	}
+	if c, _, _ := e.store.Load(); c.Kiosk.OSKWithMouse != config.OSKOff {
+		t.Fatalf("gespeichert %q", c.Kiosk.OSKWithMouse)
+	}
+	if !strings.Contains(e.get("/admin/pdh").Body.String(), `value="off" selected`) {
+		t.Error("aus nicht vorgewählt")
+	}
+	// Formular ohne das Feld behält den Wert; ein ungültiger Wert wird abgelehnt.
+	e.post("/admin/pdh/input", url.Values{"input_mode": {"mouse"}})
+	if c, _, _ := e.store.Load(); c.Kiosk.OSKWithMouse != config.OSKOff {
+		t.Errorf("ohne Feld geändert: %q", c.Kiosk.OSKWithMouse)
+	}
+	if r := e.post("/admin/pdh/input", url.Values{"input_mode": {"mouse"}, "osk_with_mouse": {"x"}}); r.Code != http.StatusBadRequest {
+		t.Errorf("ungültig: %d", r.Code)
+	}
+	e.post("/admin/pdh/input", url.Values{"input_mode": {"mouse"}, "osk_with_mouse": {"auto"}})
+	if c, _, _ := e.store.Load(); c.Kiosk.OSKWithMouse != "" {
+		t.Errorf("auto wird leer gespeichert, war %q", c.Kiosk.OSKWithMouse)
+	}
+}

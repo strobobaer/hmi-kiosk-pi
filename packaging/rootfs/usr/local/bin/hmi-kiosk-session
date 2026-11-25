@@ -45,19 +45,41 @@ input_mode() {
 	echo touch
 }
 
+# dev_id gibt "Hersteller:Modell" (ID_VENDOR_ID:ID_MODEL_ID) aus den udev-Eigenschaften in $1 aus, leer ohne beide.
+dev_id() {
+	v=$(printf '%s\n' "$1" | sed -n 's/^ID_VENDOR_ID=//p' | head -n 1)
+	m=$(printf '%s\n' "$1" | sed -n 's/^ID_MODEL_ID=//p' | head -n 1)
+	if [ -n "$v" ] && [ -n "$m" ]; then echo "$v:$m"; fi
+}
+
 # mouse_present ist erfolgreich, wenn ein Eingabegerät eine Maus oder ein Touchpad ist, aber kein Touchscreen
-# (udev: ID_INPUT_MOUSE oder ID_INPUT_TOUCHPAD, nicht ID_INPUT_TOUCHSCREEN). Läuft ohne root; schlägt die
-# Abfrage fehl, gilt: keine Maus. HMI_KIOSK_INPUT_DIR ersetzt /dev/input für Tests.
+# (udev: ID_INPUT_MOUSE oder ID_INPUT_TOUCHPAD, nicht ID_INPUT_TOUCHSCREEN). Ein Zeigerknoten mit denselben
+# ID_VENDOR_ID und ID_MODEL_ID wie ein Touchscreen-Knoten (Touch-Controller mit zusätzlichem Zeigerknoten) zählt
+# nicht. Läuft ohne root; schlägt die Abfrage fehl, gilt: keine Maus. HMI_KIOSK_INPUT_DIR ersetzt /dev/input
+# für Tests.
 mouse_present() {
 	command -v udevadm >/dev/null 2>&1 || return 1
 	# Eine eben angesteckte Maus soll schon erkannt sein; scheitert das Warten, geht es trotzdem weiter.
 	udevadm settle --timeout=3 >/dev/null 2>&1 || true
+	ts_ids=""
+	for dev in "${HMI_KIOSK_INPUT_DIR:-/dev/input}"/event*; do
+		[ -e "$dev" ] || continue
+		props=$(udevadm info --query=property --name="$dev" 2>/dev/null) || continue
+		if printf '%s\n' "$props" | grep -qx 'ID_INPUT_TOUCHSCREEN=1'; then
+			ts_ids="$ts_ids
+$(dev_id "$props")"
+		fi
+	done
 	for dev in "${HMI_KIOSK_INPUT_DIR:-/dev/input}"/event*; do
 		[ -e "$dev" ] || continue
 		props=$(udevadm info --query=property --name="$dev" 2>/dev/null) || continue
 		# Ein Touchscreen mit Mauszeiger-Emulation zählt nicht als Maus.
 		if printf '%s\n' "$props" | grep -qx 'ID_INPUT_TOUCHSCREEN=1'; then continue; fi
-		if printf '%s\n' "$props" | grep -qx -e 'ID_INPUT_MOUSE=1' -e 'ID_INPUT_TOUCHPAD=1'; then return 0; fi
+		if printf '%s\n' "$props" | grep -qx -e 'ID_INPUT_MOUSE=1' -e 'ID_INPUT_TOUCHPAD=1'; then
+			id=$(dev_id "$props")
+			if [ -n "$id" ] && printf '%s\n' "$ts_ids" | grep -qxF "$id"; then continue; fi
+			return 0
+		fi
 	done
 	return 1
 }

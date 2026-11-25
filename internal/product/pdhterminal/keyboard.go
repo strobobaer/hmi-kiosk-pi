@@ -8,15 +8,15 @@ import "net/http"
 // mit 503, die Seite ignoriert das.
 //
 // Aktionen (POST /api/keyboard/{action}):
+//   - show, auto-show: Fokus auf einem Eingabefeld, die Tastatur erscheint von selbst. „show“ senden alle bisherigen
+//     PDH-Versionen so; „auto-show“ ist derselbe Zweck unter eindeutigem Namen für spätere. Nur bei wirksamer Maus
+//     und eingestelltem „Bildschirmtastatur bei Mausbedienung: aus“ (suppress liefert true) beantwortet das Terminal
+//     beide mit 204 ohne Wirkung; sonst öffnet sie sich wie bei Touch.
+//   - open: ausdrücklicher Wunsch (z. B. ein Tastatur-Knopf der PDH-Seite), zeigt die Tastatur immer.
+//   - hide: verbirgt die Tastatur (immer).
 //
-//	show, auto-show  Fokus auf einem Eingabefeld: die Tastatur erscheint von selbst. „show“ senden alle bisherigen
-//	                 PDH-Versionen so; „auto-show“ ist derselbe Zweck unter eindeutigem Namen für spätere.
-//	                 Im Maus-Betrieb (mode liefert „mouse“) beantwortet das Terminal beide mit 204 ohne Wirkung.
-//	open             Ausdrücklicher Wunsch (z. B. ein Tastatur-Knopf der PDH-Seite): zeigt die Tastatur immer.
-//	hide             Verbirgt die Tastatur (immer).
-//
-// mode darf nil sein (dann wie Touch).
-func keyboardPageHandler(origin func() string, inner http.Handler, mode func() string) http.Handler {
+// suppress darf nil sein (dann nie unterdrücken).
+func keyboardPageHandler(origin func() string, inner http.Handler, suppress func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed := origin()
 		if got := r.Header.Get("Origin"); allowed == "" || got != allowed {
@@ -39,7 +39,7 @@ func keyboardPageHandler(origin func() string, inner http.Handler, mode func() s
 			switch r.PathValue("action") {
 			case "hide":
 			case "show", "auto-show":
-				if mode != nil && mode() == "mouse" {
+				if suppress != nil && suppress() {
 					w.WriteHeader(http.StatusNoContent)
 					return
 				}

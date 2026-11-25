@@ -72,7 +72,13 @@
         <option value="auto"{{if eq .Setting "auto"}} selected{{end}}>Automatisch (Maus erkannt → Zeiger sichtbar)</option>
       </select>
     </label>
-    <p class="hint">Bei Maus und bei erkannter Maus öffnet sich die Bildschirmtastatur nicht von selbst beim Antippen eines Eingabefelds; der Knopf „Tastatur“ in der Leiste bleibt. „Automatisch“ prüft beim Start des Bildschirms, ob eine Maus oder ein Touchpad (kein Touchscreen) angeschlossen ist; sonst bleibt der Zeiger ausgeblendet. Die Einstellung wirkt erst, wenn die Bildschirm-Sitzung neu startet (Neustart des Terminals).</p>
+    <label>Bildschirmtastatur bei Mausbedienung
+      <select name="osk_with_mouse">
+        <option value="auto"{{if not .OSKOff}} selected{{end}}>automatisch öffnen</option>
+        <option value="off"{{if .OSKOff}} selected{{end}}>nicht automatisch (echte Tastatur angeschlossen)</option>
+      </select>
+    </label>
+    <p class="hint">Auf den PDH-Seiten gibt es keinen Tastatur-Knopf: „nicht automatisch“ nur wählen, wenn eine echte Tastatur angeschlossen ist, sonst lassen sich Eingabefelder nicht mehr ausfüllen. Bei Touch öffnet sich die Tastatur immer von selbst. „Automatisch“ prüft beim Start des Bildschirms, ob eine Maus oder ein Touchpad (kein Touchscreen) angeschlossen ist; sonst bleibt der Zeiger ausgeblendet. Die Einstellung wirkt erst, wenn die Bildschirm-Sitzung neu startet (Neustart des Terminals).</p>
     <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
   </form>
   {{if .Pending}}

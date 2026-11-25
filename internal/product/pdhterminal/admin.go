@@ -214,7 +214,7 @@ func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *ht
 			v.Route, v.RouteClass = "verbunden über: LAN", "ok"
 		}
 	}
-	v.Input = p.inputView(cfg.Kiosk.InputMode)
+	v.Input = p.inputView(cfg.Kiosk.InputMode, cfg.Kiosk.OSKWithMouse)
 	v.LocalPort = strconv.Itoa(cfg.LocalPort())
 	if port != nil {
 		v.LocalPort = *port

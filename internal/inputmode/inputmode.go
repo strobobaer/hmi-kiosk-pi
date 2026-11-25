@@ -51,19 +51,23 @@ func Running() (mode, setting string, ok bool) {
 	return mode, setting, true
 }
 
-// Effective ist die wirksame Bedienart (touch oder mouse) für die Einstellung der Konfiguration. Touch und Maus
-// gelten, wie gespeichert (leer = Touch, wie bei Dateien vor „auto“). Bei „auto“ gilt das Ergebnis der Sitzung;
-// fehlt es, gilt Touch.
+// Effective ist die wirksame Bedienart (touch oder mouse): die der laufenden Sitzung (Zeiger und Tastatur gehören
+// zusammen; eine gespeicherte Änderung zeigt die Admin-Seite nur als „gilt nach dem Neustart“). Ohne Angabe der
+// Sitzung (Start außerhalb des Abbilds) gilt die gespeicherte Einstellung: Maus wie gespeichert, sonst Touch.
 func Effective(setting string) string {
-	switch setting {
-	case config.InputMouse:
+	if m, _, ok := Running(); ok {
+		return m
+	}
+	if setting == config.InputMouse {
 		return config.InputMouse
-	case config.InputAuto:
-		if m, _, ok := Running(); ok {
-			return m
-		}
 	}
 	return config.InputTouch
+}
+
+// SuppressAutoKeyboard sagt, ob die Bildschirmtastatur beim Feld-Fokus unterbleibt: nur bei wirksamer Maus und
+// eingestelltem „aus“ (angeschlossene Tastatur). Sonst öffnet sie sich wie bisher.
+func SuppressAutoKeyboard(setting, oskWithMouse string) bool {
+	return oskWithMouse == config.OSKOff && Effective(setting) == config.InputMouse
 }
 
 // SetDir ersetzt den Ordner der Sitzung (nur für Tests anderer Pakete) und liefert die Rückkehr.

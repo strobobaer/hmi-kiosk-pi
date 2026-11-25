@@ -189,6 +189,11 @@ func ValidateHMI(c Config) error {
 	default:
 		return fmt.Errorf("Unbekannte Bedienart: %q (erlaubt: Touch, Maus oder Automatisch)", c.Kiosk.InputMode)
 	}
+	switch c.Kiosk.OSKWithMouse {
+	case "", OSKAuto, OSKOff:
+	default:
+		return fmt.Errorf("Unbekannte Einstellung der Bildschirmtastatur bei Mausbedienung: %q (erlaubt: automatisch oder aus)", c.Kiosk.OSKWithMouse)
+	}
 	if err := checkRemoteKeyHash(c.Admin.RemoteKeyHash); err != nil {
 		return err
 	}

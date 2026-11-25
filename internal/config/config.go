@@ -76,6 +76,9 @@ type KioskCfg struct {
 	// Start der Sitzung eine Maus angeschlossen ist. Leer (ältere Dateien) gilt wie Touch; nur neue
 	// Konfigurationen (Default) beginnen mit InputAuto.
 	InputMode string `json:"inputMode"`
+	// OSKWithMouse: Bildschirmtastatur bei Mausbedienung. OSKOff unterdrückt das automatische Öffnen beim Feld-Fokus
+	// (nur sinnvoll mit angeschlossener Tastatur); leer oder OSKAuto öffnet sie wie bei Touch.
+	OSKWithMouse string `json:"oskWithMouse,omitempty"`
 	// NetworkTiles gibt die Kachelseite für Tests im Netz frei (Port 8080 auf allen
 	// Adressen). Sie gehört zum Gerät: Der Import übernimmt sie nicht.
 	NetworkTiles bool `json:"networkTiles,omitempty"`
@@ -90,6 +93,9 @@ const (
 	InputTouch = "touch"
 	InputMouse = "mouse"
 	InputAuto  = "auto"
+
+	OSKAuto = "auto"
+	OSKOff  = "off"
 )
 
 type NetworkCfg struct {

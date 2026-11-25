@@ -24,28 +24,43 @@ func setup(t *testing.T, input, setting string) {
 	t.Cleanup(func() { sessionDir = old })
 }
 
-func TestEffectiveExplicitModesIgnoreSession(t *testing.T) {
-	setup(t, "mouse\n", "")
-	if got := Effective("touch"); got != "touch" {
-		t.Errorf("touch: %q", got)
+func TestEffectiveFollowsRunningSession(t *testing.T) {
+	setup(t, "mouse\n", "auto\n")
+	for _, saved := range []string{"", "touch", "mouse", "auto"} {
+		if got := Effective(saved); got != "mouse" {
+			t.Errorf("gespeichert %q, Sitzung mouse: %q", saved, got)
+		}
 	}
-	if got := Effective(""); got != "touch" {
-		t.Errorf("leer: %q", got)
-	}
-	setup(t, "touch\n", "")
-	if got := Effective("mouse"); got != "mouse" {
-		t.Errorf("mouse: %q", got)
+	setup(t, "touch\n", "touch\n")
+	for _, saved := range []string{"", "touch", "mouse", "auto"} {
+		if got := Effective(saved); got != "touch" {
+			t.Errorf("gespeichert %q, Sitzung touch: %q", saved, got)
+		}
 	}
 }
 
-func TestEffectiveAutoFollowsSession(t *testing.T) {
-	setup(t, "mouse\n", "")
-	if got := Effective("auto"); got != "mouse" {
-		t.Errorf("auto mit Maus: %q", got)
+func TestSuppressAutoKeyboard(t *testing.T) {
+	setup(t, "mouse\n", "mouse\n")
+	if SuppressAutoKeyboard("mouse", "") || SuppressAutoKeyboard("mouse", "auto") {
+		t.Error("Maus und automatisch: darf nicht unterdrücken")
 	}
-	setup(t, "touch\n", "")
-	if got := Effective("auto"); got != "touch" {
-		t.Errorf("auto ohne Maus: %q", got)
+	if !SuppressAutoKeyboard("mouse", "off") {
+		t.Error("Maus und aus: muss unterdrücken")
+	}
+	setup(t, "touch\n", "touch\n")
+	if SuppressAutoKeyboard("touch", "off") {
+		t.Error("Touch und aus: darf nicht unterdrücken")
+	}
+	// Gespeichert mouse, Sitzung läuft noch mit touch: bis zum Neustart wie Touch.
+	if SuppressAutoKeyboard("mouse", "off") {
+		t.Error("Sitzung touch: darf nicht unterdrücken")
+	}
+}
+
+func TestEffectiveWithoutSessionUsesSavedMouse(t *testing.T) {
+	setup(t, "", "")
+	if Effective("mouse") != "mouse" || Effective("touch") != "touch" || Effective("") != "touch" || Effective("auto") != "touch" {
+		t.Error("ohne Sitzung gilt Maus nur, wenn so gespeichert")
 	}
 }
 
