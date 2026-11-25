@@ -7,7 +7,7 @@ Dieses Handbuch beschreibt den laufenden Betrieb: Rückfall, Update, Wartung, da
 1. Rückfall durch Kartentausch
 2. Programm-Update einspielen (je Produkt)
 3. Wartung (Konfiguration, SD-Sicherung, Schlüssel prüfen und reparieren, Wartungsmodus von Hand, Admin-Seite am Terminal, Bildschirmtastatur, Kachelseite im Netz für Tests, Web-Kacheln, PDH-Fernsteuerung)
-4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Kartenleser, Kartenleser und Statusdisplay, Windows, Ausweichadresse und Tailnet)
+4. PDH-Terminal (Kopplung, Sperren, Sicherung, Zertifikat, Bedienung mit Maus oder Touch, Kartenleser, Kartenleser und Statusdisplay, Windows, Ausweichadresse und Tailnet)
 5. Fehlersuche
 
 ## 1. Rückfall durch Kartentausch
@@ -369,7 +369,7 @@ Für Eingaben ohne Tastatur gibt es eine Bildschirmtastatur (wvkbd, Paket `wvkbd
 
 - **Admin-Seite am Terminal:** Bei Touch-Bedienung erscheint sie beim Antippen eines Text-, Passwort- oder Zahlenfelds und verschwindet beim Verlassen des Felds oder beim Absenden.
 - **Leiste während einer Sitzung:** Der Knopf **Tastatur** blendet sie ein und aus, etwa für Eingaben im HMI.
-- **Maus-Bedienung** (Admin-Seite → Kiosk → Bedienung „Maus“): Sie erscheint nie von selbst, der Knopf in der Leiste bleibt.
+- **Maus-Bedienung** (Bedienung „Maus“, oder „Automatisch“ mit erkannter Maus; siehe „Bedienung mit Maus oder Touch“ in Abschnitt 4): Sie erscheint nie von selbst, der Knopf in der Leiste bleibt.
 - **Layout:** wvkbd hat kein deutsches Layout. Es gilt QWERTY mit Ziffernreihe; Umlaute und ß über die Taste **Cmp** und danach den Grundbuchstaben (a, o, u, s), Sonderzeichen über die zweite Ebene.
 - **X11-Ausweichprofil:** Dort gibt es keine Bildschirmtastatur (wvkbd braucht Wayland). Der Knopf in der Leiste bleibt ohne Wirkung, Fehler entstehen keine.
 - Fehlt das Programm (z. B. install.sh-System ohne das Paket), meldet das Protokoll „Bildschirmtastatur startet nicht“ und der Dienst versucht es in wachsenden Abständen bis 30 s erneut.
@@ -468,6 +468,22 @@ Das Geheimnis ist **nicht** Teil der Sicherung. Bei der Sicherung als Abbild wer
 ### Zertifikat (bekannte Einschränkung)
 
 Das Gerät vertraut nur dem Zertifikatspeicher des Systems. Ein PDH mit einem Zertifikat einer internen Zertifizierungsstelle (zum Beispiel eine PDH-eigene PKI) wird in dieser Version **nicht** akzeptiert; der Zustand lautet dann „Zertifikat von PDH wird nicht vertraut“. Bei einem Zertifikatsfehler wechselt das Terminal **nicht** auf die Ausweichadresse (Abschnitt „Ausweichadresse und Tailnet“). Bis das geändert ist: PDH mit einem öffentlich vertrauenswürdigen Zertifikat betreiben, oder im abgeschotteten Werksnetz `http://` mit dem Haken „unverschlüsselt erlauben“ verwenden.
+
+### Bedienung mit Maus oder Touch (ab 0.5.1)
+
+Am Pi ist der Mauszeiger je nach Bedienart sichtbar oder ausgeblendet. Einstellbar unter Admin-Seite, Reiter **PDH**, Abschnitt **Bedienung** (beim HMI-Kiosk: Kiosk, Bedienung):
+
+- **Touch:** Zeiger ausgeblendet, die Bildschirmtastatur erscheint beim Antippen eines Eingabefelds.
+- **Maus:** Zeiger sichtbar, die Bildschirmtastatur öffnet sich nicht von selbst (der Knopf **Tastatur** in der Leiste bleibt).
+- **Automatisch:** Beim Start der Bildschirm-Sitzung wird geprüft, ob eine Maus oder ein Touchpad angeschlossen ist (udev: `ID_INPUT_MOUSE=1` oder `ID_INPUT_TOUCHPAD=1`, aber nicht `ID_INPUT_TOUCHSCREEN=1`; ein Touchscreen zählt nie als Maus). Mit Maus gilt „Maus“, sonst „Touch“. Schlägt die Erkennung fehl, gilt „Touch“. Eine später angesteckte Maus wird erst nach dem nächsten Neustart des Terminals erkannt.
+
+Die Abschnittsseite zeigt, was zurzeit gilt („Maus erkannt – Zeiger sichtbar“ oder „keine Maus erkannt – Zeiger ausgeblendet“). Eine Änderung wirkt erst nach dem Neustart des Terminals; die Seite zeigt dann „gespeichert, gilt nach dem Neustart“ und einen Knopf **Terminal neu starten**. Die Bildschirm-Sitzung wird nicht einzeln neu gestartet: Es gibt keinen Helferbefehl dafür, und Chromium würde dabei den Bildschirm verlieren.
+
+Neue Terminals beginnen mit „Automatisch“. Bestehende Geräte behalten ihre Einstellung: ein gespeichertes „Touch“ bleibt Touch, eine Datei ohne Angabe gilt weiter als Touch. **Windows:** Der Zeiger ist immer sichtbar; der Abschnitt zeigt nur einen Hinweis.
+
+Technik: `hmi-kiosk-session prepare` schreibt die Einstellung nach `/run/hmi-kiosk-session/input-setting` und die wirksame Bedienart (`touch` oder `mouse`) nach `/run/hmi-kiosk-session/input`; das Programm liest beide nur (eine Erkennung, im Sitzungsskript). Prüfung des Skripts ohne Grafik: `bash test/session/run.sh`.
+
+**Für PDH-Seiten (Bildschirmtastatur):** Die lokale Schnittstelle `POST /api/keyboard/{action}` kennt für PDH-Seiten `show`, `hide` und neu `auto-show` und `open`. Alle bisherigen PDH-Versionen senden beim Fokus auf ein Feld `show`; im Maus-Betrieb beantwortet das Terminal `show` und `auto-show` mit 204, ohne die Tastatur zu öffnen. `hide` wirkt immer. Eine PDH-Seite, die später einen eigenen Tastatur-Knopf bekommt, sollte dafür `open` senden (öffnet immer) und für das Öffnen beim Feld-Fokus `auto-show`.
 
 ### Kartenleser
 
