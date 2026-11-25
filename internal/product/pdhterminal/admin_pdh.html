@@ -56,6 +56,43 @@
 </section>
 
 <section class="panel stack">
+  <h2>Bedienung</h2>
+  {{with .Input}}
+  {{if .Windows}}
+  <p>Unter Windows ist der Mauszeiger immer sichtbar.</p>
+  {{else}}
+  <p>{{.Current}}</p>
+  {{if .Pending}}<p class="msg warn" role="status">Gespeichert ist „{{.SavedLabel}}“ – das gilt nach dem Neustart des Terminals.</p>{{end}}
+  <form method="post" action="/admin/pdh/input" class="stack">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label>Bedienart
+      <select name="input_mode">
+        <option value="touch"{{if eq .Setting "touch"}} selected{{end}}>Touch (Mauszeiger ausgeblendet)</option>
+        <option value="mouse"{{if eq .Setting "mouse"}} selected{{end}}>Maus (Mauszeiger sichtbar)</option>
+        <option value="auto"{{if eq .Setting "auto"}} selected{{end}}>Automatisch (Maus erkannt → Zeiger sichtbar)</option>
+      </select>
+    </label>
+    <label>Bildschirmtastatur bei Mausbedienung
+      <select name="osk_with_mouse">
+        <option value="auto"{{if not .OSKOff}} selected{{end}}>automatisch öffnen</option>
+        <option value="off"{{if .OSKOff}} selected{{end}}>nicht automatisch (echte Tastatur angeschlossen)</option>
+      </select>
+    </label>
+    <p class="hint">Auf den PDH-Seiten gibt es keinen Tastatur-Knopf: „nicht automatisch“ nur wählen, wenn eine echte Tastatur angeschlossen ist, sonst lassen sich Eingabefelder nicht mehr ausfüllen. Bei Touch öffnet sich die Tastatur immer von selbst. „Automatisch“ prüft beim Start des Bildschirms, ob eine Maus oder ein Touchpad (kein Touchscreen) angeschlossen ist; sonst bleibt der Zeiger ausgeblendet. Die Einstellung wirkt erst, wenn die Bildschirm-Sitzung neu startet (Neustart des Terminals).</p>
+    <div class="actions"><button type="submit" class="btn primary">Speichern</button></div>
+  </form>
+  {{if .Pending}}
+  <form method="post" action="/admin/system/reboot" class="stack" data-confirm="Das Terminal neu starten?">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <label class="check"><input type="checkbox" name="confirm" value="ja" required> Das Terminal ist währenddessen nicht bedienbar</label>
+    <div class="actions"><button type="submit" class="btn danger">Terminal neu starten</button></div>
+  </form>
+  {{end}}
+  {{end}}
+  {{end}}
+</section>
+
+<section class="panel stack">
   <h2>Koppeln</h2>
   <form method="post" action="/admin/pdh/pair" class="stack" autocomplete="off">
     <input type="hidden" name="csrf" value="{{$.CSRF}}">

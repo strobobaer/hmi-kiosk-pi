@@ -54,6 +54,8 @@ type pdhView struct {
 	Failed          int // eingestellter Port, der sich nicht binden ließ; es läuft der Grundwert
 	PortProblem     string
 	DefaultPort     int
+
+	Input inputView
 }
 
 type adminProduct struct {
@@ -76,6 +78,8 @@ type adminProduct struct {
 	// ExitWindowsEx(EWX_LOGOFF), Tests ersetzen es).
 	kiosk  bool
 	logoff func() error
+	// windows: Windows hat keine Bedienart zu wählen (der Zeiger ist immer sichtbar); Tests setzen es.
+	windows bool
 
 	// tailnet steuert Tailscale (Pi: über den Helfer, Windows: tailscale.exe); nil: kein Abschnitt „Tailnet“.
 	tailnet   tailnet.Ctl
@@ -86,7 +90,7 @@ type adminProduct struct {
 }
 
 func newAdminProduct(dataDir string, client Client, cards *card.Service, display *oled.Service) *adminProduct {
-	return &adminProduct{dataDir: dataDir, client: client, funcs: NewFuncSync(dataDir, client), cards: cards, display: display, probe: oled.Probe}
+	return &adminProduct{dataDir: dataDir, client: client, funcs: NewFuncSync(dataDir, client), cards: cards, display: display, probe: oled.Probe, windows: onWindows}
 }
 
 // Admin beschreibt das PDH-Terminal für den Admin-Rahmen.
@@ -157,6 +161,7 @@ func (p *adminProduct) baseProduct() *web.AdminProduct {
 			{Method: http.MethodPost, Path: "/admin/functions", Handle: p.functionsSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/settings", Handle: p.settings},
 			{Method: http.MethodPost, Path: "/admin/pdh/localport", Handle: p.localPortSave},
+			{Method: http.MethodPost, Path: "/admin/pdh/input", Handle: p.inputSave},
 			{Method: http.MethodPost, Path: "/admin/pdh/pair", Handle: p.pair},
 			{Method: http.MethodPost, Path: "/admin/pdh/unpair", Handle: p.unpair},
 			{Method: http.MethodGet, Path: "/admin/card", Handle: func(f web.AdminFrame, w http.ResponseWriter, _ *http.Request) {
@@ -209,6 +214,7 @@ func (p *adminProduct) renderPort(f web.AdminFrame, w http.ResponseWriter, r *ht
 			v.Route, v.RouteClass = "verbunden über: LAN", "ok"
 		}
 	}
+	v.Input = p.inputView(cfg.Kiosk.InputMode, cfg.Kiosk.OSKWithMouse)
 	v.LocalPort = strconv.Itoa(cfg.LocalPort())
 	if port != nil {
 		v.LocalPort = *port

@@ -2,12 +2,21 @@ package pdhterminal
 
 import "net/http"
 
-// keyboardPageHandler lässt die PDH-Seite die Bildschirmtastatur auf Anforderung ein- und ausblenden:
-// POST /api/keyboard/show beim Fokus auf ein Eingabefeld, POST /api/keyboard/hide beim Verlassen. Ursprung
+// keyboardPageHandler lässt die PDH-Seite die Bildschirmtastatur auf Anforderung ein- und ausblenden. Ursprung
 // und CORS wie bei /api/card/result (nur die PDH-Adresse, Preflight samt Private-Network). inner ist
 // web.KeyboardHandler; „toggle“ gibt es für fremde Seiten nicht. Ohne Tastatur (Windows, X11) antwortet inner
 // mit 503, die Seite ignoriert das.
-func keyboardPageHandler(origin func() string, inner http.Handler) http.Handler {
+//
+// Aktionen (POST /api/keyboard/{action}):
+//   - show, auto-show: Fokus auf einem Eingabefeld, die Tastatur erscheint von selbst. „show“ senden alle bisherigen
+//     PDH-Versionen so; „auto-show“ ist derselbe Zweck unter eindeutigem Namen für spätere. Nur bei wirksamer Maus
+//     und eingestelltem „Bildschirmtastatur bei Mausbedienung: aus“ (suppress liefert true) beantwortet das Terminal
+//     beide mit 204 ohne Wirkung; sonst öffnet sie sich wie bei Touch.
+//   - open: ausdrücklicher Wunsch (z. B. ein Tastatur-Knopf der PDH-Seite), zeigt die Tastatur immer.
+//   - hide: verbirgt die Tastatur (immer).
+//
+// suppress darf nil sein (dann nie unterdrücken).
+func keyboardPageHandler(origin func() string, inner http.Handler, suppress func() bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed := origin()
 		if got := r.Header.Get("Origin"); allowed == "" || got != allowed {
@@ -27,7 +36,17 @@ func keyboardPageHandler(origin func() string, inner http.Handler) http.Handler 
 			}
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodPost:
-			if a := r.PathValue("action"); a != "show" && a != "hide" {
+			switch r.PathValue("action") {
+			case "hide":
+			case "show", "auto-show":
+				if suppress != nil && suppress() {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				r.SetPathValue("action", "show")
+			case "open":
+				r.SetPathValue("action", "show")
+			default:
 				http.Error(w, "Unbekannte Aktion", http.StatusNotFound)
 				return
 			}

@@ -53,8 +53,8 @@ func checkKiosk(k config.KioskCfg) error {
 	if k.HideBar && k.PermanentHMI == "" {
 		return errors.New(config.ErrHideBarWithoutPermanent)
 	}
-	if k.InputMode != config.InputTouch && k.InputMode != config.InputMouse {
-		return fmt.Errorf("Unbekannte Bedienart: %q", k.InputMode)
+	if k.InputMode != config.InputTouch && k.InputMode != config.InputMouse && k.InputMode != config.InputAuto {
+		return fmt.Errorf("Unbekannte Bedienart: %q (erlaubt: Touch, Maus oder Automatisch)", k.InputMode)
 	}
 	switch k.Layout {
 	case "", "auto", "2", "3", "4":
@@ -178,7 +178,7 @@ func (a *admin) handleKioskSave(w http.ResponseWriter, r *http.Request, s sessio
 			mode = config.InputTouch
 		}
 		// LocalPort gehört nicht zu diesem Formular und bleibt, wie er ist.
-		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode, NetworkTiles: f.NetworkTiles, LocalPort: c.Kiosk.LocalPort}
+		next := config.KioskCfg{InactivityMinutes: n, Layout: f.Layout, PermanentHMI: f.Permanent, HideBar: f.HideBar, InputMode: mode, NetworkTiles: f.NetworkTiles, LocalPort: c.Kiosk.LocalPort, OSKWithMouse: c.Kiosk.OSKWithMouse}
 		if err := checkKiosk(next); err != nil {
 			return err
 		}

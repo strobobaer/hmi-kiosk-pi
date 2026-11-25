@@ -390,8 +390,8 @@ func TestSharedKeyByHand(t *testing.T) {
 func TestKioskInputModeTouchOrMouse(t *testing.T) {
 	e, b := newLoggedIn(t)
 	r := b.get("/admin/kiosk")
-	if !strings.Contains(r.Body.String(), `name="input_mode"`) || !strings.Contains(r.Body.String(), `value="touch" selected`) {
-		t.Fatalf("Formular ohne Bedienart oder ohne Touch als Voreinstellung: %s", r.Body.String())
+	if !strings.Contains(r.Body.String(), `name="input_mode"`) || !strings.Contains(r.Body.String(), `value="auto" selected`) {
+		t.Fatalf("Formular ohne Bedienart oder ohne Automatisch als Voreinstellung: %s", r.Body.String())
 	}
 	r = b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "input_mode": {"mouse"}})
 	if r.Code != http.StatusSeeOther {
@@ -406,6 +406,33 @@ func TestKioskInputModeTouchOrMouse(t *testing.T) {
 	r = b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "input_mode": {"stift"}})
 	if r.Code != http.StatusUnprocessableEntity || e.cfg().Kiosk.InputMode != config.InputMouse {
 		t.Fatalf("unbekannte Bedienart angenommen: %d", r.Code)
+	}
+}
+
+// Bestehende Geräte (Datei ohne Bedienart) bleiben bei Touch; erst ein neues Gerät beginnt mit „auto“.
+func TestKioskInputModeExistingDeviceStaysTouch(t *testing.T) {
+	e, b := newLoggedIn(t)
+	e.mutate(func(c *config.Config) { c.Kiosk.InputMode = "" })
+	if !strings.Contains(b.get("/admin/kiosk").Body.String(), `value="touch" selected`) {
+		t.Fatal("leere Bedienart wird nicht als Touch gezeigt")
+	}
+}
+
+func TestKioskInputModeAuto(t *testing.T) {
+	e, b := newLoggedIn(t)
+	if body := b.get("/admin/kiosk").Body.String(); !strings.Contains(body, `>Automatisch (Maus erkannt`) {
+		t.Fatalf("Option „Automatisch“ fehlt: %s", body)
+	}
+	r := b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "input_mode": {"auto"}})
+	if r.Code != http.StatusSeeOther || e.cfg().Kiosk.InputMode != config.InputAuto {
+		t.Fatalf("Automatisch speichern: %d, Bedienart %q", r.Code, e.cfg().Kiosk.InputMode)
+	}
+	if !strings.Contains(b.get("/admin/kiosk").Body.String(), `value="auto" selected`) {
+		t.Fatal("Automatisch nicht vorgewählt")
+	}
+	r = b.post("/admin/kiosk", url.Values{"inactivity": {"15"}, "layout": {"auto"}, "permanent": {""}, "input_mode": {"stift"}})
+	if r.Code != http.StatusUnprocessableEntity || !strings.Contains(r.Body.String(), "Automatisch") {
+		t.Fatalf("Fehlermeldung nennt nicht alle Bedienarten: %d %s", r.Code, r.Body.String())
 	}
 }
 

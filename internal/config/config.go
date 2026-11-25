@@ -72,8 +72,13 @@ type KioskCfg struct {
 	Layout            string `json:"layout"`
 	PermanentHMI      string `json:"permanentHmi"`
 	HideBar           bool   `json:"hideBar"`
-	// InputMode: InputTouch blendet den Mauszeiger aus, InputMouse zeigt ihn (leer = Touch).
+	// InputMode: InputTouch blendet den Mauszeiger aus, InputMouse zeigt ihn, InputAuto zeigt ihn nur, wenn beim
+	// Start der Sitzung eine Maus angeschlossen ist. Leer (ältere Dateien) gilt wie Touch; nur neue
+	// Konfigurationen (Default) beginnen mit InputAuto.
 	InputMode string `json:"inputMode"`
+	// OSKWithMouse: Bildschirmtastatur bei Mausbedienung. OSKOff unterdrückt das automatische Öffnen beim Feld-Fokus
+	// (nur sinnvoll mit angeschlossener Tastatur); leer oder OSKAuto öffnet sie wie bei Touch.
+	OSKWithMouse string `json:"oskWithMouse,omitempty"`
 	// NetworkTiles gibt die Kachelseite für Tests im Netz frei (Port 8080 auf allen
 	// Adressen). Sie gehört zum Gerät: Der Import übernimmt sie nicht.
 	NetworkTiles bool `json:"networkTiles,omitempty"`
@@ -87,6 +92,10 @@ type KioskCfg struct {
 const (
 	InputTouch = "touch"
 	InputMouse = "mouse"
+	InputAuto  = "auto"
+
+	OSKAuto = "auto"
+	OSKOff  = "off"
 )
 
 type NetworkCfg struct {
@@ -162,7 +171,7 @@ func Default() Config {
 	c.DefaultMode = ModeTakeover
 	c.Client = ClientCfg{Profile: "remmina", Quality: 2, ColorDepth: 32, Scale: true}
 	c.Kiosk.InactivityMinutes = 15
-	c.Kiosk.InputMode = InputTouch
+	c.Kiosk.InputMode = InputAuto
 	c.Display.GraphicsProfile = "labwc"
 	c.Update = UpdateCfg{Repo: DefaultUpdateRepo, Prerelease: true}
 	return c

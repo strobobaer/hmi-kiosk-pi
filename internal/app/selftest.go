@@ -15,6 +15,7 @@ import (
 	"hmikiosk/internal/browser"
 	"hmikiosk/internal/client"
 	"hmikiosk/internal/config"
+	"hmikiosk/internal/inputmode"
 	"hmikiosk/internal/platform"
 	"hmikiosk/internal/selftest"
 	"hmikiosk/internal/session"
@@ -193,7 +194,7 @@ func (s *service) localHandler() http.Handler {
 			TouchHit:   s.touch.Hit,
 			Network:    func() bool { return s.config().Kiosk.NetworkTiles },
 			Keyboard:   s.kbd,
-			InputMode:  func() string { return s.config().Kiosk.InputMode },
+			InputMode:  func() string { return inputmode.Effective(s.config().Kiosk.InputMode) },
 			TilesShown: s.localAdminLeft,
 			LocalAdmin: s.localAdminShown,
 		}))

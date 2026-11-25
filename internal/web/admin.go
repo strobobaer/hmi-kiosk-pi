@@ -15,6 +15,7 @@ import (
 
 	"hmikiosk/internal/config"
 	"hmikiosk/internal/coord"
+	"hmikiosk/internal/inputmode"
 	"hmikiosk/internal/localport"
 	"hmikiosk/internal/rfb"
 	"hmikiosk/internal/secrets"
@@ -587,8 +588,16 @@ func (a *admin) writePage(w http.ResponseWriter, status int, page string, v admi
 	v.StartPort = localport.Get()
 	if v.Terminal {
 		v.KioskURL, v.IdleSeconds, v.OSK = KioskURL(), int(localSessionIdle/time.Second), "auto"
-		if cfg, _, err := a.d.Store.Load(); err == nil && cfg.Kiosk.InputMode == config.InputMouse {
-			v.OSK = "manual"
+		// Anmeldung und Ersteinrichtung öffnen die Tastatur immer von selbst: Ohne echte Tastatur käme man sonst
+		// nicht an die eigene Admin-Seite und könnte die Einstellung nicht zurücknehmen.
+		if page == "login.html" || page == "setup.html" {
+			// bleibt „auto“
+		} else if cfg, _, err := a.d.Store.Load(); err == nil {
+			// HMI-Kiosk hat den Knopf „Tastatur“ in der Leiste; das PDH-Terminal nicht: dort nur mit „aus“.
+			if a.product.HMI && inputmode.Effective(cfg.Kiosk.InputMode) == config.InputMouse ||
+				!a.product.HMI && inputmode.SuppressAutoKeyboard(cfg.Kiosk.InputMode, cfg.Kiosk.OSKWithMouse) {
+				v.OSK = "manual"
+			}
 		}
 	}
 	if a.product.IdleSeconds > 0 {

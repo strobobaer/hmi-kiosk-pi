@@ -23,7 +23,7 @@ func TestCardOriginsBothAccepted(t *testing.T) {
 
 	status := func(p config.PDHCfg, origin string) int {
 		h := byOrigin(func() []string { return cardOrigins(p) }, func(o func() string) http.Handler {
-			return keyboardPageHandler(o, http.NotFoundHandler())
+			return keyboardPageHandler(o, http.NotFoundHandler(), nil)
 		})
 		r := httptest.NewRequest("OPTIONS", "/api/keyboard/show", nil)
 		r.Header.Set("Origin", origin)
